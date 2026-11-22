@@ -21,13 +21,21 @@ import contextvars
 import functools
 import logging
 import re
+from collections import defaultdict
 
 from django.apps import apps as django_apps
+from django.conf import settings
 from django.db import transaction
 from django.db.models.signals import post_save
 from django.utils import timezone
 
-from .models import ABOUT_A_PERSON, BrainRun, BrainRunArtifact, BrainRunRead, BrainSource, OutputLineage
+from apps.canopy_sessions.models import Message
+from apps.harness import turn_asker
+from apps.harness.models import Turn
+
+from . import participants
+from .cascade import removed_reason
+from .models import BrainRun, BrainRunArtifact, BrainRunRead, BrainSource, OutputLineage
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +68,6 @@ def register_undo(label: str, fn) -> None:
 
 def turn_of_request(request):
     """The turn this request is made inside, from its own credential, or None."""
-    from apps.harness import turn_asker  # noqa: PLC0415 — harness reads this app's neighbours
-    from apps.harness.models import Turn  # noqa: PLC0415 — as above
-
     cred = getattr(request, "auth_credential", None) or {}
     if cred.get("turn_id"):
         return Turn.objects.select_related("chat_session").filter(pk=cred["turn_id"]).first()
@@ -123,8 +128,6 @@ def capturing(func):
 # ---- recording -------------------------------------------------------------------------------------------------
 
 def _people(source: BrainSource) -> list[int]:
-    from . import participants  # noqa: PLC0415 — participants reads canopy_sessions
-
     stored = {p.user_id for p in source.participants.all() if p.user_id is not None}
     live = {u for _h, u, _c in participants.people_of(source.session) if u is not None} if source.session else set()
     return sorted(stored | live)
@@ -145,8 +148,6 @@ def record(run: BrainRun, kind: str, ref: str, *, workspace: str | None = None) 
 
 
 def _owner(run: BrainRun):
-    from apps.harness.models import Turn  # noqa: PLC0415 — harness reads this app's neighbours
-
     first = Turn.objects.filter(chat_session_id=run.session_id).order_by("created_at").first() if run.session_id \
         else None
     return getattr(first, "initiator_user", None)
@@ -169,11 +170,6 @@ def _record_rows(run_id: int, rows) -> None:
 def record_reported(run: BrainRun) -> int:
     """At the run's end: the links its turn reported making outside canopy (in its replies and its result), each an
     artifact (`github.pull`, `github.issue` or `link`). canopy-web's own pages are its rows, already recorded."""
-    from django.conf import settings  # noqa: PLC0415 — read once, here
-
-    from apps.canopy_sessions.models import Message  # noqa: PLC0415 — canopy_sessions reads this app's readers
-    from apps.harness.models import Turn  # noqa: PLC0415 — harness reads this app's neighbours
-
     if run.session_id is None:
         return 0
     texts = list(Message.objects.filter(session_id=run.session_id, role=Message.ASSISTANT)
@@ -229,10 +225,6 @@ def _model(label: str):
 
 def sweep(source_ids=None, memo: dict | None = None) -> dict:
     """Undo or flag every live artifact one of whose sources is now removed for its run's learner (`cascade`)."""
-    from collections import defaultdict  # noqa: PLC0415 — only the sweep needs it
-
-    from .cascade import removed_reason  # noqa: PLC0415 — cascade calls this
-
     memo = {} if memo is None else memo
     live = BrainRunArtifact.objects.filter(state=BrainRunArtifact.LIVE).values_list("pk", flat=True)
     rows = OutputLineage.objects.filter(output_kind=ARTIFACT_KIND, output_id__in=[str(i) for i in live])
@@ -249,7 +241,7 @@ def sweep(source_ids=None, memo: dict | None = None) -> dict:
         if art is None:
             continue
         cap, purpose = art.run.capability, art.run.purpose
-        subject = int(art.run.subject) if cap.purpose_class in ABOUT_A_PERSON and art.run.subject.isdecimal() else None
+        subject = art.run.subject_user_id
         why = next((r for r in (removed_reason(x.source, cap.purpose_class, subject, x.participant_scope or [],
                                                capability=cap.slug, purpose=purpose, memo=memo) for x in lineage) if r),
                    "")

@@ -51,6 +51,7 @@ def fire(*aimed) -> list:
 
 
 def capability(slug, cls, purposes=("learn",), enabled=True, **kw):
+    kw.setdefault("audience", list(registry.CLASS_AUDIENCE[cls]))        # as `registry.register` gives it
     return BrainCapability.objects.create(slug=slug, name=slug, purpose_class=cls, purposes=list(purposes),
                                           enabled=enabled, subject_type="project" if cls == "project" else "person",
                                           source_kinds=["session"], **kw)

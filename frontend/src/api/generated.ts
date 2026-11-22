@@ -5597,8 +5597,19 @@ export interface paths {
          * Create an agent whose definition canopy stores (no GitHub repository)
          * @description Stamps the agent from the canopy agent factory (the same scaffold `/canopy:create-agent`
          *     writes) and stores it as revision 1, published. No repository and no GitHub token: its
-         *     runners materialize the definition from canopy. The creator owns it (from inside an agent's
-         *     turn, the person who asked for that turn). 409 when the slug is taken.
+         *     runners materialize the definition from canopy. The creator owns it. An agent's own login
+         *     creates it for a person, never for itself: the person who asked for the turn it works in
+         *     (known from its turn login, or the `X-Canopy-Parent-Turn` it sends), else the agent's
+         *     owner; 403 `no_owner` when neither may create agents in the workspace. 409 `exists` when
+         *     the slug is taken.
+         *
+         *     With `files`, revision 1 is the scaffold with those files laid over it, held to the file
+         *     policy, and the files canopy writes itself rewritten: one the policy refuses refuses the
+         *     create (422 `policy` with `problems`), or with `drop_refused` is left out and listed in
+         *     `dropped`. With `bundle_b64` (a `git bundle` of a branch) the source's history is kept, as
+         *     `convert` keeps it: under `refs/heads/imported`, every blob scanned for secrets first (422
+         *     `secret`), revision 1 a commit on its tip. Files and history together are held to one
+         *     request's size (413 `too_large`).
          */
         readonly post: operations["create_stored_agent"];
         readonly delete?: never;
@@ -5697,7 +5708,8 @@ export interface paths {
          * An agent's stored definition: live, draft, policy
          * @description `source` says where the definition lives. For a stored agent, the live revision, the one
          *     draft (if any) and the file policy every write is held to. `can_draft` / `can_publish` say
-         *     what the caller may do here.
+         *     what the caller may do here: `can_publish` is a person who administers the agent, or
+         *     another agent that does, signed in as itself.
          */
         readonly get: operations["get_agent_definition"];
         readonly put?: never;
@@ -5802,10 +5814,11 @@ export interface paths {
          * @description `changes` are applied to the LIVE revision `base`: `content` (text) or `content_b64`
          *     writes a file, `content: null` deletes one. The result replaces any earlier draft (whose
          *     approval request, if any, is withdrawn). A `base` that is not live is 409 `stale_base`; a
-         *     change the file policy refuses is 422 with `problems`. Nothing goes live: a person who
-         *     administers the agent publishes the draft. When an agent writes it (its own login, or any
-         *     turn's token), canopy files an approval request (`approval_id`) to the agent's owner and
-         *     admins, who approve it from its page with a passkey.
+         *     change the file policy refuses is 422 with `problems`. Nothing goes live: whoever may
+         *     publish it does (`publish`). When an agent writes it (its own login, or any turn's token),
+         *     canopy files an approval request (`approval_id`) to the agent's owner and admins, who
+         *     approve it from its page with a passkey, unless that agent may publish it itself:
+         *     another agent that administers this one, signed in as itself, asks for no approval.
          */
         readonly post: operations["draft_agent_definition"];
         readonly delete?: never;
@@ -5827,10 +5840,12 @@ export interface paths {
          * Publish a stored agent's draft: it becomes what its runners run
          * @description Draft `number` goes live and the old live revision is superseded; the files canopy writes
          *     itself are rewritten for it, and the agent's skill catalog is read again from it. 409 when
-         *     `number` is not the draft, or was drafted on a revision that is no longer live. 403 for an
-         *     agent's own login or any token a turn holds: an agent proposes, a person publishes — or an
-         *     agent the person let act as them (an act-as-you permission, read + write), named in
-         *     `acted_by`.
+         *     `number` is not the draft, or was drafted on a revision that is no longer live. Its owner
+         *     or an admin publishes it, as themselves or through an agent they let act as them (an
+         *     act-as-you permission, read + write, named in `acted_by`); so may ANOTHER agent that
+         *     administers this one, signed in as itself (named in `published_by_agent`). 403 for the
+         *     agent's own login, a caller token, or an agent that is not its admin. An approval the
+         *     draft waited on is closed as superseded.
          */
         readonly post: operations["publish_agent_definition"];
         readonly delete?: never;
@@ -5872,6 +5887,7 @@ export interface paths {
          * Roll a stored agent back to an earlier revision
          * @description A NEW revision with revision `revision`'s files is created and published; history is
          *     never rewritten. Any open draft is discarded. 409 for a revision that was never published.
+         *     Who may: the same as `publish`.
          */
         readonly post: operations["rollback_agent_definition"];
         readonly delete?: never;
@@ -8075,6 +8091,42 @@ export interface paths {
          */
         readonly post: operations["rotate_own_pat"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/browser-sign-in": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Whether the agent's own Google account may sign in at a browser
+         * @description Off unless switched on; while on, who switched it on, when, and when it ends.
+         *     The agent's owner or an admin; never the agent's own login.
+         */
+        readonly get: operations["get_browser_sign_in"];
+        /**
+         * Switch on browser sign-in for testing, for 1 to 30 days
+         * @description FOR TESTING: while on, the agent's own Google account may sign in to canopy-web
+         *     at a browser (e.g. a live end-to-end test of the browser extension's side panel)
+         *     instead of being refused. The session is the agent's login, with exactly its
+         *     normal permissions, and is signed out when this ends or is switched off. `days`
+         *     (1 to 30, default 7) sets the end; switching on again replaces it. The agent's
+         *     owner or an admin, at a browser, with a fresh passkey step-up; 409
+         *     `no_agent_login` when the agent has no login of its own.
+         */
+        readonly put: operations["switch_on_browser_sign_in"];
+        readonly post?: never;
+        /**
+         * Switch off browser sign-in; its sessions end on their next request
+         * @description Ends the grant now; a browser session made under it is signed out on its next
+         *     request. The agent's owner or an admin, from anywhere; never its own login.
+         */
+        readonly delete: operations["switch_off_browser_sign_in"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -17017,7 +17069,8 @@ export interface paths {
         /**
          * Requests waiting on you
          * @description Requests in your workspaces that YOU could approve. `status=all` also lists decided ones you
-         *     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`).
+         *     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`). A card with `step_up`
+         *     is approved only on its page (`page_url`), with a passkey.
          */
         readonly get: operations["list_approvals"];
         readonly put?: never;
@@ -17070,6 +17123,9 @@ export interface paths {
          * @description Approve (runs the kind's handler as you, once) or decline (nothing happens). A request is
          *     decided once: a second decision is a 409 naming who got there first. 403 when you do not hold
          *     the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason.
+         *     A request whose card says `step_up` is approved only from its page (`page_url`) in a browser, with
+         *     the approver's passkey (a browser without a fresh one gets 403 `step_up_required`; a token is always
+         *     refused): send the person that link. Declining needs no passkey.
          */
         readonly post: operations["decide_approval"];
         readonly delete?: never;
@@ -19876,8 +19932,8 @@ export interface paths {
          * @description For a turn in a learning run: one output of a kind its feature declares, about the run's own subject,
          *     citing the sources it came from. Every cited source must be one this run read and must still be open to
          *     it; otherwise nothing is written (422). The words are scrubbed. The same output twice is one, and one whose
-         *     `key` matches an open finding of this learner and subject folds into it (`folded`). Past the run's budget of
-         *     outputs a new one is refused (422).
+         *     `key` matches an open finding of this learner and subject, or that names one by `same_as`, folds into it
+         *     (`folded`). Past the run's budget of outputs a new one is refused (422).
          */
         readonly post: operations["brain_emit"];
         readonly delete?: never;
@@ -20015,7 +20071,8 @@ export interface paths {
          *     canopy's system findings where you own or administer the workspace a run was started for (or one above it),
          *     as yourself only. Pinned to a workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it;
          *     unpinned, your one organisation's (the read rule every list follows). Never a withdrawn or stale one. `status`
-         *     narrows to open, accepted, dismissed or done. Newest first.
+         *     narrows to open, accepted, dismissed, done or duplicate (one merged into another, left out unless asked for).
+         *     Newest first, a faded finding (no run re-saw it within its fade window) below the fresh ones.
          */
         readonly get: operations["list_outputs"];
         readonly put?: never;
@@ -20044,6 +20101,30 @@ export interface paths {
          *     A repeat later folds into it while it is open or accepted. Every change is in its workspace's log.
          */
         readonly post: operations["set_output_status"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/outputs/{output_id}/merge": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Merge a duplicate finding into this one
+         * @description Two findings that are one problem: fold `duplicate` into this one. This one takes its sightings (`seen` adds up),
+         *     the sessions it came from and a note of it (`merged_from`); the duplicate's status becomes `duplicate`
+         *     (`merged_into` this one), and a later repeat of its key folds here. Both must be of the same learner, subject and
+         *     workspace, and yours to set by the rule that sets a status (`set_output_status`). Recorded in the workspace's
+         *     log.
+         */
+        readonly post: operations["merge_outputs"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -20292,8 +20373,10 @@ export interface paths {
         /**
          * Change a target's budget (its owners and admins)
          * @description How much one run of this target may read (sessions) and write (outputs), and how many runs, outputs and tokens
-         *     it may spend in a UTC day. A run stops cleanly at a cap: nothing more is read or written, and a fire past a daily
-         *     cap starts nothing and says why. Fields left out keep their value; `clear_tokens` removes the token cap.
+         *     it may spend in a UTC day, how far back its runs read (`lookback_days`: only sessions active that recently) and how
+         *     long an open finding nobody re-sees stays fresh (`fade_days`). A run stops cleanly at a cap: nothing more is read or
+         *     written, and a fire past a daily cap starts nothing and says why. Fields left out keep their value; `clear_tokens`
+         *     removes the token cap.
          */
         readonly patch: operations["set_target_budget"];
         readonly trace?: never;
@@ -30935,6 +31018,22 @@ export interface components {
              */
             readonly owner: string;
             readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
+            /** Dropped */
+            readonly dropped?: readonly string[];
+        };
+        /** DefinitionNewFileIn */
+        readonly DefinitionNewFileIn: {
+            /** Path */
+            readonly path: string;
+            /** Content */
+            readonly content?: string | null;
+            /** Content B64 */
+            readonly content_b64?: string | null;
+            /**
+             * Executable
+             * @default false
+             */
+            readonly executable: boolean;
         };
         /** StoredAgentIn */
         readonly StoredAgentIn: {
@@ -30951,6 +31050,20 @@ export interface components {
             readonly stakeholders: string;
             /** Workspace */
             readonly workspace: string;
+            /** Files */
+            readonly files?: readonly components["schemas"]["DefinitionNewFileIn"][];
+            /** Bundle B64 */
+            readonly bundle_b64?: string | null;
+            /**
+             * Drop Refused
+             * @default false
+             */
+            readonly drop_refused: boolean;
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
         };
         /** DefinitionAuthorOut */
         readonly DefinitionAuthorOut: {
@@ -31001,6 +31114,8 @@ export interface components {
             readonly published_at?: string | null;
             /** Published By */
             readonly published_by?: string | null;
+            /** Published By Agent */
+            readonly published_by_agent?: string | null;
             /** Approval Id */
             readonly approval_id?: number | null;
             readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
@@ -31145,6 +31260,8 @@ export interface components {
             readonly published_at?: string | null;
             /** Published By */
             readonly published_by?: string | null;
+            /** Published By Agent */
+            readonly published_by_agent?: string | null;
             /** Approval Id */
             readonly approval_id?: number | null;
             readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
@@ -35967,6 +36084,54 @@ export interface components {
             /**
              * Reason
              * @description What happened: where the token went, or why you think it is exposed.
+             */
+            readonly reason: string;
+        };
+        /**
+         * BrowserSignInOut
+         * @description Whether the agent's own Google account may sign in to canopy-web at a browser now,
+         *     and, while it may, who switched it on, when, and when it ends.
+         */
+        readonly BrowserSignInOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /**
+             * Login Email
+             * @default
+             */
+            readonly login_email: string;
+            /**
+             * Granted By Email
+             * @default
+             */
+            readonly granted_by_email: string;
+            /** Granted At */
+            readonly granted_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /** Max Days */
+            readonly max_days: number;
+            /** Default Days */
+            readonly default_days: number;
+        };
+        /**
+         * BrowserSignInIn
+         * @description Switch on browser sign-in for testing, for `days` (1 to 30; default 7).
+         */
+        readonly BrowserSignInIn: {
+            /**
+             * Days
+             * @default 7
+             */
+            readonly days: number;
+            /**
+             * Reason
+             * @default
              */
             readonly reason: string;
         };
@@ -48438,8 +48603,21 @@ export interface components {
             readonly status: "pending" | "done" | "failed" | "declined" | "cancelled" | "expired";
             /** Workspace */
             readonly workspace: string;
-            /** Url */
+            /**
+             * Url
+             * @description The request's page, app-relative.
+             */
             readonly url: string;
+            /**
+             * Page Url
+             * @description The request's page, absolute: the link to give a person.
+             */
+            readonly page_url: string;
+            /**
+             * Step Up
+             * @description Approving needs the approver's passkey, so only the request's page (`page_url`), in a browser, can approve it; Slack, an alert, a token and an agent can only decline it.
+             */
+            readonly step_up: boolean;
             /** Requested By */
             readonly requested_by: string;
             /** Reason */
@@ -52532,7 +52710,7 @@ export interface components {
             readonly view: string;
             /**
              * Next After
-             * @description Pass this as `after` to read on.
+             * @description Pass this back as `after` to read on (with `next_index` when set).
              */
             readonly next_after: number;
             /**
@@ -52542,7 +52720,7 @@ export interface components {
             readonly next_index?: number | null;
             /**
              * Done
-             * @description Nothing is left past `next_after`.
+             * @description Nothing more is due for this run.
              */
             readonly done: boolean;
             /**
@@ -52584,6 +52762,11 @@ export interface components {
             readonly truncated: boolean;
             /** Next Index */
             readonly next_index?: number | null;
+            /**
+             * Read Before
+             * @description Set when this session was learned from before and has grown since: only the rows after this one are served (what is new).
+             */
+            readonly read_before?: number | null;
             /**
              * Directives
              * @description Words the people in this source asked every reader to be shown.
@@ -52649,10 +52832,15 @@ export interface components {
             readonly sources: readonly number[];
             /**
              * Key
-             * @description A short stable slug naming WHAT this is (e.g. `canopy-web:friction:mcp-422-shape`): an output of the same kind and key, still open or accepted, for the same subject and workspace, takes this one in as a repeat instead of a new output.
+             * @description A short stable slug naming WHAT this is (e.g. `canopy-web:friction:mcp-422-shape`): an output of the same kind and key, still open or accepted, for the same subject and workspace, takes this one in as a repeat instead of a new output. Reuse the key of an open finding in your run context when it is the same problem.
              * @default
              */
             readonly key: string;
+            /**
+             * Same As
+             * @description The id of an open finding in your run context this one is the same problem as: it folds into that one (more evidence, `seen` + 1) whatever its key.
+             */
+            readonly same_as?: number | null;
         };
         /** CapabilityOut */
         readonly CapabilityOut: {
@@ -52887,6 +53075,17 @@ export interface components {
             /** Last Seen At */
             readonly last_seen_at?: string | null;
             /**
+             * Faded
+             * @description Open or accepted, but no run re-saw it within its target's fade window: listed below the fresh ones and not shown to runs; setting it open or accepted keeps it.
+             * @default false
+             */
+            readonly faded: boolean;
+            /**
+             * Merged Into
+             * @description For a `duplicate`: the output it was merged into.
+             */
+            readonly merged_into?: number | null;
+            /**
              * May Set Status
              * @description Whether you may change its status.
              * @default false
@@ -52908,6 +53107,11 @@ export interface components {
              * @default 0
              */
             readonly hidden_sessions: number;
+            /**
+             * Source Sessions
+             * @description Which of `sessions` each cited source is, by source id, so a quote in its evidence links to its session. Only sessions you read yourself; a source not listed is one you do not read.
+             */
+            readonly source_sessions?: readonly components["schemas"]["BrainOutputSourceSession"][];
         };
         /** BrainOutputSession */
         readonly BrainOutputSession: {
@@ -52924,6 +53128,26 @@ export interface components {
              */
             readonly title: string;
         };
+        /** BrainOutputSourceSession */
+        readonly BrainOutputSourceSession: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Title
+             * @description Scrubbed of secrets.
+             */
+            readonly title: string;
+            /**
+             * Source
+             * @description The source id its body's evidence names (`evidence[].source`).
+             */
+            readonly source: number;
+        };
         /** BrainOutputStatusIn */
         readonly BrainOutputStatusIn: {
             /**
@@ -52931,6 +53155,14 @@ export interface components {
              * @description open | accepted | dismissed | done
              */
             readonly status: string;
+        };
+        /** BrainOutputMergeIn */
+        readonly BrainOutputMergeIn: {
+            /**
+             * Duplicate
+             * @description The id of the output that is the same problem: it is folded into this one.
+             */
+            readonly duplicate: number;
         };
         /** GraphEdgeOut */
         readonly GraphEdgeOut: {
@@ -53321,6 +53553,17 @@ export interface components {
             readonly max_outputs_per_day: number;
             /** Max Tokens Per Day */
             readonly max_tokens_per_day?: number | null;
+            /**
+             * Lookback Days
+             * @description Its runs read only sessions active in this many days.
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Fade Days
+             * @description An open finding no run re-saw in this many days is faded.
+             * @default 21
+             */
+            readonly fade_days: number;
             readonly today: components["schemas"]["BrainBudgetToday"];
         };
         /** BrainTargetOut */
@@ -53545,9 +53788,52 @@ export interface components {
             readonly sessions_due: number;
             /** Source Ids Due */
             readonly source_ids_due?: readonly number[];
+            /**
+             * Lookback Days
+             * @description Only sessions active in this many days are due (none: no window).
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Open Findings Total
+             * @default 0
+             */
+            readonly open_findings_total: number;
+            /**
+             * Open Findings
+             * @description The open findings this learner holds for the subject and workspace, most recently seen first and capped: reuse one's key (or name it by `same_as`) when a finding is the same problem.
+             */
+            readonly open_findings?: readonly components["schemas"]["BrainRunContextFinding"][];
             readonly budget: components["schemas"]["BrainRunBudgetLeft"];
             /** How */
             readonly how: string;
+        };
+        /** BrainRunContextFinding */
+        readonly BrainRunContextFinding: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Seen
+             * @default 1
+             */
+            readonly seen: number;
+            /**
+             * Last Seen At
+             * @description ISO time a run last saw it.
+             * @default
+             */
+            readonly last_seen_at: string;
         };
         /** BrainRunContextPerson */
         readonly BrainRunContextPerson: {
@@ -53721,6 +54007,16 @@ export interface components {
              * @default false
              */
             readonly clear_tokens: boolean;
+            /**
+             * Lookback Days
+             * @description Read only sessions active in this many days.
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Fade Days
+             * @description Fade an open finding no run re-saw in this many days.
+             */
+            readonly fade_days?: number | null;
         };
         /** BrainWhyOut */
         readonly BrainWhyOut: {
@@ -54903,7 +55199,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WalkthroughDetailOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -56228,7 +56524,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["MailResolveOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -57061,7 +57357,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StoryboardOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -57120,7 +57416,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StoryboardOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -57203,7 +57499,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -57236,7 +57532,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RoundOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59369,7 +59665,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["DynamicViewOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61190,7 +61486,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["LocalAppSubmissionOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61306,7 +61602,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["MeetingOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61766,7 +62062,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionUploadOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61843,7 +62139,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ArcCreateOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62511,7 +62807,16 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Content Too Large */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62555,7 +62860,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Request Entity Too Large */
+            /** @description Content Too Large */
             readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62564,7 +62869,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62608,7 +62913,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62661,7 +62966,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62819,7 +63124,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62860,7 +63165,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62936,7 +63241,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63013,7 +63318,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63098,7 +63403,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentScaffoldOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63201,7 +63506,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentCanopyTokenOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63546,7 +63851,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63581,7 +63886,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63734,7 +64039,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63912,7 +64217,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63970,7 +64275,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentActorRouteOut"][];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64048,7 +64353,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AccessLineOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64179,7 +64484,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ReadModeSettingOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64259,7 +64564,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentHostSitesOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64340,7 +64645,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentAppEntriesOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64815,7 +65120,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64851,7 +65156,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65015,7 +65320,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65431,7 +65736,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65592,7 +65897,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65650,7 +65955,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65925,7 +66230,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentGitHubOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66072,6 +66377,76 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["OwnPatRotateOut"];
+                };
+            };
+        };
+    };
+    readonly get_browser_sign_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrowserSignInOut"];
+                };
+            };
+        };
+    };
+    readonly switch_on_browser_sign_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrowserSignInIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrowserSignInOut"];
+                };
+            };
+        };
+    };
+    readonly switch_off_browser_sign_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrowserSignInOut"];
                 };
             };
         };
@@ -66297,7 +66672,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunSummary"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66609,7 +66984,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["GoogleMintOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66762,7 +67137,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66797,7 +67172,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SchedulePreviewOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66854,7 +67229,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66936,7 +67311,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TriggerOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66993,7 +67368,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TriggerOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67097,7 +67472,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CoachingFactOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67181,7 +67556,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67424,7 +67799,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentCapabilitiesOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67668,7 +68043,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CapabilityLeaseOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67702,7 +68077,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CapabilitySpendOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67908,7 +68283,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskCallOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -68292,7 +68667,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -68498,7 +68873,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -68911,7 +69286,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -69246,7 +69621,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TaskSettingsOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72206,7 +72581,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PrivateRunnerOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75504,7 +75879,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TurnOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -76688,7 +77063,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["EngagementViewOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -76848,7 +77223,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ThreadOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -76947,7 +77322,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -77098,7 +77473,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ApprovalCardOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -77201,7 +77576,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackShareOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -77234,7 +77609,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackDetachOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -77267,7 +77642,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackNewThreadOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -77300,7 +77675,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackOfflineOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -77333,7 +77708,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ReportBackOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -77383,7 +77758,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["SessionOut"][];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -77416,7 +77791,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78379,7 +78754,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionSearchPageOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -80496,7 +80871,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -80558,7 +80933,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -80611,7 +80986,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -80704,7 +81079,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -80856,7 +81231,60 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly merge_outputs: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrainOutputMergeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -80938,7 +81366,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -80979,7 +81407,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81020,7 +81448,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81062,7 +81490,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81115,7 +81543,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81204,7 +81632,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81291,7 +81719,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81344,7 +81772,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81395,7 +81823,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81433,7 +81861,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81475,7 +81903,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -81537,7 +81965,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;

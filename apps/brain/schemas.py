@@ -137,6 +137,10 @@ class BrainOutputSession(StrictModel):
     title: str = Field(description="Scrubbed of secrets.")
 
 
+class BrainOutputSourceSession(BrainOutputSession):
+    source: int = Field(description="The source id its body's evidence names (`evidence[].source`).")
+
+
 class BrainOutputOut(StrictModel):
     id: int
     learner: str = Field(description="The slug of the learning feature that produced it.")
@@ -154,11 +158,17 @@ class BrainOutputOut(StrictModel):
     key: str = Field("", description="What makes a repeat the same thing: a repeat folds into an open or accepted one.")
     seen: int = Field(1, description="How many emits folded into it, the first included.")
     last_seen_at: dt.datetime | None = None
+    faded: bool = Field(False, description="Open or accepted, but no run re-saw it within its target's fade window: "
+                        "listed below the fresh ones and not shown to runs; setting it open or accepted keeps it.")
+    merged_into: int | None = Field(None, description="For a `duplicate`: the output it was merged into.")
     may_set_status: bool = Field(False, description="Whether you may change its status.")
     created_at: dt.datetime
     sessions: list[BrainOutputSession] = Field(default_factory=list,
                                                description="The sessions it cites that you read yourself.")
     hidden_sessions: int = Field(0, description="The sessions it cites that you do not read: a count only.")
+    source_sessions: list[BrainOutputSourceSession] = Field(
+        default_factory=list, description="Which of `sessions` each cited source is, by source id, so a quote in its "
+        "evidence links to its session. Only sessions you read yourself; a source not listed is one you do not read.")
 
 
 class BrainReadMessage(StrictModel):
@@ -178,6 +188,8 @@ class BrainReadSource(StrictModel):
     messages: list[BrainReadMessage]
     truncated: bool = Field(description="More of this source comes in the next call (`next_index`).")
     next_index: int | None = None
+    read_before: int | None = Field(None, description="Set when this session was learned from before and has grown "
+                                    "since: only the rows after this one are served (what is new).")
     directives: list[str] = Field(description="Words the people in this source asked every reader to be shown.")
 
 
@@ -197,10 +209,10 @@ class BrainReadOut(StrictModel):
     subject: str
     sources: list[BrainReadSource]
     view: str = Field("full", description="How much of each session is served: the feature's scope.")
-    next_after: int = Field(description="Pass this as `after` to read on.")
+    next_after: int = Field(description="Pass this back as `after` to read on (with `next_index` when set).")
     next_index: int | None = Field(None, description="When set, pass it as `index` with `next_after`: the rest "
                                    "of a source too large for one call.")
-    done: bool = Field(description="Nothing is left past `next_after`.")
+    done: bool = Field(description="Nothing more is due for this run.")
     project: dict | None = Field(None, description="For a project judge: its outcome and open tasks.")
     revoked: list[int] = Field(default_factory=list, description="Sources removed since this learner learned from "
                                "them: what came from them is withdrawn; do not rely on or rebuild it. Told once.")
@@ -217,7 +229,10 @@ class BrainEmitIn(StrictModel):
     sources: list[int] = Field(description="The `source` ids this output came from; each must have been read in this run.")
     key: str = Field("", max_length=200, description="A short stable slug naming WHAT this is (e.g. "
                      "`canopy-web:friction:mcp-422-shape`): an output of the same kind and key, still open or accepted, "
-                     "for the same subject and workspace, takes this one in as a repeat instead of a new output.")
+                     "for the same subject and workspace, takes this one in as a repeat instead of a new output. "
+                     "Reuse the key of an open finding in your run context when it is the same problem.")
+    same_as: int | None = Field(None, description="The id of an open finding in your run context this one is the same "
+                                "problem as: it folds into that one (more evidence, `seen` + 1) whatever its key.")
 
 
 class BrainEmitOut(StrictModel):
@@ -422,6 +437,8 @@ class BrainTargetBudget(StrictModel):
     max_runs_per_day: int
     max_outputs_per_day: int
     max_tokens_per_day: int | None = None
+    lookback_days: int | None = Field(None, description="Its runs read only sessions active in this many days.")
+    fade_days: int = Field(21, description="An open finding no run re-saw in this many days is faded.")
     today: BrainBudgetToday
 
 
@@ -435,6 +452,15 @@ class BrainTargetBudgetIn(StrictModel):
     max_tokens_per_day: int | None = Field(None, ge=1, description="Null leaves it as it is; 0 is refused. Send "
                                            "`clear_tokens` to remove the cap.")
     clear_tokens: bool = False
+    lookback_days: int | None = Field(None, ge=1, le=365, description="Read only sessions active in this many days.")
+    fade_days: int | None = Field(None, ge=1, le=365, description="Fade an open finding no run re-saw in this many "
+                                  "days.")
+
+
+class BrainOutputMergeIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    duplicate: int = Field(description="The id of the output that is the same problem: it is folded into this one.")
 
 
 class BrainOutputStatusIn(StrictModel):
@@ -541,6 +567,15 @@ class BrainRunContextPerson(StrictModel):
     name: str = ""
 
 
+class BrainRunContextFinding(StrictModel):
+    id: int
+    kind: str
+    key: str = ""
+    title: str = ""
+    seen: int = 1
+    last_seen_at: str = Field("", description="ISO time a run last saw it.")
+
+
 class BrainRunContext(StrictModel):
     """What a learning run's turn is told about itself (`brain.context`): in its first prompt and as `brain_run` in
     its caller envelope. Ids and names, never a word of a session. `version` changes only when a field's meaning does."""
@@ -561,6 +596,12 @@ class BrainRunContext(StrictModel):
     accountable: BrainRunContextPerson | None = None
     sessions_due: int
     source_ids_due: list[int] = Field(default_factory=list)
+    lookback_days: int | None = Field(None, description="Only sessions active in this many days are due (none: no "
+                                      "window).")
+    open_findings_total: int = 0
+    open_findings: list[BrainRunContextFinding] = Field(
+        default_factory=list, description="The open findings this learner holds for the subject and workspace, most "
+        "recently seen first and capped: reuse one's key (or name it by `same_as`) when a finding is the same problem.")
     budget: BrainRunBudgetLeft
     how: str
 

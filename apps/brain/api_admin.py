@@ -23,6 +23,7 @@ from . import actor as actor_mod
 from . import cascade, findings, outputs, person, registry, reporting, scope, targets
 from .models import BrainCapability, BrainOutput, OutputLineage, SourceLink
 from .schemas import (
+    BrainOutputMergeIn,
     BrainOutputOut,
     BrainOutputStatusIn,
     CapabilityIn,
@@ -222,24 +223,27 @@ def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = ""
     canopy's system findings where you own or administer the workspace a run was started for (or one above it),
     as yourself only. Pinned to a workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it;
     unpinned, your one organisation's (the read rule every list follows). Never a withdrawn or stale one. `status`
-    narrows to open, accepted, dismissed or done. Newest first."""
+    narrows to open, accepted, dismissed, done or duplicate (one merged into another, left out unless asked for).
+    Newest first, a faded finding (no run re-saw it within its fade window) below the fresh ones."""
     as_person = manager_leg_open(request)
     acting = None if as_person else actor_mod.resolve(request)[0]
     acting = acting if acting is not None and acting.is_agent else None
-    qs = (outputs.visible_to(request.user, as_person=as_person, acting=acting).select_related("capability", "status_by")
+    qs = (outputs.visible_to(request.user, as_person=as_person, acting=acting)
+          .select_related("capability", "status_by", "run")
           .filter(workspace_id__in=scope.of_request(request)).order_by("-created_at", "-pk"))
     if subject_type:
         qs = qs.filter(subject_type=subject_type)
     if subject:
         qs = qs.filter(subject=subject)
-    if status:
-        qs = qs.filter(status=status)
-    return _outputs_out(request.user, list(qs[:max(1, min(limit, 500))]), as_person=as_person, acting=acting)
+    qs = qs.filter(status=status) if status else qs.exclude(status=findings.DUPLICATE)
+    rows = _outputs_out(request.user, list(qs[:max(1, min(limit, 500))]), as_person=as_person, acting=acting)
+    return sorted(rows, key=lambda o: o["faded"])                   # stable: newest first within fresh and faded
 
 
 def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
-    cited, named = _cited(user, rows)
+    cited, named, by_source = _cited(user, rows)
     memo: dict = {}
+    fades: dict = {}
 
     def may_set(o) -> bool:
         if acting is not None:
@@ -251,9 +255,12 @@ def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
              "state": o.state, "status": o.status, "status_at": o.status_at,
              "status_by": getattr(o.status_by, "email", "") or "", "key": o.key, "seen": o.seen,
              "last_seen_at": o.last_seen_at, "created_at": o.created_at,
+             "faded": findings.faded(o, findings.fade_days_of(o, fades)), "merged_into": o.merged_into_id,
              "may_set_status": may_set(o),
              "sessions": [named[s] for s in cited.get(str(o.pk), []) if s in named],
-             "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named)} for o in rows]
+             "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named),
+             "source_sessions": [{"source": src, **named[s]} for src, s in by_source.get(str(o.pk), []) if s in named]}
+            for o in rows]
 
 
 @router.post("/brain/outputs/{output_id}/status", response={200: BrainOutputOut, **refusals(403, 404, 422)},
@@ -283,16 +290,50 @@ def set_output_status(request: HttpRequest, output_id: int, payload: BrainOutput
     return _outputs_out(user, [out], as_person=not actor.is_agent, acting=acting)[0]
 
 
-def _cited(user, rows) -> tuple[dict, dict]:
-    """Each output's cited sessions (`OutputLineage`), and of those the ones `user` reads through legs 1 to 6, by id
-    with a scrubbed title. Three reads for a whole page."""
+@router.post("/brain/outputs/{output_id}/merge", response={200: BrainOutputOut, **refusals(403, 404, 422)},
+             summary="Merge a duplicate finding into this one")
+@gate("brain.manage", "self", kind="action")  # both outputs' audience's actors (findings.actor_may_set, actor.of)
+def merge_outputs(request: HttpRequest, output_id: int, payload: BrainOutputMergeIn) -> dict:
+    """Two findings that are one problem: fold `duplicate` into this one. This one takes its sightings (`seen` adds up),
+    the sessions it came from and a note of it (`merged_from`); the duplicate's status becomes `duplicate`
+    (`merged_into` this one), and a later repeat of its key folds here. Both must be of the same learner, subject and
+    workspace, and yours to set by the rule that sets a status (`set_output_status`). Recorded in the workspace's
+    log."""
+    actor = actor_mod.of(request)
+    user = actor.user
+    acting = actor if actor.is_agent else None
+    visible = outputs.visible_to(user, as_person=not actor.is_agent, acting=acting)
+    found = {o.pk: o for o in BrainOutput.objects.select_related("capability", "status_by", "run")
+             .filter(pk__in=[output_id, payload.duplicate], state=BrainOutput.ACTIVE,
+                     workspace_id__in=wsvc.request_member_slugs(request))
+             .filter(pk__in=visible.values("pk"))}
+    keep, dup = found.get(output_id), found.get(payload.duplicate)
+    if keep is None or dup is None:
+        raise ProblemError(404, "No such output", type_=TYPE_NOT_FOUND)
+    if not (findings.actor_may_set(actor, keep) and findings.actor_may_set(actor, dup)):
+        raise ProblemError(403, "Only the people who act for its audience merge findings", type_=TYPE_FORBIDDEN)
+    try:
+        out = findings.merge(keep, dup, by=user, acting=actor.record() if actor.is_agent else None)
+    except findings.MergeRefusedError as e:
+        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
+    out.refresh_from_db()
+    return _outputs_out(user, [out], as_person=not actor.is_agent, acting=acting)[0]
+
+
+def _cited(user, rows) -> tuple[dict, dict, dict]:
+    """Each output's cited sessions (`OutputLineage`), of those the ones `user` reads through legs 1 to 6, by id
+    with a scrubbed title, and each output's (source id, session id) pairs, so its evidence can name a session only
+    where `named` already does. Three reads for a whole page."""
     cited: dict[str, list] = {}
-    for oid, sid in (OutputLineage.objects.filter(output_kind=cascade.OUTPUT_KIND, output_id__in=[str(o.pk) for o in rows],
-                                                  source__session_id__isnull=False, cited=True)
-                     .values_list("output_id", "source__session_id")):
+    by_source: dict[str, list] = {}
+    for oid, src, sid in (OutputLineage.objects.filter(output_kind=cascade.OUTPUT_KIND,
+                                                       output_id__in=[str(o.pk) for o in rows],
+                                                       source__session_id__isnull=False, cited=True)
+                          .values_list("output_id", "source_id", "source__session_id")):
         cited.setdefault(oid, []).append(sid)
+        by_source.setdefault(oid, []).append((src, sid))
     every = {s for ids in cited.values() for s in ids}
     readable = access.readable_ids(user, every)
     named = {s.pk: {"session_id": s.pk, "workspace": s.workspace_id, "title": redact.redact_text(s.title or "")[0]}
              for s in Session.objects.filter(pk__in=readable).only("pk", "workspace_id", "title")}
-    return cited, named
+    return cited, named, by_source

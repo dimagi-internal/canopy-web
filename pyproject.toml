@@ -2,11 +2,12 @@
 name = "canopy-web"
 version = "0.1.0"
 description = "Canopy Web - Django ASGI backend with React frontend"
-# 3.12 because Django 6 requires it — and because 3.11 was never actually
-# exercised: the Dockerfile is python:3.12-slim and every CI job runs
-# `uv python install 3.12`. The old floor described an intention, not a
-# tested configuration.
-requires-python = ">=3.12"
+# 3.13 everywhere: the Dockerfile (python:3.13-slim), every CI job
+# (`uv python install 3.13`), the runner's bundled CPython
+# (runner/packaging/versions.json) and the machines agents work on. A floor
+# below what CI and production run describes an intention, not a tested
+# configuration — and two interpreters disagreed about generated.ts.
+requires-python = ">=3.13"
 dependencies = [
     "django>=6.1,<7.0",
     "django-environ>=0.11,<1.0",
@@ -165,7 +166,7 @@ canopy-runner = { path = "runner/canopy_runner", editable = true }
 include = ["apps*", "config*"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 120
 extend-exclude = ["**/migrations/*"]
 # The frozen per-file ignores for PLC0415 (lazy imports) — a shrink-only baseline,

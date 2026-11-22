@@ -133,7 +133,7 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Build the runtime payload
         run: |
-          uv run --no-project --python 3.12 python runner/packaging/build_payload.py \
+          uv run --no-project --python 3.13 python runner/packaging/build_payload.py \
             --platform "macos-${{ matrix.arch }}" --out "$RUNNER_TEMP/payload" --cache "$RUNNER_TEMP/cache"
       - name: The payload carries the resolved sha
         run: |
@@ -185,7 +185,7 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Build the runtime payload
         run: |
-          uv run --no-project --python 3.12 python runner/packaging/build_payload.py `
+          uv run --no-project --python 3.13 python runner/packaging/build_payload.py `
             --platform windows-x86_64 --out "$env:RUNNER_TEMP\payload" --cache "$env:RUNNER_TEMP\cache"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $got = (Get-Content "$env:RUNNER_TEMP\payload\release.json" -Raw | ConvertFrom-Json).sha
@@ -252,7 +252,7 @@ jobs:
           $flags = @()
           if ($signed) { $flags += '--signed' }
           # The installer IS the update artifact on Windows (self-update runs it with /UPDATE).
-          uv run --no-project --python 3.12 python runner/packaging/manifest.py record `
+          uv run --no-project --python 3.13 python runner/packaging/manifest.py record `
             --platform windows-x86_64 --sha '${{ needs.resolve.outputs.sha }}' `
             --installer $exe --update $exe @flags --out "$env:RUNNER_TEMP\dist\windows-x86_64.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

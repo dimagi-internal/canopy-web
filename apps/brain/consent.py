@@ -18,11 +18,14 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
+from apps.contacts import hcp
+from apps.contacts import services as contact_services
 from apps.events import services as events
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import cascade
+from .associate import due_again
 from .models import CLASSES, INDIVIDUAL, PROJECT, BrainSource, LearningConsent, SourceExclusion
 
 logger = logging.getLogger(__name__)
@@ -61,8 +64,6 @@ def live(user) -> LearningConsent | None:
 
 
 def _person(user):
-    from apps.contacts import services as contact_services  # noqa: PLC0415 — contacts imports this module
-
     return contact_services.person_for(user=user)
 
 
@@ -70,8 +71,6 @@ def _record(user, event_type: str, *, purpose: str, detail: str = "", ids: dict 
             workspaces=None) -> None:
     """One event on the person's own log and one ids-only row in each workspace they are in, or only in
     `workspaces` (a session's own, for an act about one session: another organisation's log never names it)."""
-    from apps.contacts import hcp  # noqa: PLC0415 — contacts imports this module
-
     person = _person(user)
     if person is not None:
         hcp.audit(person, event_type, actor=hcp.user_actor(user), purpose=purpose, detail=detail)
@@ -253,14 +252,12 @@ def revoke(user) -> bool:
 def _look_again(user) -> None:
     """The associator skips a session until everyone in it agreed to project learning: once this person does (or
     widens it), their sessions are looked at again."""
-    from .associate import due_again  # noqa: PLC0415 — associate reads this module's neighbours
-
     due_again(pk__in=cascade.sources_of(user))
 
 
 def _sync_coaching(user, *, on: bool) -> None:
     """Keep `CoachingOptIn` the same as the `individual` class (coaching's ACL still reads it)."""
-    from apps.contacts import session_reviewers  # noqa: PLC0415 — contacts imports this module
+    from apps.contacts import session_reviewers  # noqa: PLC0415 — cycle: contacts.session_reviewers -> consent
 
     if on == session_reviewers.live(user).exists():
         return
@@ -318,8 +315,6 @@ def include(user, source: BrainSource) -> bool:
     with transaction.atomic():
         n, _ = SourceExclusion.objects.filter(user=user, source=source).delete()
         if n:
-            from .associate import due_again  # noqa: PLC0415 — associate reads this module's neighbours
-
             due_again(pk=source.pk)
             _record(user, SOURCE_RESTORED, purpose="allow a session in canopy learning again",
                     detail=source.ref, ids={"source": source.pk, "ref": source.ref}, workspaces=[source.workspace_id])

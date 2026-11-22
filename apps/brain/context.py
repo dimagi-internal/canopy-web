@@ -8,12 +8,23 @@ two places from one function: the run's first prompt (`runs.prompt`) and the tur
 counted, never quoted: their words are read only through `brain_read`, so every read is recorded and eligibility,
 consent and the cascade apply. Everything the turn makes in canopy is recorded against what it read (`lineage`).
 
+It names the window the run reads in (`lookback_days`: sessions active in that many days, newest first) and the open
+findings its learner already holds for this subject and workspace (`open_findings`, by id, key, title and sightings,
+most recently seen first, capped; `findings.open_for`), so a run reuses a key for a problem already found instead of
+minting a new one. A faded finding is not among them. Their titles are the learner's own words, already scrubbed.
+
 The context is a typed, versioned document (`schemas.BrainRunContext`, `VERSION`): `document` builds it and checks it
 against the type; `runs.start` keeps the one the run was started with (`BrainRun.context`), which the brain page shows
 on the run. A new field is additive; a change in meaning is a new `VERSION`."""
 from __future__ import annotations
 
+from apps.canopy_sessions import access
+from apps.harness.models import Turn
+
+from . import budget, findings
 from .models import BRAIN_RUN_KEY, BrainRun
+from .reading import candidates
+from .schemas import BrainRunContext
 
 #: How many due source ids the envelope names at most; `sessions_due` is the whole count.
 MAX_DUE_IDS = 200
@@ -26,33 +37,26 @@ def _name(u) -> str:
 
 
 def due(run: BrainRun) -> tuple[int, list[int]]:
-    """How many sources the run may still read, and the first of them by id."""
-    from .reading import candidates  # noqa: PLC0415 — reading reads this module's neighbours
-
+    """How many sources the run may still read, and the first of them, most recently active first."""
     qs = candidates(run)
     return qs.count(), list(qs.values_list("pk", flat=True)[:MAX_DUE_IDS])
 
 
 def document(run: BrainRun, *, accountable=None) -> dict:
     """The run's context document, checked against its type (`schemas.BrainRunContext`)."""
-    from .schemas import BrainRunContext  # noqa: PLC0415 — schemas reads this app's models
-
     return BrainRunContext.model_validate(block(run, accountable=accountable)).model_dump()
 
 
 def block(run: BrainRun, *, accountable=None) -> dict:
     """The envelope's `brain_run`: everything the run is, by id and name, nothing a session said."""
-    from . import budget  # noqa: PLC0415 — budget reads this module's neighbours
-
     cap, t = run.capability, run.target
     count, ids = due(run) if run.state == BrainRun.OPEN else (0, [])
     if accountable is None and run.session_id is not None:
-        from apps.harness.models import Turn  # noqa: PLC0415 — harness reads this app's neighbours
-
         first = (Turn.objects.filter(chat_session_id=run.session_id).order_by("created_at")
                  .select_related("initiator_user").first())
         accountable = getattr(first, "initiator_user", None)      # a system turn's accountable person
     lim, left = budget.limits(t), (budget.run_left(run) if run.state == BrainRun.OPEN else {"sources": 0, "outputs": 0})
+    total, known = findings.open_for(run, workspace=run.scope or None)
     return {
         "version": VERSION,
         "run": run.pk, "state": run.state, "learner": cap.slug, "learner_name": cap.name,
@@ -63,20 +67,22 @@ def block(run: BrainRun, *, accountable=None) -> dict:
                     "project": t.project.handle if t.project_id else "", "schedule_id": t.schedule_id}
                    if t is not None else None),
         "accountable": ({"email": accountable.email, "name": _name(accountable)} if accountable is not None else None),
-        "sessions_due": count, "source_ids_due": ids,
+        "sessions_due": count, "source_ids_due": ids, "lookback_days": budget.lookback_days(t),
+        "open_findings_total": total, "open_findings": known,
         "budget": {"max_sources_per_run": lim.max_sources_per_run, "max_outputs_per_run": lim.max_outputs_per_run,
                    "sources_left": left["sources"], "outputs_left": left["outputs"]},
         "how": ("Read the sessions due only with brain_read (each read is recorded, and only what everyone in a "
                 "session agreed to is served). Write findings with brain_emit, citing the sources read, with a "
-                "`key` naming what it is so a repeat folds into the open finding. Stop at the budget. Anything "
-                "else this turn makes in canopy is recorded against the sessions it read, so a removal can reach it."),
+                "`key` naming what it is so a repeat folds into the open finding. Before you emit, check the open "
+                "findings: when one is the same problem, emit with its key (or `same_as` its id) so it folds (more "
+                "evidence, seen + 1); mint a new key only for a problem none of them is, and never two findings for "
+                "one problem in a run. Stop at the budget. Anything else this turn makes in canopy is recorded "
+                "against the sessions it read, so a removal can reach it."),
     }
 
 
 def of_turn(turn) -> dict | None:
     """The `brain_run` block for a turn in a run's conversation, or None."""
-    from apps.canopy_sessions import access  # noqa: PLC0415 — canopy_sessions reads this app's readers
-
     conversation = access.turn_conversation(turn)
     if not access.is_brain_conversation(conversation):
         return None
@@ -96,7 +102,21 @@ def prompt_lines(run: BrainRun, *, accountable=None) -> list[str]:
     return [f"Learner: {b['learner']} ({b['purpose_class']}, purpose {b['purpose']}); it emits {', '.join(b['output_kinds']) or 'nothing'}.",
             f"Target: {where}." + (f" Its schedule is #{t['schedule_id']}." if t else ""),
             f"Accountable: {who}.",
-            f"Sessions due: {b['sessions_due']}.",
+            f"Sessions due: {b['sessions_due']}"
+            + (f", active in the last {b['lookback_days']} days, most recent first." if b["lookback_days"]
+               else ", most recent first."),
+            *_finding_lines(b),
             f"Budget: at most {b['budget']['max_sources_per_run']} sessions read and "
             f"{b['budget']['max_outputs_per_run']} outputs written this run.",
             b["how"]]
+
+
+def _finding_lines(b: dict) -> list[str]:
+    known = b["open_findings"]
+    if not known:
+        return ["Open findings already held for this subject: none."]
+    more = b["open_findings_total"] - len(known)
+    head = (f"Open findings already held for this subject ({b['open_findings_total']}, most recently seen first"
+            + (f"; the {more} oldest are not listed" if more > 0 else "") + "); reuse a key when it is the same problem:")
+    return [head, *(f"- #{f['id']} key `{f['key'] or '(none)'}`: {f['title']} (seen {f['seen']}, last "
+                     f"{f['last_seen_at'][:10]})" for f in known)]

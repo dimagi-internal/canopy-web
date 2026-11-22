@@ -25,7 +25,11 @@ import logging
 import uuid
 from collections import defaultdict
 
-from . import participants
+from apps.canopy_sessions.models import Session
+from apps.contacts import hcp
+from apps.contacts.models import EntryRelationship, PersonFact
+
+from . import participants, sources
 from .models import MEMORY, BrainSource
 
 logger = logging.getLogger(__name__)
@@ -36,10 +40,6 @@ REASON = "a session it was learned from was removed from learning"
 
 def _source(ref: str):
     """The brain's source for a session id, made on first ask; None when the session is gone."""
-    from apps.canopy_sessions.models import Session  # noqa: PLC0415 — canopy_sessions imports this app
-
-    from . import sources  # noqa: PLC0415 — as the other lazy imports here
-
     found = BrainSource.objects.filter(kind=BrainSource.SESSION, ref=ref).select_related("session").first()
     if found is not None:
         return found
@@ -54,10 +54,7 @@ def _source(ref: str):
 def sweep(source_ids=None, memo: dict | None = None) -> int:
     """Delete every live memory entry derived from a session now removed for its person (see the module
     docstring for whose and why). Returns entries deleted."""
-    from apps.contacts import hcp  # noqa: PLC0415 — contacts imports this app
-    from apps.contacts.models import EntryRelationship, PersonFact  # noqa: PLC0415 — as the other lazy imports here
-
-    from .cascade import ever_agreed, removed_reason  # noqa: PLC0415 — cascade calls this module
+    from .cascade import ever_agreed, removed_reason  # noqa: PLC0415 — cycle: cascade -> hcp_store
 
     memo = {} if memo is None else memo
     live = PersonFact.objects.filter(superseded_at__isnull=True, retracted_at__isnull=True).values("entry_id")

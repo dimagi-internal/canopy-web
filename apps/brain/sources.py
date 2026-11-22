@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from django.db import transaction
 
-from apps.agents.models import Agent
+from apps.agents.models import AgentProject
 
 from . import participants
 from .models import BrainSource, SourceLink, SourceParticipant
@@ -45,7 +45,7 @@ def is_participant(session_id, *, user_id=None, contact_id=None) -> bool:
     if user_id is None:
         return rows.filter(contact_id=contact_id).exists()
     # An agent's login is never a participant, so it never needs a refresh.
-    return rows.filter(user_id=user_id).exists() or Agent.objects.filter(user_id=user_id).exists()
+    return rows.filter(user_id=user_id).exists() or participants.is_agent_login(user_id)
 
 
 def existing(session) -> BrainSource | None:
@@ -89,8 +89,6 @@ def refresh(source: BrainSource, session=None) -> BrainSource:
 def drop_foreign_links(source: BrainSource) -> int:
     """A link never crosses a workspace (`associate._candidate_projects`): once a session moves, its links to projects
     of the workspace it left go, whoever made them, so nothing there reads it or learns from it."""
-    from apps.agents.models import AgentProject  # noqa: PLC0415 — agents reads this app's neighbours
-
     here = AgentProject.objects.filter(workspace_id=source.workspace_id).values_list("pk", flat=True)
     return (SourceLink.objects.filter(source=source, subject_type=SourceLink.PROJECT_SUBJECT)
             .exclude(subject__in=[str(pk) for pk in here]).delete()[0])

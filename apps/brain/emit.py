@@ -6,7 +6,8 @@ now: a source cited but never read, or one whose people withdrew since, is refus
 (`OutputLineage`) is written from the reads, every source the run had read by then and not only the cited ones
 (`write_lineage`): all of it was in the run's context, so a later removal of any of them reaches the output.
 An output that names a `key` already held by an open finding of the same learner, subject and workspace is a repeat
-and folds into it (`findings`). A new output spends the run's budget (`budget.run_left`); at the cap it is refused. The words
+and folds into it (`findings`); so is one that names that finding outright (`same_as`, its id), which must be an open
+finding of the run's own learner, subject and workspace or the emit is refused. A new output spends the run's budget (`budget.run_left`); at the cap it is refused. The words
 are scrubbed like every learning read, keys as well as values. Emitting the same thing twice is one output."""
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from apps.common import redact
 
 from . import associate, budget, findings, learning_reads
 from .eligibility import eligible
-from .models import ABOUT_A_PERSON, BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
+from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
 
 MAX_BODY_CHARS, MAX_SOURCES = 20_000, 50
 
@@ -35,7 +36,8 @@ LINK = "link"
 LINK_TIERS = ("core", "adjacent", "candidate", "rejected")
 
 
-def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = "", key: str = ""):
+def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = "", key: str = "",
+         same_as: int | None = None):
     """Write one output, or fold a repeat into the open one it matches (`findings`). Returns the output; `folded` on
     it says which happened."""
     cap = run.capability
@@ -54,7 +56,7 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
     if set(ids) - read:
         raise EmitRefusedError(f"cites a source this run did not read: {sorted(set(ids) - read)}")
     sources = list(BrainSource.objects.filter(pk__in=ids).select_related("session"))
-    subject = int(run.subject) if cap.purpose_class in ABOUT_A_PERSON else None
+    subject = run.subject_user_id
     for s in sources:
         if not eligible(s, cap, run.purpose, subject):
             raise EmitRefusedError(f"source {s.pk} is no longer open to this feature")
@@ -76,7 +78,13 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
         if existing is not None:
             existing.folded = False
             return existing
-        repeat = findings.match(run, kind=kind, key=clean_key, workspace=workspace)
+        if same_as is not None:
+            repeat = findings.match_id(run, int(same_as), kind=kind, workspace=workspace)
+            if repeat is None:
+                raise EmitRefusedError(f"output {same_as} is not an open {kind} of this learner here: emit it as "
+                                       "new (or with its key) instead")
+        else:
+            repeat = findings.match(run, kind=kind, key=clean_key, workspace=workspace)
         if repeat is not None:                   # a repeat costs no output of the budget
             out = findings.fold(repeat, run, title=clean_title, body=scrubbed, cited=ids)
             out.folded = True

@@ -23,8 +23,9 @@ import { scopedPath } from '@/lib/scopedLinks'
 /**
  * A STORED agent's definition (docs/architecture/stored-agents.md): the files of its
  * live revision and of its one draft, the draft's changes against live, and every
- * revision. Publish and Rollback show only to the agent's owner and admins acting as
- * themselves (`can_publish`, the server's own answer); Discard to anyone who may draft.
+ * revision. Publish and Rollback show only to whoever the server lets publish
+ * (`can_publish`: the agent's owner and admins, or another agent that administers it);
+ * Discard to anyone who may draft. A revision another agent published as an admin names it.
  * The server enforces every rule; this page only offers what it says the viewer may do.
  */
 export function AgentDefinitionSection(): JSX.Element {
@@ -182,6 +183,12 @@ export function AgentDefinitionSection(): JSX.Element {
                     {r.acted_by.agent} as {r.acted_by.person}
                   </span>
                 ) : r.author.by_agent ? `${r.author.email} (agent)` : r.author.email}
+                {r.published_by_agent && (
+                  <span data-testid="definition-published-by-agent" className="block text-muted-foreground"
+                    title={`Published by ${r.published_by_agent}, an agent that administers this one, signed in as itself`}>
+                    published by {r.published_by}
+                  </span>
+                )}
               </Td>
               <Td tone="muted" nowrap>
                 {new Date(r.published_at ?? r.created_at).toLocaleString()}

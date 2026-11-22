@@ -3,8 +3,8 @@
 Reads only, every figure a SQL aggregate or one read per section, never a word of a session. What a person sees is
 bounded by what they already read:
 
-* **Sessions** only through legs 1 to 6 (`access.readable_sessions(brain=False)`), as the preview: a link or a run's
-  read of a session they cannot read is a count, never its id or title.
+* **Sessions** only through legs 1 to 6 (`access.readable_sessions(brain=False)`): a link or a run's read of a
+  session they cannot read is a count, never its id or title.
 * **Projects** only ones they may read (`project_read_q`), in their own workspaces.
 * **Workspace-wide counts** (sources, removals, cascade work) only where they hold `logs.read` (the health
   dashboard's gate); elsewhere the same counts over their own sources and their own removals.
@@ -32,6 +32,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import readers, registry
+from .api_manage import flags_out, learner_refusal, may_manage, reads_out, targets_out
 from .eligibility import covers
 from .models import (
     CLASSES,
@@ -75,7 +76,7 @@ def _readable_projects(user, slugs):
 
 
 def _readable_sessions(user, slugs):
-    """Legs 1 to 6, as the preview: never the brain's own project leg."""
+    """Legs 1 to 6: never the brain's own project leg."""
     return access.readable_sessions(user, workspace_slugs=slugs, brain=False)
 
 
@@ -150,8 +151,6 @@ def link_groups(user, slugs, admin: set[str]) -> list[dict]:
 def learners(user=None, pin: str = "", targets: list[dict] = ()) -> list[dict]:
     """Every learner, whether it can be aimed and run at all (`runnable`), how many of `targets` (the page's) are its,
     and whether `user` may configure it at `pin` (`api_manage.learner_refusal`)."""
-    from .api_manage import learner_refusal  # noqa: PLC0415 — api_manage reads this module's neighbours
-
     caps = list(BrainCapability.objects.select_related("operator", "registered_by").order_by("slug"))
     shown = registry.shown_to(user, caps) if user is not None else set()
     return [{"slug": c.slug, "name": c.name, "purpose_class": c.purpose_class, "enabled": c.enabled, "scope": c.scope,
@@ -214,8 +213,6 @@ def cascade_counts(user, slugs, admin: set[str]) -> list[dict]:
 
 
 def summary(user, slugs, pin: str = "") -> dict:
-    from .api_manage import flags_out, may_manage, reads_out, targets_out  # noqa: PLC0415 — api_manage reads this module's neighbours
-
     slugs = set(slugs)
     admin = _admin_slugs(user, slugs)
     aimed = [t for t in targets_out(user, pin) if t["workspace"] in slugs] if pin else []
@@ -257,11 +254,12 @@ def link_page(user, slugs, *, before: int = 0, limit: int = 50) -> dict:
 
 def context_shown(run: BrainRun) -> dict | None:
     """The context document a run was started with (`context.document`), as the page shows it: the ids of the
-    sessions due left out (their count stays), since the viewer may not read them. None for a run from before it was
+    sessions due left out (their count stays), since the viewer may not read them, and the open findings it was told
+    of (their count stays), since who sees a run is not who sees its findings. None for a run from before it was
     kept."""
     if not run.context:
         return None
-    return {**run.context, "source_ids_due": []}
+    return {**run.context, "source_ids_due": [], "open_findings": []}
 
 
 def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:

@@ -78,6 +78,13 @@ describe('AgentDefinitionSection', () => {
       .toBe('ace as olive@dimagi.com'))
   })
 
+  it('names the admin agent that published a revision as itself', async () => {
+    setup(true, [rev(2, 'published', { published_by: 'ace (agent)', published_by_agent: 'ace' }),
+      rev(1, 'superseded')])
+    await waitFor(() => expect(screen.getByTestId('definition-published-by-agent').textContent)
+      .toBe('published by ace (agent)'))
+  })
+
   it('offers no Publish or Roll back to someone who may only draft', async () => {
     setup(false)
     await screen.findByTestId('definition-revisions')

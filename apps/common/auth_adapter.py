@@ -1,6 +1,7 @@
 """Allauth adapters: close local signup, and gate social login on the
 email-domain allowlist (or a pending workspace invite)."""
 import logging
+from collections.abc import Callable
 
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.core.exceptions import ImmediateHttpResponse
@@ -14,6 +15,21 @@ from .auth_domains import allowed_email_domains, email_in_allowlist
 from .log_redact import path_template
 
 logger = logging.getLogger(__name__)
+
+#: The one exception to "an agent's login never signs in at a browser": an owner's
+#: grant for testing (`apps/agents/browser_sign_in.py`). `agents` registers the lookup
+#: from its `ready()` (this kit layer never imports it); with none registered, every
+#: agent sign-in is refused. It answers the grant in force for an agent login's user
+#: id, or None.
+_browser_sign_in_grant: Callable[[int], object | None] | None = None
+#: Where a sign-in let through under a grant leaves it on the request, for the
+#: `user_logged_in` receiver that marks the session (`browser_sign_in.mark_session`).
+AGENT_BROWSER_SIGN_IN_ATTR = "_canopy_agent_browser_sign_in"
+
+
+def register_agent_browser_sign_in(lookup: Callable[[int], object | None]) -> None:
+    global _browser_sign_in_grant
+    _browser_sign_in_grant = lookup
 
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
@@ -130,12 +146,22 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             # only the domain's own admin can make one.
             self._refuse(request, sociallogin, email, reason=self.NOT_WORKSPACE)
 
-        if self._lands_on_agent_login(sociallogin, email):
+        agent_login = self._agent_login_landed_on(sociallogin, email)
+        if agent_login is not None:
             # An agent's login is a machine's: it reaches canopy with tokens, never
             # with a browser session. Its Google account's credentials live on
             # runners, so letting them open the browser as the agent would turn a
-            # runner compromise into an interactive session.
-            self._refuse(request, sociallogin, email, reason=self.AGENT_LOGIN)
+            # runner compromise into an interactive session — unless a person who
+            # administers the agent opened a time-limited grant for testing.
+            grant = _browser_sign_in_grant(agent_login) if _browser_sign_in_grant else None
+            if grant is None:
+                self._refuse(request, sociallogin, email, reason=self.AGENT_LOGIN)
+            setattr(request, AGENT_BROWSER_SIGN_IN_ATTR, grant)
+            if not sociallogin.is_existing:
+                # The one user `_agent_login_landed_on` matched on this provider-verified
+                # address; the JIT merge never connects onto an agent's login itself.
+                sociallogin.connect(request, get_user_model().objects.get(pk=agent_login))
+            return
 
         if admitted_outside_domain:
             # Never run the JIT-identity merge on this branch: it connects
@@ -207,19 +233,20 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         return bool(hd) and hd in allowed
 
     @staticmethod
-    def _lands_on_agent_login(sociallogin, email) -> bool:
-        """This sign-in would open a session as an agent's own login: an account
+    def _agent_login_landed_on(sociallogin, email) -> int | None:
+        """The agent login this sign-in would open a session as, if any: an account
         already linked to one, or the one user `_connect_jit_identity` would link."""
         User = get_user_model()
         if sociallogin.is_existing:
-            return User.objects.filter(pk=sociallogin.user.pk,
-                                       agent_identity__isnull=False).exists()
+            pk = sociallogin.user.pk
+            return pk if User.objects.filter(pk=pk, agent_identity__isnull=False).exists() else None
         if not email:
-            return False
+            return None
         matches = list(User.objects.filter(email__iexact=email)
                        .values_list("pk", flat=True)[:2])
-        return len(matches) == 1 and User.objects.filter(
-            pk=matches[0], agent_identity__isnull=False).exists()
+        if len(matches) == 1 and User.objects.filter(pk=matches[0], agent_identity__isnull=False).exists():
+            return matches[0]
+        return None
 
     @staticmethod
     def _verified_emails(sociallogin) -> set[str]:

@@ -5,7 +5,8 @@ What is pinned, each with its refusal:
 - every write goes through the file policy (hooks, generated paths, executables,
   traversal, secrets, caps), and generated files are always canopy's own;
 - an agent may draft its own definition, which files an approval; it may never publish,
-  roll back or convert — nor may any turn's token;
+  roll back or convert it — nor may any turn's token (another agent that administers it may
+  publish and roll back: test_stored_agents_admin_agent.py);
 - publishing supersedes, rollback appends, history is never rewritten;
 - the archive is what the manifest root names, and only a box that may hold the agent
   (or a member) gets it — a box never gets a draft.
@@ -79,6 +80,19 @@ def test_create_gate(w, agent):
     assert _create(_browser(w["outsider"]), slug="other").status_code == 404
     assert _create(_browser(w["editor"]), slug=SLUG).status_code == 409
     assert _create(_browser(w["editor"]), slug="stored").status_code == 422
+
+
+def test_an_agents_login_creates_for_a_person_never_itself(w, agent):
+    r = _create(pat_client(w["bot"]), slug="other")
+    assert r.status_code == 201, r.content
+    assert Agent.objects.get(slug="other").owner == w["owner"]
+    # Its turn's asker, when it names a live turn of its own that a person asked for.
+    turn = Turn.objects.create(agent=agent, origin="api", prompt="make one", idempotency_key="t-own",
+                               status=Turn.RUNNING, initiator_kind="user", initiator_user=w["editor"],
+                               initiator_assurance="session")
+    r = _create(pat_client(w["bot"], HTTP_X_CANOPY_PARENT_TURN=str(turn.pk)), slug="third")
+    assert r.status_code == 201, r.content
+    assert Agent.objects.get(slug="third").owner == w["editor"]
 
 
 # --- reading ----------------------------------------------------------------

@@ -10,6 +10,10 @@ today's use. A run stops cleanly at a cap, never in the middle of a source or an
 * **runs per day**, **outputs per day** and **tokens per day**: a fire or a Run now starts nothing once one is spent,
   and leaves a `brain.target` event saying which (`targets.why_not`).
 
+A target also says how far back its runs read and how long a finding stays fresh (`lookback_days`, `fade_days`, set by
+the same people on the same form): a run reads only sessions active in the last `lookback_days` (`reading.candidates`),
+newest first, and an open finding nobody re-saw for `fade_days` is faded (`findings.faded`). Null takes the default.
+
 Tokens are what the boxes reported for the runs' conversations (`events.SessionUsage`), so they lag the run and are
 checked before a run starts, never during one: canopy-web cannot stop a model mid-turn. A run is one turn by
 construction (its first turn's end finishes it, `signals._run_ends_with_its_turn`), so "turns per run" is one.
@@ -22,12 +26,23 @@ from dataclasses import asdict, dataclass
 from django.db.models import F, Sum
 from django.utils import timezone
 
+from apps.events.models import SessionUsage
+
 from .models import BrainOutput, BrainRun, BrainRunRead, BrainTarget
 
 #: A target's budget unless its managers set another; what `BrainTarget`'s columns default to.
 DEFAULTS = {"max_sources_per_run": 50, "max_outputs_per_run": 20, "max_runs_per_day": 4, "max_outputs_per_day": 50,
             "max_tokens_per_day": None}
 FIELDS = tuple(DEFAULTS)
+#: How far back a target's runs read, in days of a session's last activity, by kind of target. A workspace moves fast
+#: and its learner reads every day, so two weeks is the current state of things; a project target reads only the
+#: sessions tied to one piece of work, far fewer a day, over that work's longer arc, so a month.
+LOOKBACK_DAYS = {"workspace": 14, "project": 30}
+#: How long an open finding stays fresh without a run seeing it again: half again the workspace window, so a finding
+#: none of three weeks of daily runs re-saw is one reality has probably moved past.
+FADE_DAYS = 21
+#: The target's settings beside its budget, on the same form and route; null takes the default.
+WINDOW_FIELDS = ("lookback_days", "fade_days")
 
 
 @dataclass(frozen=True)
@@ -45,6 +60,18 @@ def limits(target: BrainTarget | None) -> Limits:
     return Limits(**{f: getattr(target, f) for f in FIELDS})
 
 
+def lookback_days(target: BrainTarget | None) -> int | None:
+    """How many days back a run of `target` reads (None: a run with no target reads without a window)."""
+    if target is None:
+        return None
+    return target.lookback_days or LOOKBACK_DAYS["project" if target.project_id else "workspace"]
+
+
+def fade_days(target: BrainTarget | None) -> int:
+    """How many days an open finding of `target` stays fresh without a run seeing it again."""
+    return (target.fade_days if target is not None else None) or FADE_DAYS
+
+
 def _today_start(now=None) -> dt.datetime:
     now = now or timezone.now()
     return now.astimezone(dt.UTC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -52,8 +79,6 @@ def _today_start(now=None) -> dt.datetime:
 
 def today(target: BrainTarget, now=None) -> dict:
     """What `target` spent since midnight UTC: runs started, outputs written, tokens its runs' conversations used."""
-    from apps.events.models import SessionUsage  # noqa: PLC0415 — events reads this app's neighbours
-
     since = _today_start(now)
     runs = BrainRun.objects.filter(target=target, created_at__gte=since)
     outputs = BrainOutput.objects.filter(run__target=target, created_at__gte=since).count()
@@ -88,4 +113,5 @@ def run_left(run: BrainRun) -> dict:
 
 def out(target: BrainTarget) -> dict:
     """The budget and today's use, as the brain page shows them."""
-    return {**asdict(limits(target)), "today": today(target)}
+    return {**asdict(limits(target)), "lookback_days": lookback_days(target), "fade_days": fade_days(target),
+            "today": today(target)}

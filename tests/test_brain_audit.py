@@ -77,7 +77,7 @@ def test_an_output_still_shows_only_the_sessions_it_cites(w):
     reading.read_next(run, limit=5)
     s2 = w["s2"].brain_sources.get()
     out = emit.emit(run, kind="finding", title="t", body={"x": 1}, source_ids=[s2.pk])
-    cited, _named = api_admin._cited(w["owner"], [out])
+    cited, _named, _by_source = api_admin._cited(w["owner"], [out])
     assert cited == {str(out.pk): [w["s2"].pk]}
 
 

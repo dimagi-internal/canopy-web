@@ -10,18 +10,29 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 #: What a person can agree canopy learns from their sessions for. The class names are
 #: the contract: a capability declares one, a consent lists some.
 INDIVIDUAL, MEMORY, PROJECT, SYSTEM = "individual", "memory", "project", "system"
 CLASSES = (INDIVIDUAL, MEMORY, PROJECT, SYSTEM)
+#: Where a brain run's conversation records its run (`canopy_sessions.models.BRAIN_RUN_METADATA_KEY`).
+BRAIN_RUN_KEY = "brain_run"
 #: Classes that learn about ONE PERSON from their own words (only that person's consent
 #: counts) versus the ones that learn about a project or canopy from everyone's (every
 #: human participant must agree).
-#: Where a brain run's conversation records its run (`canopy_sessions.models.BRAIN_RUN_METADATA_KEY`).
-BRAIN_RUN_KEY = "brain_run"
 ABOUT_A_PERSON = frozenset({INDIVIDUAL, MEMORY})
 SHARED = frozenset({PROJECT, SYSTEM})
+
+
+def person_id(subject_type: str, subject: str) -> int | None:
+    """The user id a (`subject_type`, `subject`) pair is about, or None: not about a person, or not a user id."""
+    return int(subject) if subject_type == "person" and (subject or "").isdecimal() else None
+
+
+def project_id(subject_type: str, subject: str) -> int | None:
+    """The `AgentProject` pk a (`subject_type`, `subject`) pair is about, or None."""
+    return int(subject) if subject_type == "project" and (subject or "").isdecimal() else None
 
 
 class BrainSource(models.Model):
@@ -47,16 +58,19 @@ class BrainSource(models.Model):
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
     state = models.CharField(max_length=12, choices=STATE_CHOICES, default=OPEN)
     sealed_reason = models.CharField(max_length=16, blank=True, default="")
-    #: When the associator should look at this source next (`associate.run_due`): set by an
-    #: activity fold, so a burst of folds is one look; null once looked at.
-    associate_due_at = models.DateTimeField(null=True, blank=True)
-    #: When it was last looked at; null means never, which is also due.
+    #: When the associator should look at this source next (`associate.run_due`, the one column it asks, indexed
+    #: over open sources): when it is made, then by an activity fold, so a burst of folds is one look; null once
+    #: looked at.
+    associate_due_at = models.DateTimeField(null=True, blank=True, default=timezone.now)
+    #: When it was last looked at; null means never.
     associated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["kind", "ref"], name="brain_source_one_per_ref")]
+        indexes = [models.Index(fields=["associate_due_at"], condition=models.Q(state="open"),
+                                name="brain_source_due")]
 
 
 class SourceParticipant(models.Model):
@@ -277,8 +291,21 @@ class BrainOutput(models.Model):
     #: How many emits folded into it (the first counts), and when the last one did.
     seen = models.PositiveIntegerField(default=1, db_default=1)
     last_seen_at = models.DateTimeField(null=True, blank=True)
+    #: The output this one was merged into as the same problem (`findings.merge`, status `duplicate`): a repeat of its
+    #: key folds there.
+    merged_into = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="merged")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def subject_user_id(self) -> int | None:
+        """The person it is about (a user id), or None (`person_id`)."""
+        return person_id(self.subject_type, self.subject)
+
+    @property
+    def subject_project_id(self) -> int | None:
+        """The project it is about (an `AgentProject` pk), or None (`project_id`)."""
+        return project_id(self.subject_type, self.subject)
 
     class Meta:
         indexes = [models.Index(fields=["subject_type", "subject", "state"], name="brain_output_by_subject"),
@@ -330,8 +357,8 @@ class BrainRun(models.Model):
     #: owners and its ancestors' (`outputs.visible_to`). A `system` run's subject is this slug too, so one run is
     #: open per feature and workspace (`brain_one_open_run`).
     scope = models.CharField(max_length=64, blank=True, default="", db_default="")
-    #: A lower bound a caller may set by hand: the run reads only sources past this pk. The scheduler passes 0 and
-    #: relies on what earlier clean runs read (`reading.candidates`), so a source that becomes eligible late is read.
+    #: Unused: what a run reads is bounded by its target's window of recent activity (`reading.window_start`), never by
+    #: a source id. Kept only because migrations are additive.
     floor = models.BigIntegerField(default=0)
     #: Its conversation (`canopy_sessions.Session`, `metadata.brain_run`).
     session = models.ForeignKey("canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
@@ -347,12 +374,20 @@ class BrainRun(models.Model):
     #: its `version`): what its turn was told, kept as it was told. Ids and names, never a word of a session.
     context = models.JSONField(default=dict, blank=True, db_default={})
 
+    @property
+    def subject_user_id(self) -> int | None:
+        """The person it is about (a user id), or None (`person_id`)."""
+        return person_id(self.subject_type, self.subject)
+
     class Meta:
         #: One open run per feature and subject: two workers starting the same run race on this, not on a read.
         constraints = [models.UniqueConstraint(fields=["capability", "subject_type", "subject"],
                                                condition=models.Q(state="open"), name="brain_one_open_run"),
                        models.UniqueConstraint(fields=["target", "slot"], condition=models.Q(slot__isnull=False),
                                                name="brain_one_run_per_slot")]
+        #: What a feature already learned about a subject (`reading.learned`), and a target's day (`budget`).
+        indexes = [models.Index(fields=["capability", "subject_type", "subject", "state"], name="brain_run_by_subject"),
+                   models.Index(fields=["target", "created_at"], name="brain_run_by_target_day")]
 
 
 class BrainTarget(models.Model):
@@ -381,6 +416,10 @@ class BrainTarget(models.Model):
     max_outputs_per_day = models.PositiveIntegerField(default=50, db_default=50)
     #: Null: no token cap. Checked before a run starts, from what the boxes reported (`events.SessionUsage`).
     max_tokens_per_day = models.PositiveBigIntegerField(null=True, blank=True)
+    #: How far back its runs read: only sessions active in the last this many days (`budget.lookback_days`; null: the
+    #: kind's default). And how long an open finding nobody re-sees stays fresh (`budget.fade_days`; null: the default).
+    lookback_days = models.PositiveIntegerField(null=True, blank=True)
+    fade_days = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -398,6 +437,9 @@ class BrainRunRead(models.Model):
     run = models.ForeignKey(BrainRun, on_delete=models.CASCADE, related_name="reads")
     source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="+")
     read_at = models.DateTimeField(auto_now_add=True)
+    #: How far into the session it read: the last row (`Message.turn_index`) served. A session that grew well past it
+    #: since a clean read is due again, from here (`reading.REREAD_ROWS`). Null: unknown (read before it was kept).
+    through = models.IntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["run", "source"], name="brain_run_reads_once")]

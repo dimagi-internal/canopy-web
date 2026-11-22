@@ -68,7 +68,7 @@ if [ "$(rec notarized)" = "true" ]; then
   check "dmg has a stapled ticket" xcrun stapler validate "$DMG"
 fi
 
-for bin in "$APP/Contents/MacOS/CanopyRunner" "$RT/python/bin/python3.12" "$RT/node/bin/node" "$RT/bin/canopy-device-key"; do
+for bin in "$APP/Contents/MacOS/CanopyRunner" "$RT/python/bin/python3.13" "$RT/node/bin/node" "$RT/bin/canopy-device-key"; do
   check "$(basename "$bin") is $ARCH" sh -c "lipo -archs '$bin' | tr ' ' '\n' | grep -qx '$ARCH'"
 done
 

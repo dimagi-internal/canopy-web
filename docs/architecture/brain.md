@@ -211,7 +211,11 @@ operator's workspace. The built-in
 
 ## Who sees what it produced (`apps/brain/outputs.py`)
 
-Outputs (`BrainOutput`) are read by their class's audience (`outputs.visible_to`, `GET /api/brain/outputs/`):
+Outputs (`BrainOutput`) are read by their learner's audience (`outputs.visible_to`, `GET /api/brain/outputs/`): each leg
+below opens only for a learner whose `audience` names it (`person`, `coaches`, `manager`; `project_readers`;
+`canopy_admins` for the superusers' leg and `agent_admins` for the owners' and admins', as the person and as an admin
+agent), so narrowing a learner's audience closes those legs and a learner with none is read by no one. A person's own
+`memory` outputs are always theirs. The legs:
 `individual` by the person, their coaches (the same rule as reading their sessions, and only outputs made in the
 workspaces they coach, `access.coach_scope`) and their manager; `memory` by
 the person; `project` by the project's readers; `system` by canopy admins and the owners and admins of the output's workspace
@@ -280,8 +284,12 @@ follows the operator's turn mode and rails. What makes it a learning run:
   shipped (`_isolated_forget_turn`), so no later turn reads it off the disk. A laptop runner does not report it and
   takes none.
 
-- **`brain_read`** serves the run's next eligible sources once each, in order, leaving out what a clean run of the
-  same feature already read for the same subject, each through the core read (`transcript_read.read`) in the feature's
+- **`brain_read`** serves the run's next eligible sources once each, most recently active first (`reading.activity`, the
+  session list's last-activity rule), only those active within its target's window (`budget.lookback_days`, on the
+  target: 14 days for a workspace, 30 for a project unless set; an older session is never read and no run walks back
+  through a backlog), leaving out what a clean run of the same feature already read for the same subject. A session
+  that grew by `reading.REREAD_ROWS` rows past where its last clean read stopped (`BrainRunRead.through`) is due again
+  and served from there (`read_before`). Each through the core read (`transcript_read.read`) in the feature's
   scope (`reading.view_of`; a judge never wider than `opening`), secrets scrubbed, never cut by speaker. One call serves
   at most `reading.MAX_CHARS` and never splits a source that fits in a call; a source larger than a call pages across
   calls (`next_index`, passed back as `index`), never splitting a row. The directives of the people in a source travel with it, and the sources removed since the feature learned
@@ -312,6 +320,17 @@ workspace that is still active and `open` or `accepted` is a repeat and folds in
 counts it, the newer words replace the old, and this run's reads join the lineage, so a removal of any session either
 run read still reaches it. A `dismissed` or `done` one takes no repeat: a new output is made. A repeat spends no output
 of the run's budget.
+
+A run is told the open findings its learner already holds for its subject and workspace (`findings.open_for`, in the
+run context's `open_findings`: id, key, title, sightings, most recently seen first, capped) and told to reuse a key for
+the same problem; it may also name the finding outright (`brain_emit`'s `same_as`, `findings.match_id`). The page's copy
+of a run's context leaves the list out (`state.context_shown`): who sees a run is not who sees its findings. Two outputs
+that are one problem are merged (`POST /api/w/<ws>/brain/outputs/{id}/merge`, by the rule that sets a status, on both;
+`findings.merge`): the kept one takes the other's sightings, lineage and a `merged_from` note, the other becomes
+`duplicate` with `merged_into`, a repeat of its key folds into the kept one, and an `output.merged` event records it.
+An open or accepted finding no run re-saw within its target's `fade_days` (21 unless set) is **faded**
+(`findings.faded`, computed, nothing deleted): left out of runs' context, listed last on the page, fresh again when a
+repeat folds in or someone sets it open or accepted (`set_status` moves its `last_seen_at`).
 
 ## Lineage over everything a run makes (`apps/brain/lineage.py`, `alerts_removal.py`)
 
@@ -372,8 +391,8 @@ content deletion, `signals._cascade_content_deletion`). It is idempotent.
 - **A tombstone, not a toggle.** `consent.include` restores eligibility only; a withdrawn output stays
   withdrawn, a replay cannot cite a removed source (`cascade.emit_allowed`), and a runner re-ship of deleted
   words is refused as before (`transcript_ingest.refuses_ship`).
-- Another store that writes `OutputLineage` registers with `cascade.register_store` and is asked to withdraw or mark
-  stale. The sweep skips withdrawn outputs.
+- The one other store that writes `OutputLineage`, personal memory, is swept by name (`hcp_store.sweep`); a new
+  store is added to `cascade.sweep` beside it. The sweep skips withdrawn outputs.
 
 ## Disclosure (`apps/brain/disclosure.py`)
 
@@ -410,7 +429,8 @@ The fire does not enqueue a plain turn: the harness asks the brain's announcer (
 `apps.py`; a project check-in's is the other), which consumes the slot whatever comes of it and starts a run
 (`targets.start` → `runs.start`) only when one may start (`targets.why_not`: learning reads, enabled, operator, entry,
 accountable, where the operator lives, an active project) and there is something new for the target (`targets.has_new`:
-an eligible source no clean run of it read, so a session linked, agreed to or backfilled late is still read). One run per
+an eligible source active in its window that no clean run of it read, or that grew since, so a session linked or agreed
+to late is still read, and a target with only old unread sessions does not fire). One run per
 target and slot (`brain_one_run_per_slot`), however many firers report it, and one open per target
 (`brain_one_open_run`). A slot that starts nothing leaves a `brain.target` event saying why. The run's turn is an
 occurrence of the schedule (`origin_ref.schedule_id`), so the schedule's history lists it; its `grace_minutes` is the
@@ -479,6 +499,13 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   an output's citation of it, is a count (`state.run_page`, `api_admin._cited`). A sub-workspace's owner never sees a
   sibling's or a parent's aggregate, runs or findings; a canopy admin also sees the unscoped runs. The runs list reads
   again while one is open.
+- **Two tabs.** Findings, the default (`frontend/src/pages/BrainFindings.tsx`), is written for whoever acts on them:
+  filtered by status (open and accepted at first), severity and the repo the fix belongs in, most severe first then the
+  most recently seen; a body's known fields (`brain-learn`'s system finding) drawn in plain words, any other as
+  "label: value". Each evidence quote names a source id; the outputs list maps it to a session only through
+  `source_sessions`, which lists the cited sources whose session the viewer already reads (`api_admin._cited`), so a
+  quote from any other says "a session you do not read". A faded finding sits in its own collapsed group with Keep; a
+  merged duplicate is never listed. Everything else is "Setup and audit" (`?tab=setup`).
 
 ## Managing a workspace's learning (`apps/brain/api_manage.py`, `learning_reads.py`)
 

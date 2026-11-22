@@ -35,13 +35,6 @@ def _visible(request: HttpRequest, pk: int) -> ApprovalRequest:
     return req
 
 
-def _needs_step_up(kind_key: str) -> bool:
-    try:
-        return kinds.get(kind_key).step_up
-    except kinds.KindError:
-        return False
-
-
 def _raise(exc: services.ApprovalError):
     raise HttpError(exc.status, str(exc)) from exc
 
@@ -59,7 +52,8 @@ def list_approval_kinds(request: HttpRequest) -> list[dict]:
 @gate("member")
 def list_approvals(request: HttpRequest, status: str = "pending", scope: str = "") -> list[dict]:
     """Requests in your workspaces that YOU could approve. `status=all` also lists decided ones you
-    could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`)."""
+    could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`). A card with `step_up`
+    is approved only on its page (`page_url`), with a passkey."""
     qs = (ApprovalRequest.objects.filter(workspace_id__in=visible_agent_workspaces(request))
           .select_related("workspace", "requested_by_agent", "requested_by_user", "decided_by")
           .order_by("-created_at")[:400])
@@ -123,12 +117,15 @@ def get_approval(request: HttpRequest, approval_id: int) -> dict:
 def decide_approval(request: HttpRequest, approval_id: int, payload: ApprovalDecideIn) -> dict:
     """Approve (runs the kind's handler as you, once) or decline (nothing happens). A request is
     decided once: a second decision is a 409 naming who got there first. 403 when you do not hold
-    the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason."""
+    the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason.
+    A request whose card says `step_up` is approved only from its page (`page_url`) in a browser, with
+    the approver's passkey (a browser without a fresh one gets 403 `step_up_required`; a token is always
+    refused): send the person that link. Declining needs no passkey."""
     seen = _visible(request, approval_id)
     # A kind that stands in for a route that needs a passkey asks for one here, before it runs; the
     # web client answers the 403 with its passkey dialog and retries (`frontend/src/auth/stepUp.ts`).
     stepped_up = False
-    if payload.decision == "approve" and seen.is_pending and _needs_step_up(seen.kind):
+    if payload.decision == "approve" and seen.is_pending and kinds.needs_step_up(seen.kind):
         stepup.require_recent_step_up(request)
         stepped_up = True
     try:

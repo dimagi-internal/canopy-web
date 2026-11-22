@@ -44,6 +44,8 @@ function PlanStep({ text }: { text: string }): JSX.Element {
  * an alert all open. What approving WILL DO is the server's rendering of the request's typed params
  * and sits first; the requester's own words are kept apart and labelled as theirs. `?do=approve|decline`
  * (the email's buttons) pre-selects the choice and asks for one more tap — a link never decides by itself.
+ * A kind whose approval needs a passkey (`step_up`) is approved here and nowhere else: every other channel
+ * links to this page instead of offering Approve, and the decide call asks for the passkey.
  */
 export function ApprovalPage(): JSX.Element | null {
   const { approvalId } = useParams()
@@ -151,6 +153,11 @@ export function ApprovalPage(): JSX.Element | null {
               You chose to <b>{chosen}</b> this. Tap {chosen === 'approve' ? 'Approve' : 'Decline'} to confirm.
             </p>
           )}
+          {card.step_up && card.can_decide && (
+            <p className="mb-2 text-[13px] text-muted-foreground" data-testid="approval-passkey">
+              Approving this needs your passkey. Declining doesn&rsquo;t.
+            </p>
+          )}
           {!card.can_decide && (
             <p className="mb-2 text-[13px] text-muted-foreground" data-testid="approval-cannot">
               You can look, but this needs {card.needs}.
@@ -172,7 +179,7 @@ export function ApprovalPage(): JSX.Element | null {
               data-testid="approval-approve"
               onClick={() => void decide('approve')}
             >
-              Approve
+              {card.step_up ? 'Approve with your passkey' : 'Approve'}
             </Button>
             <Button
               variant={chosen === 'decline' ? 'default' : 'outline'}

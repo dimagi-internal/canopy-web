@@ -24,11 +24,12 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.agents.models import AgentProject
-from apps.harness import schedule_hooks
+from apps.events import services as events
+from apps.harness import schedule_hooks, schedule_turns, triggers
 from apps.harness.models import AgentSchedule
 from apps.workspaces.models import Workspace
 
-from . import budget, reading, readers, registry, runs
+from . import budget, readers, reading, registry, runs
 from .models import PROJECT, SYSTEM, BrainCapability, BrainRun, BrainTarget
 
 logger = logging.getLogger(__name__)
@@ -101,8 +102,9 @@ def add(cap: BrainCapability, *, workspace: Workspace, project: AgentProject | N
 
 
 def set_budget(target: BrainTarget, **changes) -> BrainTarget:
-    """Change the target's budget (`budget.FIELDS`); `max_tokens_per_day` None removes the token cap."""
-    unknown = set(changes) - set(budget.FIELDS)
+    """Change the target's budget (`budget.FIELDS`) and window (`budget.WINDOW_FIELDS`); `max_tokens_per_day` None
+    removes the token cap."""
+    unknown = set(changes) - set(budget.FIELDS) - set(budget.WINDOW_FIELDS)
     if unknown:
         raise TargetRefusedError(f"no such budget: {', '.join(sorted(unknown))}")
     for field, value in changes.items():
@@ -142,8 +144,6 @@ def follow(cap: BrainCapability) -> int:
 
 
 def _record(target: BrainTarget, kind: str, summary: str, **payload) -> None:
-    from apps.events import services as events  # noqa: PLC0415 — as the other event writers of this app
-
     try:
         events.record([{"source": "brain.target", "kind": kind, "summary": summary[:500],
                         "key": f"brain-target:{target.pk}:{kind}",
@@ -178,12 +178,13 @@ def why_not(target: BrainTarget, *, accountable=None) -> str:
 
 
 def has_new(target: BrainTarget) -> bool:
-    """Is there an eligible source of this target no clean run of it read yet."""
+    """Is there a source of this target due to be read: eligible, active in its window, and not yet learned (or grown
+    since) — the same `reading.candidates` its run reads, so a target with only old unread sessions does not fire."""
     cap = target.capability
     subject, scope = subject_of(target)
     subject_type, subject_id = runs.subject_of(cap, subject, scope)
     probe = BrainRun(capability=cap, subject_type=subject_type, subject=subject_id, purpose=(cap.purposes or [""])[0],
-                     floor=0, scope=scope)
+                     scope=scope, target=target)
     return reading.candidates(probe).exists()
 
 
@@ -230,8 +231,6 @@ def announce(schedule: AgentSchedule, slot, *, manual: bool = False) -> tuple[Br
 def run_now(target: BrainTarget, *, by) -> BrainRun | None:
     """Run now from the brain page: the target's schedule's own Run now, as its creator's standing request with `by`
     recorded as who pressed it. Raises `TargetRefusedError` with why when no run starts."""
-    from apps.harness import schedule_turns, triggers  # noqa: PLC0415 — harness's firing path
-
     why = why_not(target, accountable=target.schedule.created_by)
     if why:
         raise TargetRefusedError(why)

@@ -3,9 +3,23 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from apps.common.schemas import StrictModel
+
+
+class _FileContentIn(StrictModel):
+    # A file's text is its bytes: surrounding whitespace (a final newline, say) is content,
+    # never trimmed the way a form field is.
+    model_config = ConfigDict(str_strip_whitespace=False)
+
+
+class DefinitionNewFileIn(_FileContentIn):
+    path: str = Field(min_length=1, max_length=200)
+    #: The file as text; or `content_b64`, its bytes as base64. Exactly one.
+    content: str | None = None
+    content_b64: str | None = None
+    executable: bool = False
 
 
 class StoredAgentIn(StrictModel):
@@ -15,6 +29,19 @@ class StoredAgentIn(StrictModel):
     mandate: str = Field(min_length=1, max_length=2000)
     stakeholders: str = Field(default="", max_length=2000)
     workspace: str = Field(min_length=1, max_length=80)
+    #: Files laid over the factory's scaffold (one of these replaces the scaffold's at its
+    #: path). The files canopy writes itself (`.claude-plugin/`, `.claude/settings.json`,
+    #: `bin/<slug>-email`, `.gitignore`) are ignored if sent.
+    files: list[DefinitionNewFileIn] = Field(default_factory=list, max_length=400)
+    #: A `git bundle` of the source repository's branch (`git bundle create - main`), base64:
+    #: its history is kept under `refs/heads/imported` (every blob secret-scanned) and
+    #: revision 1 is a commit on its tip, as `convert` does.
+    bundle_b64: str | None = None
+    #: Leave out each file the file policy refuses (named in `dropped`) instead of refusing
+    #: the create.
+    drop_refused: bool = False
+    #: Revision 1's message.
+    message: str = Field(default="", max_length=4000)
 
 
 class DefinitionFileIn(StrictModel):
@@ -63,7 +90,7 @@ class DefinitionMovedOut(StrictModel):
     acted_by: DefinitionActedByOut | None = None
 
 
-class DefinitionChangeIn(StrictModel):
+class DefinitionChangeIn(_FileContentIn):
     path: str = Field(min_length=1, max_length=200)
     #: The new text, or null to delete the file.
     content: str | None = None
@@ -117,7 +144,11 @@ class DefinitionRevisionSummaryOut(StrictModel):
     size: int
     created_at: dt.datetime
     published_at: dt.datetime | None = None
+    #: The person who published it (their email), or "<slug> (agent)" when another agent that
+    #: administers this one published it as itself (`published_by_agent`).
     published_by: str | None = None
+    #: The admin agent that published this revision as itself, or null.
+    published_by_agent: str | None = None
     #: The approval request an agent's own draft filed, while it waits.
     approval_id: int | None = None
     #: When an agent created or published this revision AS its person (`published_by`, or
@@ -182,3 +213,5 @@ class StoredAgentOut(StrictModel):
     owner: str = ""
     #: The agent that created it as its owner, under an act-as-you permission; else null.
     acted_by: DefinitionActedByOut | None = None
+    #: The files sent that the file policy refused and `drop_refused` left out.
+    dropped: list[str] = Field(default_factory=list)

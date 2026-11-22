@@ -1,7 +1,10 @@
-"""Kind: publish a draft an agent wrote of its own stored definition.
+"""Kind: publish a draft an agent wrote of a stored definition, when no agent may publish it.
 
 An agent may propose changes to itself (a draft), never make them live: what runs with
-its vault and credentials is decided by a person who administers it. The request names
+its vault and credentials is decided by a person who administers it. The same holds for
+a draft an agent wrote of an agent it does not administer. A draft another agent wrote as
+an admin of the agent asks for nothing: that agent publishes it itself
+(`harness.acting_person.admin_agent`). The request names
 the exact draft by number AND root sha256, so what is approved is what goes live; a draft
 replaced or discarded since makes the request invalid rather than publishing something
 else.
@@ -32,7 +35,7 @@ def _is_agent_login(user) -> bool:
 @register
 class AgentDefinitionPublish(Kind):
     slug = SLUG
-    label = "Publish changes an agent made to its own definition"
+    label = "Publish changes an agent proposed to an agent's definition"
     params_model = Params
     needs = "the agent's owner or one of its admins (a person, never an agent)"
     does = ("Publishes the agent's draft: its files become what every runner of the agent runs, with "
@@ -55,6 +58,7 @@ class AgentDefinitionPublish(Kind):
 
         agent, rev = self._target(p)
         name = agent.name or agent.slug
+        writer = rev.author_user and Agent.objects.filter(user_id=rev.author_user_id).exclude(pk=agent.pk).first()
         changed = services.diff(rev, agent.live_revision) if agent.live_revision_id else []
         plan = [f"{c['status']}: {c['path']}" for c in changed[:40]]
         if len(changed) > 40:
@@ -64,8 +68,10 @@ class AgentDefinitionPublish(Kind):
                     + scoped_url(agent.workspace, f"/agents/{agent.slug}/definition?revision={rev.number}"))
         return Described(
             workspace=agent.workspace_id,
-            title=f"Publish {name}'s own change to its definition (revision {rev.number})",
-            summary=(rev.message or f"{name} proposed a change to its own definition.")[:1000],
+            title=(f"Publish {writer.slug}'s change to {name}'s definition (revision {rev.number})" if writer
+                   else f"Publish {name}'s own change to its definition (revision {rev.number})"),
+            summary=(rev.message or (f"{writer.slug} proposed a change to {name}'s definition." if writer
+                                     else f"{name} proposed a change to its own definition."))[:1000],
             plan=plan,
             scopes=[f"agent:{agent.slug}", f"workspace:{agent.workspace_id}"])
 
@@ -84,7 +90,7 @@ class AgentDefinitionPublish(Kind):
 
         agent, rev = self._target(p)
         try:
-            rev = services.publish(agent, rev.number, by=user, expect_root=p.root_sha256)
+            rev = services.publish(agent, rev.number, by=user, expect_root=p.root_sha256, by_approval=True)
         except services.Refused as exc:
             raise ExecError(str(exc)) from exc
         return {"agent": agent.slug, "revision": rev.number, "root_sha256": rev.root_sha256}

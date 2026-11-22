@@ -565,16 +565,18 @@ def test_the_runner_step_is_only_for_running_on_its_own(editor, ws):
     assert done["status"] == "done" and "canopy agent use" not in done["detail"]
 
 
-# ---- registering from inside an agent's turn --------------------------------------
+# ---- registering from an agent's login: a person owns what it creates -------------------
 
-def _agent_turn(ws, asker, *, status="running", assurance="session", agent_slug="ada"):
-    """A live turn of agent `agent_slug` (with its own canopy login), asked by `asker`."""
+def _agent_turn(ws, asker, *, status="running", assurance="session", agent_slug="ada", owner=None):
+    """A live turn of agent `agent_slug` (with its own canopy login, owned by `owner` or
+    else `asker`), asked by `asker`."""
     import uuid
 
     from apps.harness.models import Turn
 
     login = a_member(ws, email=f"{agent_slug}@dimagi-ai.com", role=WorkspaceMembership.EDITOR)
-    conductor = Agent.objects.create(slug=agent_slug, name=agent_slug, workspace=ws, owner=asker, user=login)
+    conductor = Agent.objects.create(slug=agent_slug, name=agent_slug, workspace=ws, owner=owner or asker,
+                                     user=login)
     turn = Turn.objects.create(agent=conductor, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="make an agent",
                                idempotency_key=uuid.uuid4().hex, status=status,
                                initiator_kind="user", initiator_user=asker, initiator_assurance=assurance)
@@ -582,38 +584,85 @@ def _agent_turn(ws, asker, *, status="running", assurance="session", agent_slug=
 
 
 def _register_from(login, turn, slug="trellis"):
-    c = Client(HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
+    c = Client(HTTP_X_CANOPY_PARENT_TURN=str(turn.pk)) if turn is not None else Client()
     c.force_login(login)
     return c.post("/api/agents/", {"slug": slug, "name": slug.title(), "workspace": "scouts"},
                   content_type="application/json")
 
 
 def test_an_agent_registering_from_a_persons_turn_makes_that_person_the_owner(editor, ws):
-    login, turn = _agent_turn(ws, editor)
+    owner = a_member(ws, email="own@dimagi.com", role=WorkspaceMembership.EDITOR)
+    login, turn = _agent_turn(ws, editor, owner=owner)
     assert _register_from(login, turn).status_code == 201
     assert Agent.objects.get(slug="trellis").owner == editor
 
 
 @pytest.mark.parametrize("status,assurance", [("done", "session"), ("running", "host_signed")])
-def test_a_finished_turn_or_a_weak_claim_leaves_the_agent_the_owner(editor, ws, status, assurance):
-    login, turn = _agent_turn(ws, editor, status=status, assurance=assurance)
+def test_a_finished_turn_or_a_weak_claim_makes_the_agents_owner_the_owner(editor, ws, status, assurance):
+    owner = a_member(ws, email="own@dimagi.com", role=WorkspaceMembership.EDITOR)
+    login, turn = _agent_turn(ws, editor, status=status, assurance=assurance, owner=owner)
     assert _register_from(login, turn).status_code == 201
-    assert Agent.objects.get(slug="trellis").owner == login
+    assert Agent.objects.get(slug="trellis").owner == owner
+
+
+def test_an_agents_login_with_no_turn_makes_its_owner_the_owner_never_itself(editor, ws):
+    login, _ = _agent_turn(ws, editor)
+    assert _register_from(login, None).status_code == 201
+    made = Agent.objects.get(slug="trellis")
+    assert made.owner == editor and made.owner != login
 
 
 def test_another_agents_turn_is_not_borrowed(editor, ws):
     _, turn = _agent_turn(ws, editor, agent_slug="ada")
+    hal_owner = a_member(ws, email="halsowner@dimagi.com", role=WorkspaceMembership.EDITOR)
     impostor = a_member(ws, email="hal@dimagi-ai.com", role=WorkspaceMembership.EDITOR)
-    Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=editor, user=impostor)
+    Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=hal_owner, user=impostor)
     assert _register_from(impostor, turn).status_code == 201
-    assert Agent.objects.get(slug="trellis").owner == impostor
+    assert Agent.objects.get(slug="trellis").owner == hal_owner
 
 
-def test_an_asker_who_could_not_create_it_there_is_not_made_owner(ws):
+def test_an_asker_who_could_not_create_it_there_is_not_made_owner(editor, ws):
+    viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
+    login, turn = _agent_turn(ws, viewer, owner=editor)
+    assert _register_from(login, turn).status_code == 201
+    assert Agent.objects.get(slug="trellis").owner == editor
+
+
+def test_with_no_person_to_own_it_an_agent_creates_nothing(ws):
     viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
     login, turn = _agent_turn(ws, viewer)
-    assert _register_from(login, turn).status_code == 201
-    assert Agent.objects.get(slug="trellis").owner == login
+    r = _register_from(login, turn)
+    assert r.status_code == 403 and "neither may create agents" in r.json()["detail"]
+    assert not Agent.objects.filter(slug="trellis").exists()
+
+
+def test_the_turns_own_login_names_its_asker_with_no_header(editor, ws):
+    from apps.harness import turn_agent_tokens
+    from tests.token_helpers import bearer_client
+
+    owner = a_member(ws, email="own@dimagi.com", role=WorkspaceMembership.EDITOR)
+    _, turn = _agent_turn(ws, editor, owner=owner)
+    box = Runner.objects.create(name="box-own", kind=Runner.CLOUD, owner=owner, workspace=ws,
+                                last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    RunnerAssignment.objects.create(agent=turn.agent, runner=box, rank=0)
+    turn.claimed_by = box
+    turn.save(update_fields=["claimed_by"])
+    token = turn_agent_tokens.issue(turn, box)["token"]
+    r = bearer_client(token).post("/api/agents/", {"slug": "trellis", "name": "Trellis", "workspace": "scouts"},
+                                  content_type="application/json")
+    assert r.status_code == 201, r.content
+    assert Agent.objects.get(slug="trellis").owner == editor
+
+
+def test_an_agent_updating_itself_needs_no_owner(ws):
+    viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
+    login, _ = _agent_turn(ws, viewer)
+    c = Client()
+    c.force_login(login)
+    r = c.post("/api/agents/", {"slug": "ada", "name": "Ada", "workspace": "scouts"},
+               content_type="application/json")
+    assert r.status_code != 403, r.content
+    assert Agent.objects.get(slug="ada").owner == viewer
 
 
 def test_a_person_sending_a_parent_header_still_owns_what_they_create(editor, ws):

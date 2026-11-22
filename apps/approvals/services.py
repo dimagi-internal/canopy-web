@@ -124,7 +124,8 @@ def decide(request_id: int, user, decision: str, *, comment: str = "", via: str 
         if not k.may_approve(user, p, described):
             raise ApprovalError(f"You can't approve this: {k.label.lower()} needs {k.needs}.", 403)
         if decision == "approve" and k.step_up and not stepped_up:
-            raise ApprovalError(f"{k.label} needs your passkey: open this request in canopy and approve it there.", 403)
+            raise ApprovalError(f"{k.label} needs your passkey: approve it on its page in canopy, "
+                                f"{cards.page_url(req)}", 403)
         comment = (comment or "").strip()
         if decision == "decline":
             _close(req, ApprovalRequest.DECLINED, user, via=via, comment=comment, event=ApprovalEvent.DECLINED)
@@ -183,6 +184,22 @@ def cancel(request_id: int, user) -> ApprovalRequest:
         if not (filer or may_approve(req, user)):
             raise ApprovalError("only whoever filed this, or someone who could approve it, can withdraw it", 403)
         _close(req, ApprovalRequest.CANCELLED, user, via="", comment="", event=ApprovalEvent.CANCELLED)
+        pk = req.pk
+        transaction.on_commit(lambda: _after_close(pk))
+    return req
+
+
+def supersede(request_id: int, user, *, why: str) -> ApprovalRequest | None:
+    """Close a pending request whose action someone with the authority to take it took
+    directly, so nobody need decide it: cancelled, with `why` as its comment and
+    `{"superseded": True}` as its result. The caller has already been allowed the act; this
+    asks no authority of `user`. None when the request is gone or already closed."""
+    with transaction.atomic():
+        req = ApprovalRequest.objects.select_for_update(of=("self",)).filter(pk=request_id).first()
+        if req is None or not req.is_pending:
+            return None
+        _close(req, ApprovalRequest.CANCELLED, user, via="", comment=why[:1000], event=ApprovalEvent.CANCELLED,
+               result={"superseded": True})
         pk = req.pk
         transaction.on_commit(lambda: _after_close(pk))
     return req

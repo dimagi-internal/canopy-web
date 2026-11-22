@@ -15,6 +15,7 @@ import logging
 
 from django.db import transaction
 
+from apps.agents.models import Agent
 from apps.canopy_sessions import transcript_read
 from apps.events import services as events
 from apps.harness import invocations
@@ -222,8 +223,6 @@ PRESETS = {"system-learning": {"operator": "ada", "entry": "/canopy:brain-learn"
 def apply_presets(caps=None, agents=None) -> list[str]:
     """Give each preset learner with no operator its preset operator and entry, when that agent exists. Returns the
     slugs set. `caps`/`agents` are the model classes (a migration passes its historical ones)."""
-    from apps.agents.models import Agent  # noqa: PLC0415 — agents reads this app's neighbours
-
     caps, agents = caps or BrainCapability, agents or Agent
     done = []
     for slug, preset in PRESETS.items():

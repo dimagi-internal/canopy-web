@@ -993,6 +993,32 @@ def test_a_stored_agent_on_an_emdash_box_without_the_adapter_is_left_to_say_why(
     assert _stored_on_emdash(_turn(agent_slug="hal")) == ""
 
 
+def test_a_stored_agent_without_the_adapter_starts_installing_it(cfg, monkeypatch):
+    """Without the adapter a stored agent cannot run on an emdash box at all, so declining
+    one starts the install."""
+    monkeypatch.setattr(desktop, "_adapter_missing", lambda: True)
+    kicked = []
+    monkeypatch.setattr(desktop, "_kick_adapter", lambda force=False: kicked.append(force))
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
+    assert kicked == [False]
+
+
+def test_an_emdash_box_installs_the_adapter_once_on_its_first_heartbeat(monkeypatch):
+    from canopy_runner import headless
+
+    seen = []
+    monkeypatch.setattr(desktop, "_current", desktop.EMDASH)
+    monkeypatch.setattr(desktop, "_adapter_kicked", False)
+    monkeypatch.setattr(headless, "ensure_adapter", lambda: seen.append("adapter"))
+    desktop.observe({"engine": "emdash"})
+    desktop.observe({"engine": "emdash"})
+    deadline = time.time() + 5
+    while not seen and time.time() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.05)
+    assert seen == ["adapter"]
+
+
 def test_a_stored_agents_confined_turn_says_where_it_can_run(cfg, monkeypatch):
     monkeypatch.setattr(desktop.caller, "confined_profile", lambda turn: {"name": "read"})
     assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
