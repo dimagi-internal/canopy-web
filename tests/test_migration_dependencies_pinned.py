@@ -1,10 +1,9 @@
 """No migration may depend on another app's `__latest__`.
 
-`("agents", "__latest__")` resolves to whatever that app's newest migration is at the time
-`migrate` runs. Once the depending migration is applied in production, the next migration
-added to the other app becomes one of its dependencies after the fact, and `migrate` refuses
-with InconsistentMigrationHistory -- which is how the 2026-11-22 deploy of agents/0136 failed
-(canopy_sessions/0072 depended on agents `__latest__`). Pin the dependency to a named migration.
+`("agents", "__latest__")` resolves to that app's newest migration at the time `migrate` runs.
+Once the depending migration is applied in production, every migration later added to the
+other app becomes its dependency after the fact, and `migrate` refuses with
+InconsistentMigrationHistory. A dependency therefore names a migration.
 """
 
 import ast
