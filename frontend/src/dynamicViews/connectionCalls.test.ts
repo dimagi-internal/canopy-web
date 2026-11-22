@@ -79,6 +79,19 @@ describe('ConnectionCalls', () => {
     await expect(calls.handle(WRITE)).rejects.toThrow('This needs a click.')
   })
 
+  it('allowDuplicates travels as allow_duplicates, and nothing else of the page does', async () => {
+    const { calls, client } = setup({ active: true })
+    await calls.handle({ ...WRITE, allowDuplicates: true, headers: { 'X-Evil': '1' } })
+    const body = (client.request as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(body.allow_duplicates).toBe(true)
+    expect(body).not.toHaveProperty('headers')
+    expect(body).not.toHaveProperty('allowDuplicates')
+    await calls.handle(WRITE)
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls[1][1]).not.toHaveProperty('allow_duplicates')
+    await calls.handle({ ...WRITE, allow_duplicates: true }) // the REST spelling works from a page too
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls[2][1].allow_duplicates).toBe(true)
+  })
+
   it('absent userActivation fails closed', async () => {
     const { calls, client } = setup({ active: undefined })
     await expect(calls.handle(WRITE)).rejects.toThrow('This needs a click.')

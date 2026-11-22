@@ -137,7 +137,7 @@ for a JSX page's `canopy` prop and a bundle's `window.canopy`:
 
 | Call | What canopy checks |
 |---|---|
-| `canopy.open(url)` → Promise | `frameOut.ts::externalUrl` (https, no credentials); a live click on the frame; opened `noopener,noreferrer` (in the extension's panel, through `canopy.browser`'s gate) |
+| `canopy.open(url)` (also `canopy.openExternal(url)`) → Promise | `frameOut.ts::externalUrl` (https, no credentials); a live click on the frame; opened `noopener,noreferrer` (in the extension's panel, through `canopy.browser`'s gate) |
 | `canopy.open(page, params, {newTab})`, `app.go(page, params, {newTab})` | the page is the app's; a new tab only from a live click, else this tab |
 | `canopy.page.setParams(params)` → Promise | `frameOut.ts::cleanParams` (≤ `MAX_PARAMS`, never `draft`); the host rewrites its own address (`WorkspaceAppPage.tsx`, `history.replaceState` keeping the router's state), so nothing reloads and the frame stays; `app.params` follows. The panel has no address bar |
 | `canopy.clipboard.write(text)` → Promise | a live click (or a believed gesture, below); ≤ `MAX_CLIPBOARD_CHARS` |

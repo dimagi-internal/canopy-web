@@ -116,6 +116,8 @@
       toHost({ type: 'go', page: to.page, params: to.params, newTab: !!(options && options.newTab) })
       return Promise.resolve(null)
     },
+    /** `canopy.open(url)` for an https address, by a name that says so. */
+    openExternal: function (u) { return openUrl(u) },
     /** Copy text to the viewer's clipboard, from a click. */
     clipboard: {
       write: function (text) { return ask(function (id) { return { type: 'clipboard', id: id, text: String(text == null ? '' : text) } }) },
@@ -142,6 +144,8 @@
     connection: {
       request: function (req) { return ask(function (id) { return { type: 'connection-call', id: id, request: req } }) },
       begin: function () { return ask(function (id) { return { type: 'connection-begin', id: id } }) },
+      /** Feature checks (frontend/src/dynamicViews/connectionCalls.ts::CONNECTION_CAPABILITIES). */
+      capabilities: ['allow_duplicates', 'gesture_leases'],
     },
     page: {
       setState: function (state) { toHost({ type: 'page-state', state: state }) },

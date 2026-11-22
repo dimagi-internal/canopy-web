@@ -24,7 +24,9 @@
  * - A line the screen did not declare is refused here as well, as a courtesy. This is
  *   a declared-line match and nothing more: the server is the authority (allowlist,
  *   revision, whose connection), and refuses in a sentence the frame is shown as is.
- *   A query's next page (`GET query/<locator>`) is covered by `GET query`. A composite call
+ *   A query's next page (`GET query/<locator>`) is covered by `GET query`. `allowDuplicates: true` on a
+ *   create or update asks Salesforce to save past its duplicate rules ("Create anyway"); the server sends
+ *   its own header for it, and refuses it on any other call. A composite call
  *   (`composite/batch`, `composite/sobjects`) is never declared: the server checks each call in
  *   it, so here it only decides whether it needs a lease, and spends one write per write in it.
  *
@@ -57,6 +59,8 @@ export interface CallBody {
   as: 'viewer' | 'shared'
   agent?: string
   operation_id?: string
+  /** "Create anyway": save one Salesforce record past the org's duplicate rules (the server allows it only there). */
+  allow_duplicates?: boolean
 }
 export interface CallResult {
   status: number
@@ -343,6 +347,7 @@ export class ConnectionCalls {
       ...(r.query != null ? { query: r.query as CallBody['query'] } : {}),
       ...(r.body !== undefined ? { body: r.body } : {}),
       ...(agent ? { agent } : {}),
+      ...(r.allowDuplicates === true || r.allow_duplicates === true ? { allow_duplicates: true } : {}),
     }
     if (isRead) return this.send(provider, base)
 

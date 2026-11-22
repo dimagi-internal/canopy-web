@@ -831,3 +831,51 @@ def test_the_provider_call_holds_no_transaction(key):
     with FakeSF(), Salesforce() as sf:
         assert post(world).status_code == 200
     assert sf.in_atomic == [False]
+
+
+# ---- "Create anyway": allow_duplicates ---------------------------------------------------
+# canopy's own header (`call_service.DUPLICATE_RULE_HEADER`), only on one record's create or update,
+# refused on anything else before a token is read.
+
+HEADER = "Sforce-Duplicate-Rule-Header"
+
+
+def test_an_update_may_save_past_duplicate_rules(w):
+    with FakeSF(), Salesforce() as sf:
+        r = lead_write(w, allow_duplicates=True)
+    assert r.status_code == 200, r.content
+    headers = sf.calls[0]["headers"]
+    assert headers[HEADER] == "allowSave=true"
+    assert headers["Authorization"].startswith("Bearer "), "the token header is canopy's, never replaced"
+    assert Event.objects.get(kind="connections.connection_call").payload["allow_duplicates"] is True
+
+
+def test_without_the_flag_no_header_is_sent(w):
+    with FakeSF(), Salesforce() as sf:
+        assert lead_write(w).status_code == 200
+    assert HEADER not in sf.calls[0]["headers"]
+    assert "allow_duplicates" not in Event.objects.get(kind="connections.connection_call").payload
+
+
+@pytest.mark.parametrize("over", [
+    {},  # GET query
+    {"method": "DELETE", "path": f"sobjects/Lead/{LEAD}", "query": None},
+    {"method": "POST", "path": "composite/sobjects", "query": None,
+     "body": {"records": [{"attributes": {"type": "Lead"}, "LastName": "X", "Company": "Y"}]}},
+])
+def test_refused_on_any_other_call_before_a_token(w, over):
+    with mock.patch.object(server_tokens, "access") as token, Salesforce() as sf, \
+            mock.patch.object(call_service, "_check_operation", return_value=None):
+        r = post(w, allow_duplicates=True, operation_id="op-1", **over)
+    assert r.status_code == 403 and error_of(r) == "not_allowed", r.content
+    assert "duplicate" in r.json()["detail"].lower()
+    token.assert_not_called()
+    assert sf.calls == []
+
+
+def test_the_page_cannot_name_a_header(w):
+    """The flag is a boolean; a page has no way to send a header of its own."""
+    with FakeSF(), Salesforce() as sf:
+        r = lead_write(w, headers={"X-Evil": "1"})
+    assert r.status_code == 422
+    assert sf.calls == []

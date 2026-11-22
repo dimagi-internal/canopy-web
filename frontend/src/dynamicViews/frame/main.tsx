@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import './frame.css'
 import {
   CHANNEL,
+  CONNECTION_CAPABILITIES,
   frameRejection,
   isMessage,
   type AgentTaskStatus,
@@ -107,6 +108,10 @@ const canopy = {
     currentApp.go(target, params, options)
     return Promise.resolve(null)
   },
+  /** `canopy.open(url)` for an https address, by a name that says so. */
+  openExternal(url: string): Promise<unknown> {
+    return ask((id) => ({ channel: CHANNEL, type: 'open-url', id, url: String(url ?? '') }))
+  },
   /** Copy text to the viewer's clipboard, from a click. */
   clipboard: {
     write(text: string): Promise<unknown> {
@@ -155,9 +160,11 @@ const canopy = {
    * or rejects with a sentence (`e.message`; `e.error`, and `e.connect_url` when connecting would fix it).
    * A write needs a real click on the page; a read does not. */
   connection: {
-    request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string }) {
+    request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string; allowDuplicates?: boolean; allow_duplicates?: boolean }) {
       return ask((id) => ({ channel: CHANNEL, type: 'connection-call', id, request: req }))
     },
+    /** What this canopy can do for a call, to feature-check: `allow_duplicates`, `gesture_leases`. */
+    capabilities: [...CONNECTION_CAPABILITIES] as string[],
     /** Open this click's window first, to read and dedup before writing: {expires_at, hard_limit_at, writes}. */
     begin() {
       return ask((id) => ({ channel: CHANNEL, type: 'connection-begin', id }))

@@ -10,6 +10,11 @@
 
 export const CHANNEL = 'canopy-dynamic-view'
 
+/** What `canopy.connection.capabilities` lists, so a page can feature-check before relying on one:
+ * `allow_duplicates` ("Create anyway"), `gesture_leases` (a drop or post-dialog write opens a lease).
+ * The bundle client (apps/workspace_apps/bundle_client.js) lists the same. */
+export const CONNECTION_CAPABILITIES = ['allow_duplicates', 'gesture_leases'] as const
+
 /** What the view is drawn for — the `scope` prop. */
 export interface ViewScope {
   workspace: { slug: string; name: string }
