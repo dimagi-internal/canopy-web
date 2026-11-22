@@ -72,7 +72,7 @@ purpose class (what `everyone_agreed` asks).
 A standing rule is deny-only: `{capability?, purpose?, class?, workspace?}`, denying when every key it
 names matches. A rule the code cannot read denies (`rule_denies`).
 
-## Consent is the person's alone (`apps/brain/api.py`, `apps/brain/consent.py`)
+## Consent: the person's, and an admin may opt people in (`apps/brain/api.py`, `apps/brain/consent.py`)
 
 `/api/me/learning/` reads, sets and ends a person's consent; `/api/me/learning/sessions/{id}/` takes
 one of their sessions out and back. **Every person-only brain route asks one question, `person.refusal`**: the
@@ -80,8 +80,15 @@ person's own browser session or a PAT they minted by hand, never an MCP call, an
 `harness.acting_person.refusal` refuses (an agent's login, a turn's login or token, a request naming a turn, a
 runner). An OAuth client signed in as them and a site's or MCP host grant's delegated token speak FOR them and are
 a 403 too (`tests/test_brain_person_only.py`). The same question opens the manager leg and the reporting routes. None
-of these is an MCP tool (`apps/mcp/api_tools.py` `EXCLUDED`). Nobody opts anyone in; there is no admin route for a
-person's consent.
+of these is an MCP tool (`apps/mcp/api_tools.py` `EXCLUDED`).
+
+**An admin may opt people in** (`POST /api/w/<ws>/brain/consent`, `opt_people_in`; `GET` lists who agreed to what): a
+manager of the workspace's learning (`actor.of`, so a person or an admin agent) ADDS classes to the consent of named
+members of it or below, or of everyone there who already agreed to any class (`already_agreed`). It only adds
+(`consent.admin_opt_in`): dropping a class, narrowing, revoking and withdrawing a session stay the person's. A person
+with no consent gets one covering only their workspaces the admin manages (no new ones); one whose consent reaches a
+workspace the admin does not manage is refused for that person. Each change is on the person's own log naming who
+made it, and the act is a `SettingChange`.
 
 **Managing a workspace's learning is not a person's own choice, and an admin agent may do it.** One rule,
 `actor.of` (`apps/brain/actor.py`), answers every management route: "Learning reads", a learner's switch, operator, entry

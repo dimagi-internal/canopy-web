@@ -90,8 +90,8 @@ class SourceParticipant(models.Model):
 class LearningConsent(models.Model):
     """A person's agreement to canopy learning, by purpose class. One live row per person.
 
-    Only the person, as themselves, makes or changes it (`consent.py`, `api.py`): never an
-    admin, an agent, a turn's token or a runner. `CoachingOptIn` is carried over as the
+    The person, as themselves, makes or changes it (`consent.py`, `api.py`); a workspace's manager
+    may only ADD classes for its members (`consent.admin_opt_in`), never take one away. `CoachingOptIn` is carried over as the
     `individual` class and still written beside this row until its readers move."""
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="learning_consents")
