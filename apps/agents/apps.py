@@ -39,6 +39,17 @@ class AgentsConfig(AppConfig):
         # A new root workspace starts with the built-in roles (read only, read and write, editor).
         post_save.connect(_seed_roles, sender=Workspace, dispatch_uid="agents.seed_roles")
 
+        # An agent's Google account signs in at a browser only under an owner's grant
+        # for testing; the auth adapter (kit) asks through this registry.
+        from django.contrib.auth.signals import user_logged_in  # noqa: PLC0415 — ready(): kept beside the connect it serves
+
+        from apps.common import auth_adapter  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        from . import browser_sign_in  # noqa: PLC0415 — ready(): it imports models
+
+        auth_adapter.register_agent_browser_sign_in(browser_sign_in.grant_for_login)
+        user_logged_in.connect(browser_sign_in.mark_session, dispatch_uid="agents.browser_sign_in")
+
         ticks.register("agents.zk_notify", _zk_notify, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
         ticks.register("agents.skill_catalog", _skill_catalog, 5 * 60)

@@ -8091,6 +8091,42 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/browser-sign-in": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Whether the agent's own Google account may sign in at a browser
+         * @description Off unless switched on; while on, who switched it on, when, and when it ends.
+         *     The agent's owner or an admin; never the agent's own login.
+         */
+        readonly get: operations["get_browser_sign_in"];
+        /**
+         * Switch on browser sign-in for testing, for 1 to 30 days
+         * @description FOR TESTING: while on, the agent's own Google account may sign in to canopy-web
+         *     at a browser (e.g. a live end-to-end test of the browser extension's side panel)
+         *     instead of being refused. The session is the agent's login, with exactly its
+         *     normal permissions, and is signed out when this ends or is switched off. `days`
+         *     (1 to 30, default 7) sets the end; switching on again replaces it. The agent's
+         *     owner or an admin, at a browser, with a fresh passkey step-up; 409
+         *     `no_agent_login` when the agent has no login of its own.
+         */
+        readonly put: operations["switch_on_browser_sign_in"];
+        readonly post?: never;
+        /**
+         * Switch off browser sign-in; its sessions end on their next request
+         * @description Ends the grant now; a browser session made under it is signed out on its next
+         *     request. The agent's owner or an admin, from anywhere; never its own login.
+         */
+        readonly delete: operations["switch_off_browser_sign_in"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/connections": {
         readonly parameters: {
             readonly query?: never;
@@ -36039,6 +36075,54 @@ export interface components {
             /**
              * Reason
              * @description What happened: where the token went, or why you think it is exposed.
+             */
+            readonly reason: string;
+        };
+        /**
+         * BrowserSignInOut
+         * @description Whether the agent's own Google account may sign in to canopy-web at a browser now,
+         *     and, while it may, who switched it on, when, and when it ends.
+         */
+        readonly BrowserSignInOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /**
+             * Login Email
+             * @default
+             */
+            readonly login_email: string;
+            /**
+             * Granted By Email
+             * @default
+             */
+            readonly granted_by_email: string;
+            /** Granted At */
+            readonly granted_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /** Max Days */
+            readonly max_days: number;
+            /** Default Days */
+            readonly default_days: number;
+        };
+        /**
+         * BrowserSignInIn
+         * @description Switch on browser sign-in for testing, for `days` (1 to 30; default 7).
+         */
+        readonly BrowserSignInIn: {
+            /**
+             * Days
+             * @default 7
+             */
+            readonly days: number;
+            /**
+             * Reason
+             * @default
              */
             readonly reason: string;
         };
@@ -66284,6 +66368,76 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["OwnPatRotateOut"];
+                };
+            };
+        };
+    };
+    readonly get_browser_sign_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrowserSignInOut"];
+                };
+            };
+        };
+    };
+    readonly switch_on_browser_sign_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrowserSignInIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrowserSignInOut"];
+                };
+            };
+        };
+    };
+    readonly switch_off_browser_sign_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrowserSignInOut"];
                 };
             };
         };
