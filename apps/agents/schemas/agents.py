@@ -501,6 +501,12 @@ class AgentSourceOut(StrictModel):
     source: Literal["repo", "stored"] = "repo"
     revision: int | None = None
     root_sha256: str | None = None
+    #: The live revision's commit in the agent's canopy-hosted repository.
+    commit: str | None = None
+    #: Where to `git clone` / `git fetch` the definition with a canopy token, when canopy
+    #: hosts its repository (`<base>/git/<workspace>/<slug>.git`): a stored agent, or one
+    #: exported to GitHub, whose canopy repository is then a read-only archive.
+    git_url: str | None = None
 
 
 class AgentRuntimeOut(StrictModel):
@@ -610,6 +616,12 @@ class AgentDefinitionOut(StrictModel):
     source: Literal["repo", "stored"] = "repo"
     revision: int | None = None
     root_sha256: str | None = None
+    #: The live revision's commit in the agent's canopy-hosted repository.
+    commit: str | None = None
+    #: Where to `git clone` / `git fetch` the definition with a canopy token, when canopy
+    #: hosts its repository (`<base>/git/<workspace>/<slug>.git`): a stored agent, or one
+    #: exported to GitHub, whose canopy repository is then a read-only archive.
+    git_url: str | None = None
 
 
 class AgentOwnerOut(StrictModel):

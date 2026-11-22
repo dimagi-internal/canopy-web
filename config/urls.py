@@ -9,6 +9,7 @@ from apps.api.api import api as api_v2
 from apps.common import admin_access
 from apps.api.views import redoc_docs, scalar_docs
 from apps.harness.views import download_runner, runner_app_home
+from apps.agent_definitions import git_http
 from apps.plugins import views as plugin_views
 from apps.reviews.views import review_page
 from apps.slack import views as slack_views
@@ -130,6 +131,10 @@ urlpatterns = [
     # this exact address, and it self-enforces auth (401). Not under /agents/,
     # which is the SPA's /agents/* tenant redirect.
     path("plugins/marketplace.json", plugin_views.marketplace_json, name="plugin-marketplace"),
+    # A stored agent's repository, read-only over git's smart HTTP
+    # (apps/agent_definitions/git_http.py). Bare view: git asks for these exact
+    # addresses and speaks pkt-lines, and it self-enforces auth (401 with Basic).
+    re_path(r"^git/(?P<ws>[^/]+)/(?P<slug>[^/]+)\.git/(?P<rest>.*)$", git_http.serve, name="agent-git"),
     # The retired per-workspace marketplace + archive URLs: 410 naming the new one.
     path("w/<str:ws>/marketplace.json", plugin_views.moved, name="plugin-marketplace-moved"),
     re_path(r"^w/[^/]+/plugins/", plugin_views.moved, name="plugin-archive-moved"),

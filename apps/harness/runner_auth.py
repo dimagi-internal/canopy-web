@@ -52,6 +52,10 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
     # for an agent the box may hold, published revisions only, and no credential in it
     # (`apps/agent_definitions/api.get_agent_definition_archive`).
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}/definition/archive"),
+    # … or clones and fetches its repository, read-only (`apps/agent_definitions/git_http`,
+    # which asks the same of the box). Never `git-receive-pack`.
+    (frozenset({"GET"}), rf"/git/[^/]+/{_SLUG}\.git/info/refs"),
+    (frozenset({"POST"}), rf"/git/[^/]+/{_SLUG}\.git/git-upload-pack"),
     (frozenset({"GET"}), r"/api/workspaces"),
     # Its device key: re-registering after an ECDH key change.
     (frozenset({"GET", "POST"}), r"/api/runner-device-keys"),

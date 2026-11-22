@@ -102,6 +102,7 @@ dependencies = [
     # and an agent's result against it. Present transitively before this; named
     # directly for the same reason as pyjwt above.
     "jsonschema>=4.26,<5.0",
+    "dulwich>=1.2,<2",
 ]
 
 [project.optional-dependencies]

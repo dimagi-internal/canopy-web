@@ -4,8 +4,10 @@ never run without the materialized clone or past a CLI too old to sync it.
 
 The canopy CLI is faked throughout: `_LAZY_BOOTSTRAPPER` (prepare) and `_STORED_SYNCER`
 (sync) stand in for it, writing what the real one writes — a git repo whose HEAD is
-`refs/remotes/origin/main`, one orphan commit per revision, origin `canopy://<ws>/<slug>`.
-`stored_sync` itself is driven through a fake `subprocess.run`.
+`refs/remotes/origin/main` and whose origin is canopy's: `canopy://<ws>/<slug>` (a CLI
+that materializes an archive) or canopy's git URL (one that clones the repository).
+`stored_sync` itself is driven through a fake `subprocess.run`. The reverse path — an
+agent exported to GitHub, whose clone here is still canopy's — is cloned again.
 """
 from __future__ import annotations
 
@@ -25,9 +27,10 @@ def _git(*args, cwd, env=None):
                           env=env).stdout.strip()
 
 
-def materialize(dest: pathlib.Path, revision: int, files: dict[str, str]) -> str:
+def materialize(dest: pathlib.Path, revision: int, files: dict[str, str], origin: str = "") -> str:
     """What `canopy agent materialize` leaves: tracked files replaced, ignored ones kept,
-    ONE orphan commit, main == origin/main checked out, origin `canopy://connect/<slug>`."""
+    ONE orphan commit, main == origin/main checked out, origin `canopy://connect/<slug>`
+    (or `origin`)."""
     dest.mkdir(parents=True, exist_ok=True)
     if not (dest / ".git").exists():
         _git("init", "-q", "-b", "main", cwd=dest)
@@ -48,10 +51,11 @@ def materialize(dest: pathlib.Path, revision: int, files: dict[str, str]) -> str
     _git("update-ref", "refs/remotes/origin/main", commit, cwd=dest)
     _git("symbolic-ref", "HEAD", "refs/heads/main", cwd=dest)
     _git("reset", "-q", "--hard", "main", cwd=dest)
+    url = origin or f"canopy://connect/{dest.name}"
     if _git("remote", cwd=dest):
-        _git("remote", "set-url", "origin", f"canopy://connect/{dest.name}", cwd=dest)
+        _git("remote", "set-url", "origin", url, cwd=dest)
     else:
-        _git("remote", "add", "origin", f"canopy://connect/{dest.name}", cwd=dest)
+        _git("remote", "add", "origin", url, cwd=dest)
     return commit
 
 
@@ -303,3 +307,98 @@ def test_the_plugins_check_sees_a_stored_plugin_behind_its_synced_revision(box, 
     mod._plugins_check(now=10 ** 9, home=home)
     assert mod._HEALTH["plugins"]["status"] == "warn"
     assert "is not the revision synced" in mod._HEALTH["plugins"]["detail"]
+
+
+# ── canopy's git URL as the origin ────────────────────────────────────────────
+
+def _git_url(mod, slug=SLUG):
+    return f"{mod.BASE_URL or 'https://canopy.dimagi.com'}/git/connect/{slug}.git"
+
+
+def test_a_clone_of_canopys_git_url_is_a_stored_agents_clone(box, tmp_path, monkeypatch):
+    mod, agents, _ = box
+    monkeypatch.setattr(mod, "BASE_URL", "https://canopy.example.org")
+    materialize(agents / SLUG, 1, REV1, origin="https://canopy.example.org/git/connect/connect-helper.git")
+    assert mod._is_stored_clone(agents / SLUG)
+    # canopy's public address counts too: a box configured with the old address still
+    # holds clones the CLI made from the URL canopy-web names.
+    assert mod._is_canopy_origin("https://canopy.dimagi.com/git/connect/connect-helper.git")
+    assert mod._is_canopy_origin("canopy://connect/connect-helper")
+    for other in ("https://github.com/dimagi-internal/connect-helper.git",
+                  "https://elsewhere.example/git/connect/connect-helper.git",
+                  "https://canopy.example.org/api/agents/connect-helper/", ""):
+        assert not mod._is_canopy_origin(other), other
+
+
+def test_git_never_fetches_canopys_git_url_the_cli_syncs_it(box, monkeypatch):
+    mod, agents, calls = box
+    materialize(agents / SLUG, 1, REV1, origin=_git_url(mod))
+    real = subprocess.run
+    seen = []
+
+    def spy(cmd, *a, **kw):
+        if isinstance(cmd, list) and cmd[:1] == ["git"]:
+            seen.append(cmd)
+        return real(cmd, *a, **kw)
+
+    monkeypatch.setattr(mod.subprocess, "run", spy)
+    calls.revision, calls.live = 2, REV2
+    wt = mod._turn_cwd({**_turn(), "definition": {"source": "stored", "revision": 2}}, "aaaaaaaa-2", env={})
+    assert not [c for c in seen if "fetch" in c or "pull" in c]
+    assert calls.sync == [SLUG] and "v2" in (wt / "skills/worker-chat/SKILL.md").read_text()
+
+
+# ── exported to GitHub: cloned again ──────────────────────────────────────────
+
+REPO = {"source": "repo", "revision": None, "root_sha256": ""}
+
+
+@pytest.fixture
+def github(box, tmp_path, monkeypatch):
+    """A GitHub repository holding what the export pushed, and a cloner that clones it."""
+    mod, agents, calls = box
+    gh = tmp_path / "gh-connect-helper"
+    gh.mkdir()
+    _git("init", "-q", "-b", "main", cwd=gh)
+    (gh / "CLAUDE.md").write_text("exported\n")
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A", cwd=gh)
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "exported", cwd=gh)
+
+    def clone(slug, env):
+        calls.clone.append((slug, dict(env or {})))
+        _git("clone", "-q", str(gh), str(agents / slug), cwd=tmp_path)
+
+    monkeypatch.setattr(mod, "_LAZY_CLONER", clone)
+    monkeypatch.setattr(mod, "_LAZY_BOOTSTRAPPER", lambda slug, env=None: calls.prepare.append((slug, env)))
+    monkeypatch.setattr(mod, "_BOOTSTRAPPED_AT", 0.0)
+    return gh
+
+
+def test_an_agent_exported_to_github_is_cloned_again_from_github(box, github, monkeypatch):
+    mod, agents, calls = box
+    materialize(agents / SLUG, 3, REV1, origin=_git_url(mod))
+    (agents / SLUG / ".env").write_text("KEEP=1\n")
+    mod._STORED_AGENTS.add(SLUG)
+    turn = {**_turn(), "definition": REPO}
+    env = {"GH_TOKEN": "ghs_turn", mod.AGENT_REPO_ENV: "dimagi-internal/connect-helper"}
+    wt = mod._turn_cwd(turn, "aaaaaaaa-3", env=env)
+    # Cloned from GitHub with the turn's identity, then prepared as a repo agent.
+    assert [s for s, _ in calls.clone] == [SLUG] and calls.clone[0][1]["GH_TOKEN"] == "ghs_turn"
+    assert [s for s, _ in calls.prepare] == [SLUG]
+    assert _git("config", "--get", "remote.origin.url", cwd=agents / SLUG) == str(github)
+    assert not mod._is_stored_clone(agents / SLUG) and not mod._is_stored_agent(SLUG)
+    assert calls.sync == []
+    assert (wt / "CLAUDE.md").read_text() == "exported\n"
+    # The canopy clone is kept aside, its ignored files with it — never deleted.
+    retired = list((pathlib.Path(mod.WORK_DIR) / "retired-clones").iterdir())
+    assert [p.name.split("-")[:2] for p in retired] == [["connect", "helper"]]
+    assert (retired[0] / ".env").read_text() == "KEEP=1\n"
+
+
+def test_an_old_server_that_says_nothing_keeps_a_stored_clone_stored(box, github):
+    mod, agents, calls = box
+    materialize(agents / SLUG, 1, REV1, origin=_git_url(mod))
+    turn = {**_turn()}
+    turn.pop("definition")
+    mod._turn_cwd(turn, "aaaaaaaa-4", env={})
+    assert calls.clone == [] and calls.sync == [SLUG] and mod._is_stored_clone(agents / SLUG)

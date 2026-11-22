@@ -1,16 +1,18 @@
-"""A stored agent's definition: the file tree canopy keeps for an agent with no git repo.
+"""A stored agent's definition: the git repository canopy hosts for an agent with no GitHub repo.
 
-A repo agent's definition is its git repository. A STORED agent's is a tree of files
-canopy-web keeps in revisions: append-only, content-addressed, a draft published by a
-person who administers the agent. Runners and laptops turn one revision into a local
-git repository with one deterministic commit (``canopy agent materialize``).
+A repo agent's definition is its GitHub repository. A STORED agent's is a git repository
+canopy-web hosts and is the only writer of: each revision is a commit, a draft is
+published by a person who administers the agent, and people and runners clone and fetch
+it read-only from ``git_url(base, workspace, slug)`` with a canopy token.
 
 This module is the part both sides must compute identically, so it lives here once:
 
-* ``manifest_root(files)`` — the revision's identity: the sha256 of its canonical
-  manifest. canopy-web stores it; the CLI checks an archive against it.
+* ``manifest_root(files)`` — a revision's manifest root: the sha256 of its canonical
+  manifest. canopy-web reports it with every revision; a client checks a tree against it.
 * ``check_tree(files, slug=...)`` — the file policy. canopy-web enforces it on every
-  write; the CLI asks it first so a person hears the refusal before uploading.
+  commit it writes; the CLI asks it first so a person hears the refusal before uploading.
+* ``git_url`` / ``is_git_url`` — where a stored agent's repository is, and whether a
+  clone's origin is one (the canopy CLI's fleet updater fetches those with a token header).
 
 Standard library only. Contract: canopy-web ``docs/architecture/stored-agents.md``.
 """
@@ -323,6 +325,21 @@ def manifest_root_of_files(files: Iterable[Mapping[str, Any]]) -> str:
                           for f in files])
 
 
+def git_url(base_url: str, workspace: str, slug: str) -> str:
+    """The address of a stored agent's repository: ``<base>/git/<workspace>/<slug>.git``."""
+    return f"{base_url.rstrip('/')}/git/{workspace}/{slug}.git"
+
+
+def is_git_url(url: str, base_url: str) -> bool:
+    """Is ``url`` a stored agent's repository on the canopy at ``base_url``?"""
+    url = (url or "").strip().rstrip("/")
+    base = (base_url or "").strip().rstrip("/")
+    if not base or not url.startswith(f"{base}/git/") or not url.endswith(".git"):
+        return False
+    parts = url[len(base) + len("/git/"):].split("/")
+    return len(parts) == 2 and all(parts) and parts[1] != ".git"
+
+
 def policy() -> dict[str, Any]:
     """The policy as data, for a person reading it (canopy-web's ``GET …/definition``)."""
     return {
@@ -337,6 +354,6 @@ def policy() -> dict[str, Any]:
 __all__ = [
     "EDITABLE_GLOBS", "GENERATED_GLOBS", "MAX_FILES", "MAX_FILE_BYTES", "MAX_TREE_BYTES", "Problem",
     "SECRET_SHAPES", "canonical_manifest", "check_tree", "editable", "executable_paths", "generated_paths",
-    "manifest_entry", "manifest_root", "manifest_root_of_files", "path_problem", "policy", "secret_kinds",
+    "git_url", "is_git_url", "manifest_entry", "manifest_root", "manifest_root_of_files", "path_problem", "policy", "secret_kinds",
     "sha256_hex",
 ]

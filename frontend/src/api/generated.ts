@@ -5535,8 +5535,63 @@ export interface paths {
          *     one outside it refuses the whole conversion (422 with `problems`). The files canopy writes
          *     itself (`.claude-plugin/`, `.claude/settings.json`, `bin/<slug>-email`, `.gitignore`) are
          *     ignored if uploaded and rewritten. 409 for an agent that is already stored.
+         *
+         *     `bundle_b64` (a `git bundle` of the branch) keeps the repository's history: it is kept
+         *     under `refs/heads/imported` and revision 1 is a commit on its tip. Every blob in it is
+         *     scanned for secrets first (422 `secret` with `problems`). Files and history together are
+         *     held to one request's size: more is 413 — convert the files only.
          */
         readonly post: operations["convert_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move a stored agent's definition, with its history, to an empty GitHub repository
+         * @description Pushes `main` — every commit and every `r<N>` tag — to the EMPTY GitHub repository `repo`
+         *     with `github_token` (the exporting person's, used for this push only), then switches the
+         *     agent to `source=repo` there: `repo_url=https://github.com/<repo>`, `repo_ref=ref`, no live
+         *     revision. Its runners clone it from GitHub from then on. Without `github_token`, 422 `no_token`:
+         *     canopy cannot open the agent's delegated token. canopy's repository stays,
+         *     read-only: every later draft or publish is 409 `exported`. 409 `not_empty` when the GitHub
+         *     repository has any ref; 502 when it cannot be reached or refuses the push. Create the
+         *     repository first.
+         */
+        readonly post: operations["export_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/detach": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Point a stored agent at the GitHub repository its definition was pushed to
+         * @description For a person who pushed the definition to GitHub themselves (`canopy agent definition
+         *     export --push-myself`): the same switch as `export`, with nothing pushed by canopy. The
+         *     agent runs from `repo_url` @ `ref` from then on and its canopy repository is a read-only
+         *     archive.
+         */
+        readonly post: operations["detach_agent_definition"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -30691,6 +30746,11 @@ export interface components {
             readonly status: "draft" | "published" | "superseded" | "discarded";
             /** Root Sha256 */
             readonly root_sha256: string;
+            /**
+             * Commit
+             * @default
+             */
+            readonly commit: string;
             /** Message */
             readonly message: string;
             /** Parent */
@@ -30721,6 +30781,8 @@ export interface components {
              * @default
              */
             readonly message: string;
+            /** Bundle B64 */
+            readonly bundle_b64?: string | null;
         };
         /** DefinitionFileIn */
         readonly DefinitionFileIn: {
@@ -30734,6 +30796,46 @@ export interface components {
              */
             readonly executable: boolean;
         };
+        /** DefinitionMovedOut */
+        readonly DefinitionMovedOut: {
+            /** Repo */
+            readonly repo: string;
+            /** Repo Url */
+            readonly repo_url: string;
+            /** Repo Ref */
+            readonly repo_ref: string;
+            /** Commit */
+            readonly commit: string;
+            /** Revision */
+            readonly revision: number;
+            /** Tags */
+            readonly tags?: readonly string[];
+        };
+        /** DefinitionExportIn */
+        readonly DefinitionExportIn: {
+            /** Repo */
+            readonly repo: string;
+            /**
+             * Ref
+             * @default main
+             */
+            readonly ref: string;
+            /**
+             * Github Token
+             * @default
+             */
+            readonly github_token: string;
+        };
+        /** DefinitionDetachIn */
+        readonly DefinitionDetachIn: {
+            /** Repo Url */
+            readonly repo_url: string;
+            /**
+             * Ref
+             * @default main
+             */
+            readonly ref: string;
+        };
         /** DefinitionOut */
         readonly DefinitionOut: {
             /**
@@ -30741,6 +30843,13 @@ export interface components {
              * @enum {string}
              */
             readonly source: "repo" | "stored";
+            /** Git Url */
+            readonly git_url?: string | null;
+            /**
+             * Exported To
+             * @default
+             */
+            readonly exported_to: string;
             readonly live?: components["schemas"]["DefinitionRevisionSummaryOut"] | null;
             readonly draft?: components["schemas"]["DefinitionRevisionSummaryOut"] | null;
             readonly policy: components["schemas"]["DefinitionPolicyOut"];
@@ -30779,6 +30888,11 @@ export interface components {
             readonly status: "draft" | "published" | "superseded" | "discarded";
             /** Root Sha256 */
             readonly root_sha256: string;
+            /**
+             * Commit
+             * @default
+             */
+            readonly commit: string;
             /** Message */
             readonly message: string;
             /** Parent */
@@ -31215,6 +31329,10 @@ export interface components {
             readonly revision?: number | null;
             /** Root Sha256 */
             readonly root_sha256?: string | null;
+            /** Commit */
+            readonly commit?: string | null;
+            /** Git Url */
+            readonly git_url?: string | null;
         };
         /** AgentDetailOut */
         readonly AgentDetailOut: {
@@ -31864,6 +31982,10 @@ export interface components {
             readonly revision?: number | null;
             /** Root Sha256 */
             readonly root_sha256?: string | null;
+            /** Commit */
+            readonly commit?: string | null;
+            /** Git Url */
+            readonly git_url?: string | null;
         };
         /**
          * AgentRunnerOut
@@ -62062,6 +62184,112 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly export_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionExportIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionMovedOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Bad Gateway */
+            readonly 502: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly detach_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionDetachIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionMovedOut"];
                 };
             };
             /** @description Conflict */

@@ -123,6 +123,10 @@ class Agent(models.Model):
     #: repo agent, and for a stored one only while it is being created.
     live_revision = models.ForeignKey("agents.AgentDefinitionRevision", null=True, blank=True,
                                       on_delete=models.SET_NULL, related_name="+")
+    #: `owner/name` of the GitHub repository a stored agent's definition moved to
+    #: (`agent_definitions.services.export`/`detach`). Its canopy repository is then a
+    #: read-only archive: every further draft or publish is 409 `exported`.
+    definition_exported_to = models.CharField(max_length=200, blank=True, default="")
     # The agent CLIs this agent may run on, preferred first (`harness.clis`): the
     # claim picks the first one the box has signed in and can confine the turn on.
     # Part of the agent's definition, like its repo (agents.services.DEFINITION_FIELDS).
