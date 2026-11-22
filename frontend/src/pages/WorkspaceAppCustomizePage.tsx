@@ -712,7 +712,7 @@ function Publishers({ workspace, app }: { workspace: string; app: InstalledApp }
                   {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
                 </select>
               </td>
-              <td className="text-xs text-muted-foreground">{r.granted_by ? `by ${r.granted_by}, ` : ''}{r.granted_at.slice(0, 10)}</td>
+              <Td density="none" tone="muted" className="text-xs">{r.granted_by ? `by ${r.granted_by}, ` : ''}{r.granted_at.slice(0, 10)}</Td>
               <Td density="none" align="right">
                 <button type="button" className="text-xs text-muted-foreground hover:text-destructive"
                   onClick={() => window.confirm(`Stop ${r.name} publishing new versions of ${app.name}?`)
@@ -720,7 +720,7 @@ function Publishers({ workspace, app }: { workspace: string; app: InstalledApp }
               </Td>
             </Tr>
           ))}
-          {rows.length === 0 && <tr><td className="py-1.5 text-muted-foreground">Only workspace admins, for now.</td></tr>}
+          {rows.length === 0 && <Tr><Td density="cozy" tone="muted">Only workspace admins, for now.</Td></Tr>}
         </tbody>
       </table>
       <AddPeoplePicker candidates={candidates} loading={members === null} options={LEVELS} defaultRole="content"
