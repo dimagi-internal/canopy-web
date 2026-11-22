@@ -1,5 +1,6 @@
 """A request as a Web Push: the title says what is asked, the body says who asks, the tap opens the
-request with everything on it."""
+request with everything on it. `kind="decision"` makes the notification stay until it is handled,
+with a "Review & decide" button, so it does not read like an alert (`frontend/public/sw-push.js`)."""
 from __future__ import annotations
 
 from apps.push.services import send_to_user
@@ -16,5 +17,5 @@ def body(card: dict) -> str:
 
 def send(req, user, card: dict) -> dict | None:
     sent = send_to_user(user, title=f"Approve? {card['title']}"[:100], body=body(card), url=card["url"],
-                        urgency="high")
+                        urgency="high", kind="decision")
     return {} if sent else None
