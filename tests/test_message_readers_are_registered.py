@@ -31,6 +31,9 @@ READERS: dict[str, str] = {
     "apps/brain/lineage.py": ("a learning run's own conversation, for the links its turn reported making (URLs only, "
                               "stored as ids and links, never a word: `lineage.record_reported`)"),
     "apps/brain/reading.py": BRAIN,
+    "apps/brain/grounding.py": ("a learning run's emit checking its quotes against rows that same run was already "
+                                "served (`BrainRunRead`), in the run's own view, scrubbed; nothing leaves it but the "
+                                "refusal to that run"),
     "apps/canopy_sessions/access.py": CHAT,
     "apps/canopy_sessions/activity.py": INGEST,
     "apps/canopy_sessions/api_read.py": CHAT,

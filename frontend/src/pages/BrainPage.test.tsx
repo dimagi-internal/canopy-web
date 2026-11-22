@@ -16,7 +16,9 @@ const acknowledgeFlag = vi.fn()
 const setOutputStatus = vi.fn()
 const setTargetBudget = vi.fn()
 const whyNotRead = vi.fn()
+const getBrainScorecard = vi.fn()
 vi.mock('@/api/brain', () => ({
+  getBrainScorecard,
   getBrainState, getBrainLinks, getBrainRuns, listBrainOutputs, runTargetNow, addTarget, removeTarget, setLearningReads,
   configureLearner, acknowledgeFlag, setOutputStatus, setTargetBudget, whyNotRead,
 }))
@@ -86,6 +88,14 @@ const finding = (id: number, more: Record<string, unknown> = {}) => ({
   title: `finding ${id}`, body: {}, state: 'active', status: 'open', seen: 1, may_set_status: true,
   created_at: ago(5), last_seen_at: ago(5), sessions: [], hidden_sessions: 0, source_sessions: [], ...more,
 })
+const WEEKS = Array.from({ length: 8 }, (_, i) => `2026-0${(i % 9) + 1}-0${(i % 9) + 1}`)
+const SCORECARD = {
+  weeks: WEEKS,
+  targets: [{ target: 7, learner: 'system-learning', label: 'dimagi', workspace: 'dimagi', project: '',
+    weeks: WEEKS.map((week, i) => ({ week, open: i === 7 ? 2 : 0, accepted: i === 6 ? 1 : 0, done: i === 5 ? 1 : 0,
+      dismissed: i === 4 ? 2 : 0 })),
+    open: 2, accepted: 1, done: 1, dismissed: 2, precision: 0.5, open_now: 2, faded_now: 1, came_back: 1 }],
+}
 const OUTPUTS = [
   finding(1, {
     title: 'The runner idles without a delegation', seen: 3, last_seen_at: ago(1),
@@ -117,6 +127,7 @@ function setup(owner = false, url = '/w/dimagi/brain?tab=setup') {
   next_before: 9, done: true })
   getBrainRuns.mockResolvedValue({ runs: [RUN], next_before: 3, done: true })
   listBrainOutputs.mockResolvedValue(OUTPUTS)
+  getBrainScorecard.mockResolvedValue(SCORECARD)
   runTargetNow.mockResolvedValue({ ...RUN, id: 4, state: 'open' })
   return render(
     <MemoryRouter initialEntries={[url]}>
@@ -149,6 +160,44 @@ describe('BrainPage', () => {
     fireEvent.click(within(form).getByRole('button', { name: 'Save budget' }))
     await waitFor(() => expect(setTargetBudget).toHaveBeenCalledWith('dimagi', 7, expect.objectContaining({
       max_sources_per_run: 10, clear_tokens: true })))
+  })
+
+  it('sends a target\'s fade windows by type and its dismissal cooldown, and refuses a malformed map', async () => {
+    setup(true)
+    setTargetBudget.mockResolvedValue({})
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Budget…' }))[0])
+    const form = screen.getByRole('form', { name: 'Budget of dimagi' })
+    fireEvent.change(within(form).getByLabelText('fade days by finding type'), { target: { value: 'design' } })
+    expect((within(form).getByRole('button', { name: 'Save budget' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(within(form).getByLabelText('fade days by finding type'), { target: { value: 'design=120, Friction: 14' } })
+    fireEvent.change(within(form).getByLabelText('days a dismissed finding stays dismissed'), { target: { value: '30' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save budget' }))
+    await waitFor(() => expect(setTargetBudget).toHaveBeenCalledWith('dimagi', 7, expect.objectContaining({
+      fade_days_by_type: { design: 120, friction: 14 }, dismiss_cooldown_days: 30 })))
+  })
+
+  it('shows each target\'s scorecard: weekly bars, precision, open, faded and came back', async () => {
+    setup(true)
+    const card = await screen.findByRole('region', { name: 'Learner scorecard' })
+    await within(card).findByText('50%')
+    expect(getBrainScorecard).toHaveBeenCalledWith('dimagi')
+    expect(within(card).getByRole('img', { name: /dimagi: findings made in each of the last 8 weeks/ })).toBeTruthy()
+    expect(within(card).getByText('6 in 8 weeks')).toBeTruthy()
+    expect(within(card).getByText('Dismissed')).toBeTruthy()              // the legend names every fill
+  })
+
+  it('draws what a finding reaches and when it was seen, and opens its evidence from the strip', async () => {
+    listBrainOutputs.mockResolvedValueOnce([{ ...OUTPUTS[0], sessions_seen: 3, people_seen: 2, breadth: 'pattern',
+      came_back: true, recurs_of: 99, sightings: [ago(20), ago(6), ago(1)] }])
+    setup(true, '/w/dimagi/brain')
+    const card = await screen.findByRole('listitem', { name: 'The runner idles without a delegation' })
+    expect(within(card).getByRole('group', { name: 'Seen in 3 sessions with 2 people' })).toBeTruthy()
+    expect(within(card).getByText('a pattern')).toBeTruthy()
+    expect(within(card).getByText('Came back after done')).toBeTruthy()
+    expect(within(card).getByRole('img', { name: /^Seen 3 times, first / })).toBeTruthy()
+    expect(within(card).queryByText('fourth quote')).toBeNull()
+    fireEvent.click(within(card).getByRole('button', { name: '3 sessions' }))
+    expect(within(card).getByText('fourth quote')).toBeTruthy()
   })
 
   it('moves a finding along its lifecycle and shows how often it was seen', async () => {

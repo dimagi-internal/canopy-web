@@ -12,17 +12,26 @@ naming who made it (and for an agent, its turn and its person).
 
 A run names what an output IS with a `key` (`brain_emit`). An emit whose kind and key match an output of the same
 learner, subject and workspace that is still active and open or accepted is a repeat (`match`): it folds in (`fold`),
-counting `seen`, taking the newer words, and adding this run's reads to the lineage, so a removal of any session either
-run read still reaches it. A dismissed or done one does not take a repeat: that is news, and it is a new output. A run is
-shown the open findings of its learner, subject and workspace (`open_for`, in its context) so it reuses their keys, and
-may name the one a finding repeats outright (`brain_emit`'s `same_as`, `match_id`).
+counting `seen`, taking the newer words, adding a sighting (`sightings`) and adding this run's reads to the lineage, so a
+removal of any session either run read still reaches it. A DISMISSED one takes a repeat the same way while it is within
+its target's cooldown (`budget.dismiss_cooldown_days`, from when it was dismissed) and stays dismissed: the people said
+it is not worth acting on, so seeing it again is a sighting, not news; after the cooldown a repeat is a new output. A
+DONE one never takes a repeat: a repeat of it is a new output that names it (`recurs_of`, `came_back_of`), the finding
+came back after it was acted on, which is how a learner's fixes are measured (`scorecard`). A run is shown the open
+findings of its learner, subject and workspace (`open_for`, in its context) so it reuses their keys, and the ones
+dismissed within the cooldown (`dismissed_for`) so it does not raise them again unless something changed; it may name
+the one a finding repeats outright (`brain_emit`'s `same_as`, `match_id`).
+
+How far a finding reaches (`breadth`): the distinct sessions and people across everything it cites, every fold
+included (its cited `OutputLineage`, each row carrying the people in that session). A `system` finding seen in one
+session is a `single session`, in two or more a `pattern`; a one-off is kept and labelled, never refused.
 
 Two outputs that turn out to be one problem are merged (`merge`, by the same people who set a status): the second's
 sightings and lineage move to the first, the second's status becomes `duplicate` with `merged_into` naming the first,
 and a later repeat of either key folds into the first. An event in the workspace records it.
 
-An open or accepted finding no run re-saw within its target's `fade_days` (`budget.fade_days`) is faded (`faded`): a
-computed state, nothing is deleted. It is not shown to runs as an existing finding, the page lists it below the fresh
+An open or accepted finding no run re-saw within the fade window of its type at its target (`budget.fade_days_for`:
+friction fades in weeks, design in a quarter) is faded (`faded`): a computed state, nothing is deleted. It is not shown to runs as an existing finding, the page lists it below the fresh
 ones, a repeat that folds into it makes it fresh again, and setting its status to open or accepted keeps it (`set_status`
 moves its `last_seen_at` to now)."""
 from __future__ import annotations
@@ -53,6 +62,12 @@ DUPLICATE = "duplicate"
 FOLDS_INTO = (OPEN, ACCEPTED)
 #: How many open findings a run's context names at most (most recently seen first); `open_findings_total` counts all.
 MAX_OPEN_IN_CONTEXT = 40
+#: How many recently dismissed findings a run's context names at most (most recently dismissed first).
+MAX_DISMISSED_IN_CONTEXT = 20
+#: How many sightings an output keeps (the newest).
+SIGHTINGS_KEPT = 200
+#: How a `system` finding's breadth reads (`breadth_label`).
+SINGLE_SESSION, PATTERN = "single session", "pattern"
 
 
 def _ours(run: BrainRun, workspace: str | None):
@@ -61,34 +76,84 @@ def _ours(run: BrainRun, workspace: str | None):
     return qs.filter(workspace_id=workspace) if workspace else qs
 
 
-def _resolve(out: BrainOutput | None) -> BrainOutput | None:
-    """A duplicate stands for what it was merged into (followed a few steps); None if that is not open."""
+def _cooldown_since(run: BrainRun, now=None):
+    """The oldest dismissal that still takes repeats in, for `run`'s target."""
+    return (now or timezone.now()) - dt.timedelta(days=budget.dismiss_cooldown_days(
+        run.target if run.target_id else None))
+
+
+def dismissed_at(out: BrainOutput):
+    return out.status_at or out.created_at
+
+
+def _takes_repeat(out: BrainOutput, since) -> bool:
+    """Whether a repeat folds into `out`: open or accepted, or dismissed since `since` (the cooldown)."""
+    if out.state != BrainOutput.ACTIVE:
+        return False
+    return out.status in FOLDS_INTO or (out.status == DISMISSED and dismissed_at(out) is not None
+                                        and dismissed_at(out) >= since)
+
+
+def _resolve(out: BrainOutput | None, since=None) -> BrainOutput | None:
+    """A duplicate stands for what it was merged into (followed a few steps); None if that takes no repeat."""
     for _ in range(5):
         if out is None or out.status != DUPLICATE:
             break
         out = out.merged_into
-    if out is None or out.state != BrainOutput.ACTIVE or out.status not in FOLDS_INTO:
+    if out is None or not _takes_repeat(out, since if since is not None else timezone.now()):
         return None
     return out
 
 
 def match(run: BrainRun, *, kind: str, key: str, workspace: str) -> BrainOutput | None:
-    """The output a repeat of (`kind`, `key`) folds into, or None: an open one with that key, or the one a duplicate
-    with that key was merged into."""
+    """The output a repeat of (`kind`, `key`) folds into, or None: an open one with that key, else one dismissed
+    within the cooldown, else the one a duplicate with that key was merged into."""
     if not key:
         return None
+    since = _cooldown_since(run)
     rows = _ours(run, workspace).filter(kind=kind, key=key)
     found = rows.filter(status__in=FOLDS_INTO).order_by("-pk").first()
     if found is None:
-        found = _resolve(rows.filter(status=DUPLICATE).select_related("merged_into").order_by("-pk").first())
+        found = (rows.filter(status=DISMISSED).filter(Q(status_at__gte=since)
+                                                      | Q(status_at__isnull=True, created_at__gte=since))
+                 .order_by("-pk").first())
+    if found is None:
+        found = _resolve(rows.filter(status=DUPLICATE).select_related("merged_into").order_by("-pk").first(), since)
     return found
 
 
 def match_id(run: BrainRun, output_id: int, *, kind: str, workspace: str) -> BrainOutput | None:
     """The output a run names as the one its finding repeats (`same_as`): one of its learner, subject and workspace
-    and kind, still open or accepted (a duplicate stands for what it was merged into). None if it is not."""
+    and kind, still open or accepted or dismissed within the cooldown (a duplicate stands for what it was merged
+    into). None if it is not."""
     out = _ours(run, workspace).filter(pk=output_id, kind=kind).select_related("merged_into").first()
-    return _resolve(out)
+    return _resolve(out, _cooldown_since(run))
+
+
+def came_back_of(run: BrainRun, *, kind: str, key: str, workspace: str) -> BrainOutput | None:
+    """The `done` finding a new output of (`kind`, `key`) is a repeat of, the latest done, or None."""
+    if not key:
+        return None
+    return (_ours(run, workspace).filter(kind=kind, key=key, status=DONE)
+            .order_by(F("status_at").desc(nulls_last=True), "-pk").first())
+
+
+def sighted(sightings, run: BrainRun | None, at=None) -> list[dict]:
+    """`sightings` with one more: when, and by which run; the newest `SIGHTINGS_KEPT`."""
+    rows = [s for s in (sightings if isinstance(sightings, list) else []) if isinstance(s, dict)]
+    rows.append({"at": (at or timezone.now()).isoformat(), "run": getattr(run, "pk", None)})
+    return rows[-SIGHTINGS_KEPT:]
+
+
+def sighting_times(out: BrainOutput) -> list[str]:
+    """When `out` was seen, oldest first: its sightings, or (one made before they were kept) when it was made and when
+    it was last seen."""
+    got = sorted(str(s["at"]) for s in (out.sightings or []) if isinstance(s, dict) and s.get("at"))
+    if got:
+        return got
+    first = out.created_at.isoformat() if out.created_at else ""
+    last = out.last_seen_at.isoformat() if out.last_seen_at else ""
+    return [t for t in dict.fromkeys([first, last]) if t]
 
 
 def faded(out: BrainOutput, days: int, now=None) -> bool:
@@ -99,36 +164,88 @@ def faded(out: BrainOutput, days: int, now=None) -> bool:
     return seen is not None and seen < (now or timezone.now()) - dt.timedelta(days=days)
 
 
-def fade_days_of(out: BrainOutput, memo: dict | None = None) -> int:
-    """The fade window of `out`: its run's target's, else the target of its learner and workspace, else the default."""
-    memo = {} if memo is None else memo
-    key = (out.capability_id, out.workspace_id, getattr(out.run, "target_id", None) if out.run_id else None)
+def _placed(out: BrainOutput, memo: dict) -> tuple[BrainTarget | None, dict[str, int]]:
+    key = ("target", out.capability_id, out.workspace_id, getattr(out.run, "target_id", None) if out.run_id else None)
     if key not in memo:
         target = None
-        if key[2] is not None:
-            target = BrainTarget.objects.filter(pk=key[2]).first()
+        if key[3] is not None:
+            target = BrainTarget.objects.filter(pk=key[3]).first()
         if target is None:
             target = BrainTarget.objects.filter(capability_id=out.capability_id, workspace_id=out.workspace_id,
                                                 project__isnull=True).first()
-        memo[key] = budget.fade_days(target)
+        memo[key] = (target, budget.fade_windows(target))
     return memo[key]
 
 
+def target_of(out: BrainOutput, memo: dict | None = None) -> BrainTarget | None:
+    """The target `out` belongs to: its run's, else its learner's in its workspace (a workspace target), else None."""
+    return _placed(out, {} if memo is None else memo)[0]
+
+
+def fade_days_of(out: BrainOutput, memo: dict | None = None) -> int:
+    """The fade window of `out`: the window of its type (`budget.fade_days_for`) at its target (`target_of`)."""
+    target, windows = _placed(out, {} if memo is None else memo)
+    return budget.fade_days_for(target, out.body, windows)
+
+
+def _fresh(rows, target, now=None):
+    """The rows (`values` of open findings) not faded at `target`, by the window of each one's type."""
+    now, windows = now or timezone.now(), budget.fade_windows(target)
+    return [r for r in rows if (r["last_seen_at"] or r["created_at"])
+            >= now - dt.timedelta(days=budget.fade_days_for(target, r["body"], windows))]
+
+
 def open_for(run: BrainRun, *, workspace: str | None, limit: int = MAX_OPEN_IN_CONTEXT) -> tuple[int, list[dict]]:
-    """The open and accepted findings of this run's learner, subject and workspace that have not faded, most recently
-    seen first: how many, and the first `limit` by id, key, title and sightings. What the run is told, so it reuses a
-    key for the same problem."""
-    since = timezone.now() - dt.timedelta(days=budget.fade_days(run.target if run.target_id else None))
+    """The open and accepted findings of this run's learner, subject and workspace that have not faded (by the window
+    of each one's type), most recently seen first: how many, and the first `limit` by id, key, title and sightings.
+    What the run is told, so it reuses a key for the same problem."""
+    target = run.target if run.target_id else None
+    since = timezone.now() - dt.timedelta(days=budget.longest_fade(target))
     qs = (_ours(run, workspace).filter(status__in=FOLDS_INTO)
           .filter(Q(last_seen_at__gte=since) | Q(last_seen_at__isnull=True, created_at__gte=since)))
-    rows = qs.order_by(F("last_seen_at").desc(nulls_last=True), "-pk").values(
-        "pk", "kind", "key", "title", "seen", "last_seen_at", "created_at")[:limit]
-    return qs.count(), [{"id": r["pk"], "kind": r["kind"], "key": r["key"], "title": r["title"], "seen": r["seen"],
-                         "last_seen_at": (r["last_seen_at"] or r["created_at"]).isoformat()} for r in rows]
+    rows = _fresh(qs.order_by(F("last_seen_at").desc(nulls_last=True), "-pk").values(
+        "pk", "kind", "key", "title", "seen", "last_seen_at", "created_at", "body"), target)
+    return len(rows), [{"id": r["pk"], "kind": r["kind"], "key": r["key"], "title": r["title"], "seen": r["seen"],
+                        "last_seen_at": (r["last_seen_at"] or r["created_at"]).isoformat()} for r in rows[:limit]]
+
+
+def dismissed_for(run: BrainRun, *, workspace: str | None, limit: int | None = None) -> tuple[int, list[dict]]:
+    """The findings of this run's learner, subject and workspace dismissed within the cooldown, with a key, most
+    recently dismissed first: how many, and the first `limit` by id, key and title. What the run is told not to raise
+    again unless something changed (a repeat folds into the dismissed one and stays dismissed)."""
+    since, limit = _cooldown_since(run), MAX_DISMISSED_IN_CONTEXT if limit is None else limit
+    qs = (_ours(run, workspace).filter(status=DISMISSED).exclude(key="")
+          .filter(Q(status_at__gte=since) | Q(status_at__isnull=True, created_at__gte=since)))
+    rows = qs.order_by(F("status_at").desc(nulls_last=True), "-pk").values(
+        "pk", "kind", "key", "title", "status_at", "created_at")[:limit]
+    return qs.count(), [{"id": r["pk"], "kind": r["kind"], "key": r["key"], "title": r["title"],
+                         "dismissed_at": (r["status_at"] or r["created_at"]).isoformat()} for r in rows]
+
+
+def breadth(rows) -> dict[int, dict]:
+    """Each output's reach across everything it cites, every fold included: distinct sessions and distinct people
+    (the people in each cited session when it was cited, `OutputLineage.participant_scope`). One read for a page."""
+    out: dict[int, dict] = {o.pk: {"sources": set(), "people": set()} for o in rows}
+    for oid, src, people in (OutputLineage.objects.filter(output_kind="brain.output", cited=True,
+                                                          output_id__in=[str(o.pk) for o in rows])
+                             .values_list("output_id", "source_id", "participant_scope")):
+        got = out.get(int(oid))
+        if got is not None:
+            got["sources"].add(src)
+            got["people"].update(p for p in (people or []) if isinstance(p, int))
+    return {k: {"sessions": len(v["sources"]), "people": len(v["people"])} for k, v in out.items()}
+
+
+def breadth_label(out: BrainOutput, sessions: int) -> str:
+    """A `system` finding's breadth in a word: `single session` or `pattern` (two or more); "" for any other."""
+    if out.capability.purpose_class != SYSTEM:
+        return ""
+    return PATTERN if sessions >= 2 else SINGLE_SESSION
 
 
 def fold(out: BrainOutput, run: BrainRun, *, title: str, body: dict, cited) -> BrainOutput:
-    """Take a repeat into `out`: one more sighting, the newer words, and lineage to what this run read."""
+    """Take a repeat into `out`: one more sighting, the newer words, and lineage to what this run read. Its status is
+    left as it is (a dismissed one stays dismissed)."""
     from .emit import write_lineage  # noqa: PLC0415 — cycle: emit -> findings
 
     with transaction.atomic():
@@ -137,10 +254,11 @@ def fold(out: BrainOutput, run: BrainRun, *, title: str, body: dict, cited) -> B
             return locked                                        # withdrawn meanwhile: nothing to fold into
         locked.seen += 1
         locked.last_seen_at = timezone.now()
+        locked.sightings = sighted(locked.sightings, run, locked.last_seen_at)
         if "merged_from" in (locked.body or {}) and isinstance(body, dict) and "merged_from" not in body:
             body = {**body, "merged_from": locked.body["merged_from"]}
         locked.title, locked.body = title or locked.title, body
-        locked.save(update_fields=["seen", "last_seen_at", "title", "body", "updated_at"])
+        locked.save(update_fields=["seen", "last_seen_at", "sightings", "title", "body", "updated_at"])
         write_lineage(run, locked, cited=cited)
     return locked
 
@@ -260,8 +378,10 @@ def merge(keep: BrainOutput, dup: BrainOutput, *, by, acting: dict | None = None
                     body[k] = [*body.get(k, []), *(x for x in b.body[k] if x not in body.get(k, []))]
         body["merged_from"] = [*body.get("merged_from", []), note] if isinstance(body.get("merged_from"), list) else [note]
         seen_at = max([t for t in (a.last_seen_at or a.created_at, b.last_seen_at or b.created_at) if t])
+        both = [{"at": t} for t in (*sighting_times(a), *sighting_times(b))]
         a.seen, a.last_seen_at, a.body = a.seen + b.seen, seen_at, body
-        a.save(update_fields=["seen", "last_seen_at", "body", "updated_at"])
+        a.sightings = sorted(both, key=lambda x: x["at"])[-SIGHTINGS_KEPT:]
+        a.save(update_fields=["seen", "last_seen_at", "sightings", "body", "updated_at"])
         was = b.status
         BrainOutput.objects.filter(pk=b.pk).update(status=DUPLICATE, merged_into=a, status_at=timezone.now(),
                                                    status_by=by)

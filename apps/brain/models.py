@@ -294,6 +294,11 @@ class BrainOutput(models.Model):
     #: The output this one was merged into as the same problem (`findings.merge`, status `duplicate`): a repeat of its
     #: key folds there.
     merged_into = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="merged")
+    #: The `done` finding of the same kind and key this one is a repeat of (`findings.came_back_of`): it came back after
+    #: it was acted on, which is how a learner's fixes are measured.
+    recurs_of = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="recurrences")
+    #: When each emit saw it (`findings.SIGHTINGS_KEPT` newest, ISO times with the run): its sightings over time.
+    sightings = models.JSONField(default=list, blank=True, db_default=[])
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -420,6 +425,11 @@ class BrainTarget(models.Model):
     #: kind's default). And how long an open finding nobody re-sees stays fresh (`budget.fade_days`; null: the default).
     lookback_days = models.PositiveIntegerField(null=True, blank=True)
     fade_days = models.PositiveIntegerField(null=True, blank=True)
+    #: The fade window by a finding's type (`budget.fade_days_for`): {type: days}, over `budget.FADE_BY_TYPE`.
+    fade_days_by_type = models.JSONField(default=dict, blank=True, db_default={})
+    #: How long a dismissed finding's repeats fold into it and stay dismissed (`budget.dismiss_cooldown_days`; null:
+    #: the default).
+    dismiss_cooldown_days = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [

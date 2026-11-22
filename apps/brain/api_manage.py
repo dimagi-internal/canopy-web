@@ -400,10 +400,11 @@ def run_learning_target(request: HttpRequest, target_id: int) -> dict:
 @gate("brain.manage", setting=True)  # a manager of its workspace or above, or the project's (actor.of)
 def set_target_budget(request: HttpRequest, target_id: int, payload: BrainTargetBudgetIn) -> dict:
     """How much one run of this target may read (sessions) and write (outputs), and how many runs, outputs and tokens
-    it may spend in a UTC day, how far back its runs read (`lookback_days`: only sessions active that recently) and how
-    long an open finding nobody re-sees stays fresh (`fade_days`). A run stops cleanly at a cap: nothing more is read or
-    written, and a fire past a daily cap starts nothing and says why. Fields left out keep their value; `clear_tokens`
-    removes the token cap."""
+    it may spend in a UTC day, how far back its runs read (`lookback_days`: only sessions active that recently), how
+    long an open finding nobody re-sees stays fresh (`fade_days`, and by its type, `fade_days_by_type`) and how long a
+    dismissed finding takes its repeats in and stays dismissed (`dismiss_cooldown_days`). A run stops cleanly at a cap:
+    nothing more is read or written, and a fire past a daily cap starts nothing and says why. Fields left out keep their
+    value; `clear_tokens` removes the token cap."""
     actor = actor_mod.of(request)
     t = _target_or_404(_pinned(request), target_id)
     if not may_manage_target(actor, t.workspace_id, t.project):
@@ -414,6 +415,8 @@ def set_target_budget(request: HttpRequest, target_id: int, payload: BrainTarget
     changes = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None and k in fields}
     if payload.clear_tokens:
         changes["max_tokens_per_day"] = None
+    if "fade_days_by_type" in changes:
+        changes["fade_days_by_type"] = _fade_by_type(changes["fade_days_by_type"])
     before = budget.out(t)
     targets.set_budget(t, **changes)
     after = budget.out(t)
@@ -421,6 +424,21 @@ def set_target_budget(request: HttpRequest, target_id: int, payload: BrainTarget
                       after={k: after[k] for k in fields}, workspace=t.workspace,
                       summary=f"{actor.label} changed the budget of {t.capability.slug}'s target {targets.label(t)}")
     return target_out(t, can_manage=True)
+
+
+def _fade_by_type(got: dict) -> dict:
+    """A target's fade windows by type, checked: a short lowercase word to a whole number of days from 1 to 365."""
+    out = {}
+    for k, v in (got or {}).items():
+        word = str(k).strip().lower()
+        if not word or len(word) > 40 or not all(c.isalnum() or c == "_" for c in word):
+            raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
+                               detail=f"a finding type is a short word (letters, digits, `_`), not {k!r}")
+        if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 365:
+            raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
+                               detail=f"the fade window of {word!r} is a whole number of days from 1 to 365")
+        out[word] = v
+    return out
 
 
 # ---- why a session is not read ------------------------------------------------------------------------------

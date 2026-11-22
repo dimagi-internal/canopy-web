@@ -10,9 +10,11 @@ today's use. A run stops cleanly at a cap, never in the middle of a source or an
 * **runs per day**, **outputs per day** and **tokens per day**: a fire or a Run now starts nothing once one is spent,
   and leaves a `brain.target` event saying which (`targets.why_not`).
 
-A target also says how far back its runs read and how long a finding stays fresh (`lookback_days`, `fade_days`, set by
-the same people on the same form): a run reads only sessions active in the last `lookback_days` (`reading.candidates`),
-newest first, and an open finding nobody re-saw for `fade_days` is faded (`findings.faded`). Null takes the default.
+A target also says how far back its runs read and how long a finding stays fresh (`lookback_days`, `fade_days`,
+`fade_days_by_type`, set by the same people on the same form): a run reads only sessions active in the last
+`lookback_days` (`reading.candidates`), newest first, and an open finding nobody re-saw within the window of its type
+(`fade_days_for`; `fade_days` for a finding of no known type) is faded (`findings.faded`). And how long a dismissed
+finding takes its repeats in (`dismiss_cooldown_days`, `findings.match`). Null takes the default.
 
 Tokens are what the boxes reported for the runs' conversations (`events.SessionUsage`), so they lag the run and are
 checked before a run starts, never during one: canopy-web cannot stop a model mid-turn. A run is one turn by
@@ -39,10 +41,20 @@ FIELDS = tuple(DEFAULTS)
 #: sessions tied to one piece of work, far fewer a day, over that work's longer arc, so a month.
 LOOKBACK_DAYS = {"workspace": 14, "project": 30}
 #: How long an open finding stays fresh without a run seeing it again: half again the workspace window, so a finding
-#: none of three weeks of daily runs re-saw is one reality has probably moved past.
+#: none of three weeks of daily runs re-saw is one reality has probably moved past. The fallback of `FADE_BY_TYPE`.
 FADE_DAYS = 21
+#: How long an open finding stays fresh, by what kind of thing it is (`fade_days_for`: its body's `type`, else its
+#: `signal`): friction and a missing provision are fixed or worked around within weeks, so unseen for three they are
+#: gone; a skill gap, an over-claim or drift from what was asked shows only when that kind of work comes round again, so
+#: six weeks; a design finding is about how canopy is built and stays true until someone changes it, so a quarter.
+FADE_BY_TYPE = {"friction": 21, "provision": 21, "permission": 21, "failure": 21,
+                "skill": 45, "over_claim": 45, "intent_drift": 45, "dropped_step": 45, "wrong_fact": 45,
+                "repeated_manual_work": 45, "design": 90}
+#: How long a dismissed finding stays dismissed: a repeat of it in that time folds into it as a sighting (`findings`);
+#: after it, a repeat is news again.
+DISMISS_COOLDOWN_DAYS = 60
 #: The target's settings beside its budget, on the same form and route; null takes the default.
-WINDOW_FIELDS = ("lookback_days", "fade_days")
+WINDOW_FIELDS = ("lookback_days", "fade_days", "fade_days_by_type", "dismiss_cooldown_days")
 
 
 @dataclass(frozen=True)
@@ -68,8 +80,36 @@ def lookback_days(target: BrainTarget | None) -> int | None:
 
 
 def fade_days(target: BrainTarget | None) -> int:
-    """How many days an open finding of `target` stays fresh without a run seeing it again."""
+    """How many days an open finding of `target` with no type of its own stays fresh without a run seeing it again."""
     return (target.fade_days if target is not None else None) or FADE_DAYS
+
+
+def fade_windows(target: BrainTarget | None) -> dict[str, int]:
+    """The fade window of each type at `target`: `FADE_BY_TYPE` with the target's own (`fade_days_by_type`) over it."""
+    own = (target.fade_days_by_type if target is not None else None) or {}
+    return {**FADE_BY_TYPE, **{k: int(v) for k, v in own.items() if isinstance(v, int) and v > 0}}
+
+
+def fade_days_for(target: BrainTarget | None, body, windows: dict | None = None) -> int:
+    """How many days a finding with `body` stays fresh at `target`: the window of its `type`, else of its `signal`
+    (`fade_windows`), else the target's `fade_days` (`fade_days`)."""
+    windows = fade_windows(target) if windows is None else windows
+    if isinstance(body, dict):
+        for field in ("type", "signal"):
+            word = str(body.get(field) or "").strip().lower()
+            if word in windows:
+                return windows[word]
+    return fade_days(target)
+
+
+def longest_fade(target: BrainTarget | None) -> int:
+    """The longest fade window at `target`: nothing seen more recently than this is faded, whatever its type."""
+    return max([fade_days(target), *fade_windows(target).values()])
+
+
+def dismiss_cooldown_days(target: BrainTarget | None) -> int:
+    """How many days a dismissed finding of `target` takes its repeats in and stays dismissed."""
+    return (target.dismiss_cooldown_days if target is not None else None) or DISMISS_COOLDOWN_DAYS
 
 
 def _today_start(now=None) -> dt.datetime:
@@ -114,4 +154,5 @@ def run_left(run: BrainRun) -> dict:
 def out(target: BrainTarget) -> dict:
     """The budget and today's use, as the brain page shows them."""
     return {**asdict(limits(target)), "lookback_days": lookback_days(target), "fade_days": fade_days(target),
-            "today": today(target)}
+            "fade_days_by_type": dict(target.fade_days_by_type or {}), "fade_windows": fade_windows(target),
+            "dismiss_cooldown_days": dismiss_cooldown_days(target), "today": today(target)}

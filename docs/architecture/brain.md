@@ -301,36 +301,21 @@ follows the operator's turn mode and rails. What makes it a learning run:
   (`OutputLineage`: the source and the people whose words were in it) is written from the reads: every source the run
   had read when it emitted, not only the cited ones (`emit.write_lineage`), since all of them were in its context, so
   a removal of any reaches the output; `cited` marks the ones it names, which are all a screen shows. Words are scrubbed,
-  object keys as well as values; the same output twice is one. Emits spend a budget of their own per run turn
+  object keys as well as values; the same output twice is one. **Every piece of evidence is grounded**
+  (`grounding.check`): each `body.evidence` item `{source, index, quote}` must name a source this run read, a row it
+  was served (at or before `BrainRunRead.through`), and a quote that is in that row once both are folded (case,
+  whitespace, curly quotes, dashes, inline markdown and quotation marks ignored; an ellipsis stands for words left out;
+  a quote may be part of the row, never more). One that fails refuses the whole emit with the item, its source and row,
+  and why (and where the quote really is, when it is in another row the run read), so the run fixes it in the same run.
+  A missing `index` is found and written in; the sources evidence names are cited. Emits spend a budget of their own per run turn
   (`mcp.rate_limit`, `BRAIN_RUN_WRITE_LIMIT`), not the accountable admin's.
 - The run's conversation holds the words it read. It has no creator and no participant and is not runner-discovered, so
   no session leg reads it and nor do its turns' content routes (`turn_access` asks the session's ACL): nobody reads it
   in canopy-web, the operator's admins included. When a source it read is removed the cascade deletes its content.
 
-## A finding's lifecycle, and repeats (`apps/brain/findings.py`)
+## A finding's lifecycle, and repeats
 
-An output's `state` is the cascade's (active, withdrawn, stale) and nobody sets it. Its `status` is the people's:
-`open` when made, then `accepted`, `dismissed` or `done` (`POST /api/w/<ws>/brain/outputs/{id}/status`, by the management
-rule, each change an event in its workspace naming who made it). Only someone who sees it AND acts for its audience sets it
-(`findings.may_set`; an admin agent only a `system` or `project` one, `findings.actor_may_set`): a `system` finding's workspace owners and admins (or an ancestor's) or a canopy admin, a `project`
-output's members who may read the project, an `individual` or `memory` output's own person.
-
-A run names what an output is with a `key`. An emit whose kind and key match an output of the same learner, subject and
-workspace that is still active and `open` or `accepted` is a repeat and folds into it (`findings.match`, `fold`): `seen`
-counts it, the newer words replace the old, and this run's reads join the lineage, so a removal of any session either
-run read still reaches it. A `dismissed` or `done` one takes no repeat: a new output is made. A repeat spends no output
-of the run's budget.
-
-A run is told the open findings its learner already holds for its subject and workspace (`findings.open_for`, in the
-run context's `open_findings`: id, key, title, sightings, most recently seen first, capped) and told to reuse a key for
-the same problem; it may also name the finding outright (`brain_emit`'s `same_as`, `findings.match_id`). The page's copy
-of a run's context leaves the list out (`state.context_shown`): who sees a run is not who sees its findings. Two outputs
-that are one problem are merged (`POST /api/w/<ws>/brain/outputs/{id}/merge`, by the rule that sets a status, on both;
-`findings.merge`): the kept one takes the other's sightings, lineage and a `merged_from` note, the other becomes
-`duplicate` with `merged_into`, a repeat of its key folds into the kept one, and an `output.merged` event records it.
-An open or accepted finding no run re-saw within its target's `fade_days` (21 unless set) is **faded**
-(`findings.faded`, computed, nothing deleted): left out of runs' context, listed last on the page, fresh again when a
-repeat folds in or someone sets it open or accepted (`set_status` moves its `last_seen_at`).
+Status, repeats and dismissals, fading by type, breadth and sightings, and the learner scorecard → [brain-findings.md](brain-findings.md).
 
 ## Lineage over everything a run makes (`apps/brain/lineage.py`, `alerts_removal.py`)
 
@@ -475,7 +460,7 @@ A workspace's view of the brain, among the health dashboard's views and linked f
 workspaces below it the viewer is in. That scope is ONE function the page, the outputs list and the graph share
 (`scope.of_request`, `scope.below`: the read rule every list follows, so an unpinned outputs list never mixes two
 organisations); what each shows inside it is still its own rule. Its routes
-(`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves, or an admin agent's pinned to
+(`GET /api/brain/state`, `/state/links`, `/state/runs`, `/scorecard`) are the person's own as themselves, or an admin agent's pinned to
 a workspace it manages (`actor.of`), and they write nothing (`tests/test_brain_page.py` captures every query). The page holds no copy of a
 count. `tests/test_brain_workspace_scope.py` pins each role's slice.
 
@@ -505,7 +490,13 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   "label: value". Each evidence quote names a source id; the outputs list maps it to a session only through
   `source_sessions`, which lists the cited sources whose session the viewer already reads (`api_admin._cited`), so a
   quote from any other says "a session you do not read". A faded finding sits in its own collapsed group with Keep; a
-  merged duplicate is never listed. Everything else is "Setup and audit" (`?tab=setup`).
+  merged duplicate is never listed. Each card draws what the finding reaches (`frontend/src/pages/BrainFindingViz.tsx::LineageStrip`:
+  finding → sessions → people, the sessions node opening the evidence) and when it was seen (`Sightings`), and says
+  when it came back after done or was seen again since it was dismissed. Everything else is "Setup and audit"
+  (`?tab=setup`), whose **learner scorecard** (`GET /api/w/<ws>/brain/scorecard`, `apps/brain/scorecard.py`) gives
+  each target its findings of the last eight weeks by week and where each stands now, precision (accepted and done
+  over everything decided), open and faded now, and how many came back after done: counts over the findings the
+  viewer may read (`outputs.visible_to`), never wider.
 
 ## Managing a workspace's learning (`apps/brain/api_manage.py`, `learning_reads.py`)
 

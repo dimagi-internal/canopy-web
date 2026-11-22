@@ -11,7 +11,9 @@ consent and the cascade apply. Everything the turn makes in canopy is recorded a
 It names the window the run reads in (`lookback_days`: sessions active in that many days, newest first) and the open
 findings its learner already holds for this subject and workspace (`open_findings`, by id, key, title and sightings,
 most recently seen first, capped; `findings.open_for`), so a run reuses a key for a problem already found instead of
-minting a new one. A faded finding is not among them. Their titles are the learner's own words, already scrubbed.
+minting a new one. A faded finding is not among them. And the ones dismissed within the cooldown (`dismissed_findings`,
+most recently dismissed first, capped; `findings.dismissed_for`), so a run does not raise them again unless something
+changed. Their titles are the learner's own words, already scrubbed.
 
 The context is a typed, versioned document (`schemas.BrainRunContext`, `VERSION`): `document` builds it and checks it
 against the type; `runs.start` keeps the one the run was started with (`BrainRun.context`), which the brain page shows
@@ -57,6 +59,7 @@ def block(run: BrainRun, *, accountable=None) -> dict:
         accountable = getattr(first, "initiator_user", None)      # a system turn's accountable person
     lim, left = budget.limits(t), (budget.run_left(run) if run.state == BrainRun.OPEN else {"sources": 0, "outputs": 0})
     total, known = findings.open_for(run, workspace=run.scope or None)
+    gone_total, gone = findings.dismissed_for(run, workspace=run.scope or None)
     return {
         "version": VERSION,
         "run": run.pk, "state": run.state, "learner": cap.slug, "learner_name": cap.name,
@@ -69,6 +72,7 @@ def block(run: BrainRun, *, accountable=None) -> dict:
         "accountable": ({"email": accountable.email, "name": _name(accountable)} if accountable is not None else None),
         "sessions_due": count, "source_ids_due": ids, "lookback_days": budget.lookback_days(t),
         "open_findings_total": total, "open_findings": known,
+        "dismissed_findings_total": gone_total, "dismissed_findings": gone,
         "budget": {"max_sources_per_run": lim.max_sources_per_run, "max_outputs_per_run": lim.max_outputs_per_run,
                    "sources_left": left["sources"], "outputs_left": left["outputs"]},
         "how": ("Read the sessions due only with brain_read (each read is recorded, and only what everyone in a "
@@ -76,7 +80,9 @@ def block(run: BrainRun, *, accountable=None) -> dict:
                 "`key` naming what it is so a repeat folds into the open finding. Before you emit, check the open "
                 "findings: when one is the same problem, emit with its key (or `same_as` its id) so it folds (more "
                 "evidence, seen + 1); mint a new key only for a problem none of them is, and never two findings for "
-                "one problem in a run. Stop at the budget. Anything else this turn makes in canopy is recorded "
+                "one problem in a run. Do not raise a dismissed finding again unless something changed (a repeat "
+                "of its key folds into it and stays dismissed). Every piece of evidence is {source, index, quote}: a "
+                "verbatim quote of a message you read, or the emit is refused. Stop at the budget. Anything else this turn makes in canopy is recorded "
                 "against the sessions it read, so a removal can reach it."),
     }
 
@@ -112,6 +118,10 @@ def prompt_lines(run: BrainRun, *, accountable=None) -> list[str]:
 
 
 def _finding_lines(b: dict) -> list[str]:
+    return [*_open_lines(b), *_dismissed_lines(b)]
+
+
+def _open_lines(b: dict) -> list[str]:
     known = b["open_findings"]
     if not known:
         return ["Open findings already held for this subject: none."]
@@ -120,3 +130,14 @@ def _finding_lines(b: dict) -> list[str]:
             + (f"; the {more} oldest are not listed" if more > 0 else "") + "); reuse a key when it is the same problem:")
     return [head, *(f"- #{f['id']} key `{f['key'] or '(none)'}`: {f['title']} (seen {f['seen']}, last "
                      f"{f['last_seen_at'][:10]})" for f in known)]
+
+
+def _dismissed_lines(b: dict) -> list[str]:
+    gone = b.get("dismissed_findings") or []
+    if not gone:
+        return []
+    more = b["dismissed_findings_total"] - len(gone)
+    head = (f"Dismissed lately ({b['dismissed_findings_total']}, most recently dismissed first"
+            + (f"; the {more} oldest are not listed" if more > 0 else "")
+            + "), dismissed — don't re-raise unless something changed:")
+    return [head, *(f"- #{f['id']} key `{f['key']}`: {f['title']} (dismissed {f['dismissed_at'][:10]})" for f in gone)]
