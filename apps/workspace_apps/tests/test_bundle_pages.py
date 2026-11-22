@@ -334,3 +334,26 @@ def test_a_workspace_may_retitle_a_bundle_page(world):
     m = AppInstallation.objects.get(key="sales").manifest
     out, quarantined = ov.compose(m, [{"op": "set_page", "page": "kanban", "title": "Board", "id": "o1"}])
     assert not quarantined and next(p for p in out["pages"] if p["slug"] == "kanban")["title"] == "Board"
+
+
+# --- a new version ------------------------------------------------------------------------------
+
+
+def _release(world, body):
+    return _client(world["admin"]).post("/api/workspace-apps/dimagi/sales/versions", body, content_type=J)
+
+
+def test_a_new_version_brings_new_files_or_keeps_the_live_ones(world):
+    _installed(world)
+    before = AppInstallation.objects.get(key="sales").manifest["bundle"]["id"]
+    kept = _release(world, {"manifest": {**APP, "version": "2"}})
+    assert kept.status_code == 201, kept.content
+    assert AppInstallation.objects.get(key="sales").manifest["bundle"]["id"] == before
+    changed = copy.deepcopy(FILES)
+    changed[2]["text"] += ";"
+    r = _release(world, {"manifest": {**APP, "version": "3"}, "files": changed})
+    assert r.status_code == 201, r.content
+    after = AppInstallation.objects.get(key="sales").manifest["bundle"]["id"]
+    assert after != before
+    # The old version's files are still served: restoring it needs nothing re-uploaded.
+    assert Client().get(f"/app-bundles/{before}/shared/app.js").status_code == 200

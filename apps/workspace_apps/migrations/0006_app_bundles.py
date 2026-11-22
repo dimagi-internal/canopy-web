@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("workspace_apps", "0004_apptemplate_runtime"),
+        ("workspace_apps", "0005_app_maintainers"),
     ]
 
     operations = [

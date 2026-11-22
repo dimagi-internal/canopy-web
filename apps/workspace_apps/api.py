@@ -610,7 +610,8 @@ def publish_workspace_app_version(request: HttpRequest, workspace: str, key: str
     inst = _installation(request, workspace, key, enabled=False)
     _require_maintain(request, inst)
     try:
-        v = services.release(inst, manifest=payload.manifest, user=request.user, note=payload.note,
+        files = [f.model_dump(exclude_none=True) for f in payload.files] if payload.files is not None else None
+        v = services.release(inst, manifest=payload.manifest, user=request.user, note=payload.note, files=files,
                              may_widen=access.may_widen(request.user, inst),
                              authority=access.authority(request.user, inst))
     except services.Refused as exc:

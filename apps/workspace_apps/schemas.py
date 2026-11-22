@@ -302,6 +302,8 @@ class ReleaseIn(Schema):
     #: The app's whole manifest, pages included — the shape installing your own app takes.
     manifest: dict[str, Any]
     note: str = ""
+    #: Its bundle pages' files, as installing takes them; none keeps the live version's files.
+    files: list[BundleFileIn] | None = None
 
 
 class MaintainerIn(Schema):

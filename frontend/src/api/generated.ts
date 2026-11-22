@@ -28447,6 +28447,8 @@ export interface components {
              * @default
              */
             readonly note: string;
+            /** Files */
+            readonly files?: readonly components["schemas"]["BundleFileIn"][] | null;
         };
         /** DraftOut */
         readonly DraftOut: {

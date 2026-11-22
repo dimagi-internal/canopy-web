@@ -560,7 +560,7 @@ def rollback(inst: AppInstallation, *, number: int, user, may_widen: bool, autho
 
 @transaction.atomic
 def release(inst: AppInstallation, *, manifest: dict, user, may_widen: bool, authority: str = "",
-            note: str = "") -> AppVersion:
+            note: str = "", files: list | None = None) -> AppVersion:
     """Publish a whole new version of the workspace's OWN template — the manifest a
     repo's build owns, in the shape `install` takes — and make it live over the
     workspace's changes, as a new version (so rollback reaches every earlier one).
@@ -570,14 +570,19 @@ def release(inst: AppInstallation, *, manifest: dict, user, may_widen: bool, aut
     declaration change after install. Judged against the live app on who can see
     and do what (`template_diff.changes`): any finding needs `may_widen`, and the
     refusal names each one. The app's checks (its scenarios) must pass. Nothing is
-    kept when it is refused."""
+    kept when it is refused. `files` are its bundle pages' files (`bundles.attach`); a
+    release that sends none keeps the live version's."""
     if inst.template.owner_id != inst.workspace_id:
         raise Refused(f"'{inst.key}' runs canopy's own template '{inst.template.key}': its new versions come "
                       "from canopy, and arrive here as an update", status=409)
     if open_draft(inst) is not None:
         raise Refused("this app has a draft open — publish or discard it before publishing a new version",
                       status=409)
-    m = mf.validate(manifest)
+    raw = bundles.attach(manifest, files)
+    kept = inst.live.template_version.manifest.get("bundle") if inst.live_id else None
+    if files is None and kept:
+        raw["bundle"] = kept
+    m = mf.validate(raw)
     if m["key"] != inst.key:
         raise ValueError(f"key: this is the '{inst.key}' app; the manifest says '{m['key']}'")
     tmpl = AppTemplate.objects.select_for_update().get(pk=inst.template_id)

@@ -84,7 +84,8 @@ A member page may be an existing web UI instead of JSX: `{"slug": "kanban", "kin
 uploaded with the version. The module docstring holds the rules; the ones to keep:
 
 - **Upload is a plain list, `[{path, content_base64 | text | sha256}]`**, given as `files` with the
-  manifest (`install_workspace_app`). Every route that releases a template version passes it through
+  manifest (`install_workspace_app`, and `publish_workspace_app_version`, where sending none keeps the
+  live version's files). Every route that releases a template version passes it through
   `bundles.attach`, which drops any `bundle` the author wrote and stores the server's own index
   (`{id, size, files}`); `manifest.py::_bundle_page` checks each `entry` is one of those files. A
   bundle over one request body goes first to `upload_workspace_app_bundle_blobs` in batches and is then
