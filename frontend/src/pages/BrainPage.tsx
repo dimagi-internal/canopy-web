@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState, type JSX, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { Button, StatusBadge } from 'canopy-ui/ui'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Button, StatusBadge, Tabs, TabsList, TabsTrigger } from 'canopy-ui/ui'
 
 import {
   acknowledgeFlag,
@@ -9,16 +9,12 @@ import {
   getBrainLinks,
   getBrainRuns,
   getBrainState,
-  listBrainOutputs,
   removeTarget,
   runTargetNow,
   setLearningReads,
-  setOutputStatus,
   setTargetBudget,
   whyNotRead,
   type BrainFlag,
-  type BrainOutput,
-  type BrainOutputStatus,
   type BrainWhy,
   type BrainRun,
   type BrainState,
@@ -30,6 +26,7 @@ import {
 import { Td, Th, Tr } from '@/components/DataTable'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
+import { Findings } from './BrainFindings'
 import { HealthViews } from './health/HealthViews'
 
 // THE BRAIN of one workspace (/w/:workspace/brain): canopy learning in it and the workspaces below it, as the
@@ -37,7 +34,8 @@ import { HealthViews } from './health/HealthViews'
 // their own. It renders; it never decides: every count and every refusal is the server's (`apps/brain/state.py`), and
 // every read is pinned to this workspace. Its owners and admins (or an ancestor's, or a canopy admin) turn "Learning
 // reads" on or off here, enable and configure the learners whose operator lives here, and start a learner's run
-// ("Run now"), reading only this subtree; what it found shows under Findings, which act on nothing by themselves.
+// ("Run now"), reading only this subtree. Two tabs: Findings (the default; what learning found, for whoever acts on it,
+// `BrainFindings.tsx`) and "Setup and audit" (`?tab=setup`: everything that makes learning run and shows what it read).
 
 const CLASSES = ['individual', 'memory', 'project', 'system'] as const
 
@@ -46,6 +44,27 @@ const sessionHref = (workspace: string, id: string) => scopedPath(workspace, `/s
 
 export function BrainPage(): JSX.Element {
   const { workspace = '' } = useParams()
+  const [search, setSearch] = useSearchParams()
+  const tab = search.get('tab') === 'setup' ? 'setup' : 'findings'
+  return (
+    <div className="space-y-4">
+      <HealthViews title="Learning" />
+      <nav aria-label="Related" className="flex flex-wrap gap-3 text-[13px]">
+        <Link className="underline" to="/settings/learning">Your learning settings</Link>
+      </nav>
+      <Tabs value={tab} onValueChange={(next) => setSearch(next === 'setup' ? { tab: 'setup' } : {})}>
+        <TabsList>
+          <TabsTrigger value="findings">Findings</TabsTrigger>
+          <TabsTrigger value="setup">Setup and audit</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {tab === 'setup' ? <SetupTab key={workspace} ws={workspace} /> : <Findings key={workspace} ws={workspace} />}
+    </div>
+  )
+}
+
+/** Everything that makes learning run and shows what it read: the workspace's brain state, its settings and runs. */
+function SetupTab({ ws }: { ws: string }): JSX.Element {
   const [state, setState] = useState<BrainState | null>(null)
   const [error, setError] = useState('')
   // Bumped when a run starts, so the runs list reads again.
@@ -54,28 +73,16 @@ export function BrainPage(): JSX.Element {
   const [stateKey, setStateKey] = useState(0)
 
   useEffect(() => {
-    getBrainState(workspace).then(setState, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
-  }, [workspace, stateKey])
-  useEffect(() => {
-    setState(null)
-    setError('')
-  }, [workspace])
+    getBrainState(ws).then(setState, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
+  }, [ws, stateKey])
 
-  return (
-    <div className="space-y-4">
-      <HealthViews title="Learning" />
-      <nav aria-label="Related" className="flex flex-wrap gap-3 text-[13px]">
-        <Link className="underline" to="/settings/learning">Your learning settings</Link>
-      </nav>
-      {error ? (
-        <p className="text-[13px] text-destructive">{error}</p>
-      ) : !state ? (
-        <p className="text-[13px] text-muted-foreground">Loading…</p>
-      ) : (
-        <NowTab key={workspace} ws={workspace} state={state} runsKey={runsKey}
-                onStarted={() => setRunsKey((k) => k + 1)} onChanged={() => setStateKey((k) => k + 1)} />
-      )}
-    </div>
+  return error ? (
+    <p className="text-[13px] text-destructive">{error}</p>
+  ) : !state ? (
+    <p className="text-[13px] text-muted-foreground">Loading…</p>
+  ) : (
+    <NowTab ws={ws} state={state} runsKey={runsKey}
+            onStarted={() => setRunsKey((k) => k + 1)} onChanged={() => setStateKey((k) => k + 1)} />
   )
 }
 
@@ -249,7 +256,6 @@ function NowTab({ ws, state, runsKey, onStarted, onChanged }: {
       <Targets ws={ws} state={state} reads={readsOn} onStarted={onStarted} onChanged={onChanged} />
 
       <Runs key={runsKey} ws={ws} state={state} />
-      <Findings ws={ws} />
       <WhyNotRead ws={ws} state={state} />
       <Flags ws={ws} flags={state.flags ?? []} onChanged={onChanged} />
 
@@ -841,105 +847,6 @@ function Flags({ ws, flags, onChanged }: { ws: string; flags: readonly BrainFlag
         </tbody>
       </Table>
       {note && <p role="status" className="text-xs text-destructive">{note}</p>}
-    </Section>
-  )
-}
-
-/** A finding's own words: the plain fields of its body, in order. */
-function bodyFields(body: Record<string, unknown>): [string, string][] {
-  return Object.entries(body)
-    .filter(([, v]) => v !== null && v !== '' && (typeof v !== 'object' || Array.isArray(v)))
-    .map(([k, v]) => [k.replace(/_/g, ' '), Array.isArray(v) ? v.map(String).join(', ') : String(v)])
-}
-
-const STATUS_TONE: Record<string, 'info' | 'success' | 'neutral'> = { open: 'info', accepted: 'info', done: 'success' }
-/** What each status can move to, as the buttons say it. */
-const NEXT: Record<string, [BrainOutputStatus, string][]> = {
-  open: [['accepted', 'Accept'], ['dismissed', 'Dismiss']],
-  accepted: [['done', 'Done'], ['open', 'Reopen']],
-  dismissed: [['open', 'Reopen']],
-  done: [['open', 'Reopen']],
-}
-
-function Findings({ ws }: { ws: string }): JSX.Element {
-  const [rows, setRows] = useState<BrainOutput[] | null>(null)
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(0)
-  useEffect(() => {
-    listBrainOutputs(ws).then(setRows, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
-  }, [ws])
-  const move = async (id: number, status: BrainOutputStatus) => {
-    setBusy(id)
-    setError('')
-    try {
-      const got = await setOutputStatus(ws, id, status)
-      setRows((rs) => (rs ?? []).map((o) => (o.id === id ? got : o)))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not change it')
-    } finally {
-      setBusy(0)
-    }
-  }
-  return (
-    <Section
-      title="Findings"
-      note="What learning produced that you may see, for the audience its class allows. A finding acts on nothing by itself: deciding what to do with it is yours. One no run has seen again lately is faded and listed last; Keep holds it open."
-    >
-      {error && <p className="text-xs text-destructive">{error}</p>}
-      {!rows ? (
-        error ? null : <Empty>Loading…</Empty>
-      ) : rows.length === 0 ? (
-        <Empty>None yet.</Empty>
-      ) : (
-        <ul className="divide-y divide-border">
-          {rows.map((o) => (
-            <li key={o.id} className={`space-y-1 py-2 text-[13px]${o.faded ? ' opacity-60' : ''}`}>
-              <div className="flex flex-wrap items-baseline gap-2">
-                <span className="font-medium text-foreground">{o.title || o.kind}</span>
-                <StatusBadge tone="neutral">{o.kind}</StatusBadge>
-                <StatusBadge tone={STATUS_TONE[o.status ?? 'open'] ?? 'neutral'}>{o.status ?? 'open'}</StatusBadge>
-                {o.faded && <StatusBadge tone="neutral">faded</StatusBadge>}
-                {(o.seen ?? 1) > 1 && <span className="text-xs text-muted-foreground">seen {o.seen} times</span>}
-                {o.may_set_status && o.faded && (
-                  <Button size="sm" variant="ghost" disabled={busy === o.id}
-                          title="No run has seen it lately; keep it open anyway"
-                          onClick={() => void move(o.id, (o.status ?? 'open') as BrainOutputStatus)}>Keep</Button>
-                )}
-                {o.may_set_status && (NEXT[o.status ?? 'open'] ?? []).map(([to, label]) => (
-                  <Button key={to} size="sm" variant="ghost" disabled={busy === o.id}
-                          onClick={() => void move(o.id, to)}>{label}</Button>
-                ))}
-                <span className="text-xs text-muted-foreground">
-                  {o.learner} · {o.subject_type}{o.subject ? ` ${o.subject}` : ''} ·{' '}
-                  {relativeAge(o.created_at, undefined, { seconds: false })}
-                </span>
-              </div>
-              {bodyFields(o.body as Record<string, unknown>).length > 0 && (
-                <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-xs">
-                  {bodyFields(o.body as Record<string, unknown>).map(([k, v]) => (
-                    <Fragment key={k}>
-                      <dt className="text-muted-foreground">{k}</dt>
-                      <dd className="whitespace-pre-wrap break-words text-foreground">{v}</dd>
-                    </Fragment>
-                  ))}
-                </dl>
-              )}
-              <p className="text-xs text-muted-foreground">
-                From{' '}
-                {(o.sessions ?? []).map((s, i) => (
-                  <Fragment key={s.session_id}>
-                    {i > 0 && ', '}
-                    <Link className="underline" to={sessionHref(s.workspace, s.session_id)}>{s.title || 'untitled'}</Link>
-                  </Fragment>
-                ))}
-                {(o.sessions ?? []).length === 0 && (o.hidden_sessions ?? 0) === 0 && 'no session'}
-                {(o.hidden_sessions ?? 0) > 0 &&
-                  `${(o.sessions ?? []).length > 0 ? ' and ' : ''}${o.hidden_sessions} session${o.hidden_sessions === 1 ? '' : 's'} you do not read`}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
     </Section>
   )
 }

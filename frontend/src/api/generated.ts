@@ -53014,6 +53014,11 @@ export interface components {
              * @default 0
              */
             readonly hidden_sessions: number;
+            /**
+             * Source Sessions
+             * @description Which of `sessions` each cited source is, by source id, so a quote in its evidence links to its session. Only sessions you read yourself; a source not listed is one you do not read.
+             */
+            readonly source_sessions?: readonly components["schemas"]["BrainOutputSourceSession"][];
         };
         /** BrainOutputSession */
         readonly BrainOutputSession: {
@@ -53029,6 +53034,26 @@ export interface components {
              * @description Scrubbed of secrets.
              */
             readonly title: string;
+        };
+        /** BrainOutputSourceSession */
+        readonly BrainOutputSourceSession: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Title
+             * @description Scrubbed of secrets.
+             */
+            readonly title: string;
+            /**
+             * Source
+             * @description The source id its body's evidence names (`evidence[].source`).
+             */
+            readonly source: number;
         };
         /** BrainOutputStatusIn */
         readonly BrainOutputStatusIn: {

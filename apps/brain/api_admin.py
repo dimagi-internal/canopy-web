@@ -241,7 +241,7 @@ def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = ""
 
 
 def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
-    cited, named = _cited(user, rows)
+    cited, named, by_source = _cited(user, rows)
     memo: dict = {}
     fades: dict = {}
 
@@ -258,7 +258,9 @@ def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
              "faded": findings.faded(o, findings.fade_days_of(o, fades)), "merged_into": o.merged_into_id,
              "may_set_status": may_set(o),
              "sessions": [named[s] for s in cited.get(str(o.pk), []) if s in named],
-             "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named)} for o in rows]
+             "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named),
+             "source_sessions": [{"source": src, **named[s]} for src, s in by_source.get(str(o.pk), []) if s in named]}
+            for o in rows]
 
 
 @router.post("/brain/outputs/{output_id}/status", response={200: BrainOutputOut, **refusals(403, 404, 422)},
@@ -318,16 +320,20 @@ def merge_outputs(request: HttpRequest, output_id: int, payload: BrainOutputMerg
     return _outputs_out(user, [out], as_person=not actor.is_agent, acting=acting)[0]
 
 
-def _cited(user, rows) -> tuple[dict, dict]:
-    """Each output's cited sessions (`OutputLineage`), and of those the ones `user` reads through legs 1 to 6, by id
-    with a scrubbed title. Three reads for a whole page."""
+def _cited(user, rows) -> tuple[dict, dict, dict]:
+    """Each output's cited sessions (`OutputLineage`), of those the ones `user` reads through legs 1 to 6, by id
+    with a scrubbed title, and each output's (source id, session id) pairs, so its evidence can name a session only
+    where `named` already does. Three reads for a whole page."""
     cited: dict[str, list] = {}
-    for oid, sid in (OutputLineage.objects.filter(output_kind=cascade.OUTPUT_KIND, output_id__in=[str(o.pk) for o in rows],
-                                                  source__session_id__isnull=False, cited=True)
-                     .values_list("output_id", "source__session_id")):
+    by_source: dict[str, list] = {}
+    for oid, src, sid in (OutputLineage.objects.filter(output_kind=cascade.OUTPUT_KIND,
+                                                       output_id__in=[str(o.pk) for o in rows],
+                                                       source__session_id__isnull=False, cited=True)
+                          .values_list("output_id", "source_id", "source__session_id")):
         cited.setdefault(oid, []).append(sid)
+        by_source.setdefault(oid, []).append((src, sid))
     every = {s for ids in cited.values() for s in ids}
     readable = access.readable_ids(user, every)
     named = {s.pk: {"session_id": s.pk, "workspace": s.workspace_id, "title": redact.redact_text(s.title or "")[0]}
              for s in Session.objects.filter(pk__in=readable).only("pk", "workspace_id", "title")}
-    return cited, named
+    return cited, named, by_source
