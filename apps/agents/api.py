@@ -125,8 +125,12 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
 
 
 def _creating_owner(request: HttpRequest, home):
-    """Who owns an agent this request creates (`creation.creating_owner`)."""
-    return creation.creating_owner(request, home)
+    """Who owns an agent this request creates (`creation.creating_owner`); 403 when an
+    agent's login creates one no person can own."""
+    try:
+        return creation.creating_owner(request, home)
+    except creation.NoOwnerError as exc:
+        raise HttpError(403, str(exc)) from None
 
 
 #: What an agent says about itself: changing one of these on an existing agent needs `agent_edit`.
@@ -239,13 +243,14 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
             raise HttpError(403, access.edit_refusal(existing))
 
     # Whoever registers a NEW agent owns it — from the create wizard and from a terminal's
-    # `/canopy:create-agent` alike; from inside an agent's turn, the person who asked for
-    # it (`_creating_owner`). An ownerless agent cannot be lent a GitHub identity
+    # `/canopy:create-agent` alike; from an agent's login, the person who asked for its turn,
+    # else the agent's owner, never the agent (`_creating_owner`). An ownerless agent cannot be lent a GitHub identity
     # (`delegations.set_github` is for its owner and admins) and no box may hold it unless a workspace
     # owner pairs one, so leaving it unset left every new agent stuck until someone ran
     # `transfer_owner`. Applied on create only; an existing agent keeps its owner.
     old_email = (existing.email or "").strip().lower() if existing is not None else ""
-    agent = services.upsert_agent(payload, workspace=home, owner=_creating_owner(request, home))
+    agent = services.upsert_agent(payload, workspace=home,
+                                  owner=_creating_owner(request, home) if existing is None else None)
     new_email = (agent.email or "").strip().lower()
     if existing is not None and new_email and new_email != old_email and agent.is_admin(request.user):
         # Its canopy login is the account at its email: derived again from the new one.

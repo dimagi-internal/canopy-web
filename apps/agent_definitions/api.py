@@ -32,7 +32,7 @@ from ninja.errors import HttpError
 
 from apps.agents import access
 from apps.agents import definition_store as store
-from apps.agents.creation import RESERVED_SLUGS, creating_owner
+from apps.agents.creation import RESERVED_SLUGS, NoOwnerError, creating_owner
 from apps.agents.gates import agent_for_admin, agent_for_edit, agent_for_read
 from apps.agents.holding import runner_may_hold_agent
 from apps.agents.models import Agent, AgentDefinitionRevision
@@ -207,8 +207,11 @@ def _revision_or_404(agent: Agent, number: int) -> AgentDefinitionRevision:
 def create_stored_agent(request: HttpRequest, payload: StoredAgentIn) -> Status:
     """Stamps the agent from the canopy agent factory (the same scaffold `/canopy:create-agent`
     writes) and stores it as revision 1, published. No repository and no GitHub token: its
-    runners materialize the definition from canopy. The creator owns it (from inside an agent's
-    turn, the person who asked for that turn). 409 `exists` when the slug is taken.
+    runners materialize the definition from canopy. The creator owns it. An agent's own login
+    creates it for a person, never for itself: the person who asked for the turn it works in
+    (known from its turn login, or the `X-Canopy-Parent-Turn` it sends), else the agent's
+    owner; 403 `no_owner` when neither may create agents in the workspace. 409 `exists` when
+    the slug is taken.
 
     With `files`, revision 1 is the scaffold with those files laid over it, held to the file
     policy, and the files canopy writes itself rewritten: one the policy refuses refuses the
@@ -247,10 +250,15 @@ def create_stored_agent(request: HttpRequest, payload: StoredAgentIn) -> Status:
     grant = None if isinstance(got, str) else got[1]
     _note_acting(request, grant)
     try:
+        owner = creating_owner(request, home)
+    except NoOwnerError as exc:
+        raise ProblemError(403, "No person can own this agent", type_=TYPE_FORBIDDEN, detail=str(exc),
+                           members={"error": "no_owner"}) from None
+    try:
         agent, dropped = services.create_stored_agent(
             slug=slug, name=payload.name.strip(), mandate=payload.mandate.strip(),
             stakeholders=payload.stakeholders.strip(), workspace=home,
-            owner=creating_owner(request, home), by=request.user, act_as=grant, files=files, bundle=bundle,
+            owner=owner, by=request.user, act_as=grant, files=files, bundle=bundle,
             message=payload.message.strip(), drop_refused=payload.drop_refused)
     except services.Refused as exc:
         raise _problem(exc) from None

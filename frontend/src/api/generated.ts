@@ -5597,8 +5597,11 @@ export interface paths {
          * Create an agent whose definition canopy stores (no GitHub repository)
          * @description Stamps the agent from the canopy agent factory (the same scaffold `/canopy:create-agent`
          *     writes) and stores it as revision 1, published. No repository and no GitHub token: its
-         *     runners materialize the definition from canopy. The creator owns it (from inside an agent's
-         *     turn, the person who asked for that turn). 409 `exists` when the slug is taken.
+         *     runners materialize the definition from canopy. The creator owns it. An agent's own login
+         *     creates it for a person, never for itself: the person who asked for the turn it works in
+         *     (known from its turn login, or the `X-Canopy-Parent-Turn` it sends), else the agent's
+         *     owner; 403 `no_owner` when neither may create agents in the workspace. 409 `exists` when
+         *     the slug is taken.
          *
          *     With `files`, revision 1 is the scaffold with those files laid over it, held to the file
          *     policy, and the files canopy writes itself rewritten: one the policy refuses refuses the
