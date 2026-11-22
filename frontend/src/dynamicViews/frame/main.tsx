@@ -127,7 +127,7 @@ const canopy = {
    * or rejects with a sentence (`e.message`; `e.error`, and `e.connect_url` when connecting would fix it).
    * A write needs a real click on the page; a read does not. */
   connection: {
-    request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string }) {
+    request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string; allowDuplicates?: boolean }) {
       return ask((id) => ({ channel: CHANNEL, type: 'connection-call', id, request: req }))
     },
     /** Open this click's window first, to read and dedup before writing: {expires_at, hard_limit_at, writes}. */

@@ -513,6 +513,10 @@ class ConnectionCallIn(StrictModel):
         default="viewer", alias="as", description="Whose connection: the viewer's own, or one an agent shared.")
     agent: str | None = Field(default=None, description="With `as: shared`, the agent whose connection it is.")
     operation_id: str | None = Field(default=None, max_length=100, description="The click a write belongs to.")
+    allow_duplicates: bool = Field(default=False, description="Salesforce only, on a `POST` or `PATCH` of "
+                                                              "`sobjects/<type>` or `sobjects/<type>/<id>`: save even "
+                                                              "though the org's duplicate rules warned (\"Create "
+                                                              "anyway\"). Refused on any other call.")
 
 
 class ConnectionOperationIn(StrictModel):
