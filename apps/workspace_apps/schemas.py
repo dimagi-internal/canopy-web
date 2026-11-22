@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from ninja import Schema
 
@@ -267,6 +267,35 @@ class VersionOut(Schema):
     created_at: datetime
     published_by: str | None = None
     published_at: datetime | None = None
+    #: What going live changed about who can see and do what, in plain words; empty for none.
+    reach_changes: list[str] = []
+    #: The right it went live under: `admin`, `maintainer:content`, `maintainer:permissions`.
+    published_under: str = ""
+
+
+class ReleaseIn(Schema):
+    #: The app's whole manifest, pages included — the shape installing your own app takes.
+    manifest: dict[str, Any]
+    note: str = ""
+
+
+class MaintainerIn(Schema):
+    #: A workspace member by address — a person, or an agent's own login.
+    email: str = ""
+    #: Or an agent, by slug; its login must be a member of the workspace.
+    agent: str = ""
+    level: Literal["content", "permissions"] = "content"
+
+
+class MaintainerOut(Schema):
+    id: int
+    email: str
+    #: The agent's slug when the maintainer is an agent's own login.
+    agent: str | None = None
+    name: str
+    level: str
+    granted_by: str | None = None
+    granted_at: datetime
 
 
 class DraftIn(Schema):

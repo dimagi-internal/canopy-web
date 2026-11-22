@@ -12,9 +12,14 @@ Three tiers act on the app itself, beside its own roles:
 * MANAGE (`integrations`, an admin): install, switch on/off, make public, remove,
   and publish a change that alters what the public sees or who can do what.
 * MAINTAIN (managers, or anyone granted the app's `maintainer` role — the head
-  of HR for Hiring): open a draft, change it, test it, publish ordinary changes,
-  roll back. Not a workspace role: running the hiring app is not running the
-  workspace.
+  of HR for Hiring, or an agent's own login): open a draft, change it, test it,
+  publish new versions, roll back. Not a workspace role: running the hiring app
+  is not running the workspace. The grant carries a LEVEL an admin chose
+  (`AppRoleGrant.level`): `content` publishes only versions that change nothing
+  about who can see or do what (`template_diff.changes` is empty); `permissions`
+  may also publish ones that do — the admin approved widening this one app ahead
+  of time. `may_widen` is that question; `authority` names which right a publish
+  went live under, for the version's record.
 * GRANT (`members.manage`): give or take app roles by name.
 
 A GUEST of the workspace (`WorkspaceMembership.GUEST`, docs/architecture/access.md § Guests)
@@ -63,6 +68,30 @@ def may_maintain(user, installation: AppInstallation) -> bool:
         return True
     return (perms.can(user, installation.workspace_id, perms.READ)
             and AppRoleGrant.objects.filter(installation=installation, user=user, role=MAINTAINER).exists())
+
+
+def _maintainer_grant(user, installation: AppInstallation) -> AppRoleGrant | None:
+    if getattr(user, "pk", None) is None or not perms.can(user, installation.workspace_id, perms.READ):
+        return None
+    return AppRoleGrant.objects.filter(installation=installation, user=user, role=MAINTAINER).first()
+
+
+def may_widen(user, installation: AppInstallation) -> bool:
+    """Publish a version that changes who can see or do what in this app (its connections,
+    browser declaration, roles, readers, public surfaces): an admin, or a maintainer an
+    admin granted the `permissions` level."""
+    if may_manage(user, installation.workspace_id):
+        return True
+    g = _maintainer_grant(user, installation)
+    return g is not None and g.level == AppRoleGrant.PERMISSIONS
+
+
+def authority(user, installation: AppInstallation) -> str:
+    """Which right `user` publishes this app under: `admin`, `maintainer:<level>`, or ''."""
+    if may_manage(user, installation.workspace_id):
+        return "admin"
+    g = _maintainer_grant(user, installation)
+    return f"{MAINTAINER}:{g.level}" if g else ""
 
 
 def is_helper(user, draft) -> bool:

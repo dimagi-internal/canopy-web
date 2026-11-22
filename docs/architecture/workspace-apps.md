@@ -25,6 +25,38 @@ What runs is `overlay.compose(template manifest, overlay)`, validated again by
 what: `access.py` (manage = `integrations`, maintain = managers or a member granted the
 app's `maintainer` role, grant = `members.manage`).
 
+## Maintainers: who publishes new versions (`access.py`)
+
+An admin (`integrations`) names who may publish new versions of ONE installed app without
+an admin each time: a person, or an agent's own login, either way a member of the workspace
+(`…/maintainers`; the grant is the `maintainer` `AppRoleGrant`, with a `level`). The level
+is the admin's decision, made ahead of time:
+
+- **`content`** publishes only versions that change nothing about who can see or do what.
+- **`permissions`** may also publish ones that do: `connections`, `browser`, roles, who
+  reads a collection or field, public and link surfaces, emails' recipients, retention,
+  `tasks`. The admin pre-approved widening this one app.
+
+The one judge of "changes who can see or do what" is `template_diff.changes(live manifest,
+the manifest going live)` (with `overlay.is_risky` for a draft's own ops), on every way a
+version goes live: a draft, a new version, a rollback (going back is judged like going
+forward). A finding without `access.may_widen` is a 403 naming each one in plain words.
+Every published version records what it changed (`AppVersion.reach_changes`), who published
+it and under which right (`published_under`: `admin`, `maintainer:content`,
+`maintainer:permissions`); grants, level changes and revocations are settings, audited as
+`SettingChange` rows. Revoking ends the right at once; versions already live stay.
+
+**A new version from a repo** (`POST …/versions`, `services.release`): for an app whose
+template the workspace owns (installed from its own manifest), a maintainer or admin sends
+the whole manifest, pages included, in the shape install takes. It is validated exactly as
+an install is (`manifest.validate`, so `browser.py` and the connection declarations too),
+the workspace's live overlay is carried onto it (refused if any op no longer fits), its
+scenarios must pass, and it goes live as a new `AppTemplateVersion` plus a new `AppVersion`
+(`origin` `release`), so rollback reaches every earlier one. This is how an app's
+`connections` and `browser` change after install: overlays never reach them. Refused while a
+draft is open, for a version string already used, and for canopy's own templates (theirs
+arrive as updates). Nothing is kept when it is refused.
+
 ## The manifest (`manifest.py`)
 
 Its module docstring lists what an app can declare: `roles` (each a **workspace
@@ -103,7 +135,7 @@ Template pages draw what the workspace adds without knowing it (`FieldInputs` /
    the workspace's own changes judged op by op (`overlay.is_risky`), a template UPDATE by
    comparing the two template versions (`template_diff.changes`).
 5. **Restore** (`services.rollback`): an earlier version becomes live again as a new
-   version; overlays only add, so it reads today's records.
+   version; overlays only add, so it reads today's records. Judged like a publish.
 
 A template update is taken as a draft (`upgrade=true`), then the same steps.
 
