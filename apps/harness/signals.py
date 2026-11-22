@@ -46,6 +46,11 @@ session_turn_enqueued = Signal()
 # with its chat hooks). apps/push arms "your chat is done".
 session_turn_finished = Signal()
 
+# Sent with: sender=Turn, turn=<Turn> whenever any turn reaches a terminal status
+# (`turn_close.close_turn`, every path, inside the caller's transaction). For work
+# that ends with its turn whatever closed it (a brain run, `apps/brain/signals.py`).
+turn_closed = Signal()
+
 # Sent with: sender=Session, session_ids=<list[uuid]> for sessions that just became
 # ARCHIVED because they were CLOSED — archived in emdash, closed from canopy, or
 # absent from consecutive complete reports by their own runner. Never for a runner

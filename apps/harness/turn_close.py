@@ -87,6 +87,9 @@ def close_turn(
     from .turn_agent_tokens import revoke_for_turn
 
     revoke_for_turn(turn.pk)
+    from .signals import turn_closed
+
+    turn_closed.send(sender=Turn, turn=turn)   # work that ends with its turn (a brain run)
     if ledger:
         payload = {"status": status}
         if note is not None:
