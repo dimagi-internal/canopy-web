@@ -97,6 +97,30 @@ one turn really gets is `TurnContext.credentials`). Code asks `stance`; it never
     agentless repo turns included; such a turn reaches canopy as its asker through its caller token. →
     `runner/ec2/cloud_runner.py::_agent_env`.
 
+### Browser sign-in for testing
+
+**An agent's own Google account never opens a browser session, except under an owner's grant for testing.** The
+adapter refuses it (`templates/auth/domain_rejected.html`, reason `agent_login`) because the account's credentials
+live on runners: a browser session would turn a runner compromise into an interactive one. A live end-to-end test of
+something that needs a browser session as the agent (the extension's side panel, [browser-extension.md](browser-extension.md))
+gets a narrow exception, an `AgentBrowserSignIn` (`apps/agents/models/vault.py::AgentBrowserSignIn`, the rules in
+`apps/agents/browser_sign_in.py`):
+
+- **Who.** An admin of the agent (`Agent.is_admin`: its owner, a workspace owner, an `AgentAdmin`; a workspace
+  admin is not one) switches it on at a browser behind a fresh passkey step-up, on the agent's Settings → Security tab
+  (`PUT /api/agents/{slug}/browser-sign-in`, a setting, so audited). A token cannot, the owner's included; the agent's
+  own login can neither read nor change it, whatever it holds (`apps/agents/api_browser_sign_in.py::_agent`), and an
+  act-as-you grant reaches none of it (`apps/harness/act_as.py::EXCLUDED_PATTERNS`). Switching off (`DELETE`) needs
+  no step-up.
+- **How long.** Always an end: 1 to 30 days (default 7). One grant is open at a time; switching on again replaces it.
+- **What it opens.** While it is open and unexpired, the adapter signs the agent's Google account in as the agent's
+  login instead of refusing it (`apps/common/auth_adapter.py::register_agent_browser_sign_in`, the lookup `agents`
+  registers). The session is the agent's login with exactly its normal permissions; every step-up-gated act stays
+  refused to it (`apps/passkeys/stepup.py::require_a_person`). Without a grant nothing changes.
+- **How it ends.** The session is marked and its cookie expires no later than the grant
+  (`apps/agents/browser_sign_in.py::mark_session`); `apps/agents/browser_sign_in.py::SessionMiddleware` signs it out
+  on its first request after the grant expires or is switched off. → `tests/test_agent_browser_sign_in.py`
+
 ## Workspace roles
 
 The ladder is `WorkspaceMembership.ROLE_RANK`; what each role holds is one table keyed by permission name in

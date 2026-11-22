@@ -309,6 +309,7 @@ from apps.agents.api_board import router as agent_board_router  # noqa: E402
 from apps.agents.api_credentials import router as agent_credentials_router  # noqa: E402
 from apps.agents.api_github import router as agent_github_router  # noqa: E402
 from apps.agents.api_pat_rotation import router as agent_pat_rotation_router  # noqa: E402
+from apps.agents.api_browser_sign_in import router as agent_browser_sign_in_router  # noqa: E402
 from apps.agents.api_secret_requests import router as agent_secret_requests_router  # noqa: E402
 from apps.agents.api_sender_trust import router as agent_sender_trust_router  # noqa: E402
 from apps.agents.api_vault_members import router as agent_vault_members_router  # noqa: E402
@@ -508,6 +509,7 @@ api.add_router("/agents", agent_secret_requests_router)
 api.add_router("/agents", agent_sender_trust_router)
 api.add_router("/agents", agent_github_router)
 api.add_router("/agents", agent_pat_rotation_router)
+api.add_router("/agents", agent_browser_sign_in_router)
 api.add_router("/agents", connections_agents_router)  # an agent's connections + grants
 api.add_router("/agents", agent_readiness_router)
 # A2A Agent Card discovery — public in the login middleware; each route
