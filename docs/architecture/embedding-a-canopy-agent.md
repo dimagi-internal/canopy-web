@@ -246,8 +246,7 @@ is one canopy trusts for email (`asserts_verified_email`, set by a canopy
 superuser) and the assertion carries `email` with `email_verified: true` for an
 address that exactly one active canopy user provably holds, **and that user is a
 member of the site's workspace**, they arrive as that user, with their own
-permissions; arrival never creates an account. A workspace owner or admin never
-arrives through a site, and is a contact there. Anyone else is a `Contact` in the workspace that owns your
+permissions; arrival never creates an account. Anyone else is a `Contact` in the workspace that owns your
 app: not a member of anything, able to talk to the agents you were allowed to
 offer and see their own conversations, and nothing else. `/api/contact/` is the
 entire surface a contact token reaches. The token comes back with `kind` saying

@@ -19,7 +19,7 @@ Known limits (9), the relationship to CopilotKit (10), canopy embedding its own 
 - **Visitors are contacts unless they already have a canopy account** ([§3](embedding-a-canopy-agent.md#3-add-one-backend-endpoint)).
   With `email` + `email_verified: true` in your assertion, from a site canopy
   trusts for email (`asserts_verified_email`), an EXISTING canopy user who is a
-  member of the site's workspace, below admin, arrives as themselves (their own
+  member of the site's workspace arrives as themselves (their own
   permissions; `kind: "user"` in the response). Nobody else does, and no account
   is ever created (`contacts.services.resolve_arrival`).
 - **Page state is live, `provideContext` is a snapshot.** Page state is pushed on every

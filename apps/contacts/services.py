@@ -26,8 +26,6 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from .email_auth import grade_from_headers, grade_of
-from apps.workspaces import permissions as perms
-
 from .models import Contact, ContactErasure, Person, PersonFact
 
 logger = logging.getLogger(__name__)
@@ -213,10 +211,6 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
          other site's `email_verified` is its own say-so and is not honoured.
       3. Otherwise None — the visitor is a contact, as before.
 
-    A workspace owner or admin never arrives this way (None, whichever step found
-    them): the site's signing key would otherwise speak for the people who run
-    the tenant. They use canopy itself, signed in as themselves.
-
     Either way the user must be a member of the site's workspace, and that is
     the gate: someone allowed in this tenant arrives as themselves, anyone else
     is a contact. There is deliberately no second, per-site opt-in on top of it (a
@@ -239,9 +233,6 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
         user = user_for_verified_email(str(claims.get("email") or ""))
     # A question about the VISITOR's membership, asked through the one authorizer.
     if user is None or not wsvc.is_member(user, contact.workspace_id):
-        return None
-    if perms.can(user, contact.workspace_id, perms.MEMBERS_MANAGE):
-        # Admin and up (the tier that manages members): never through a site.
         return None
     if contact.user_id is None:
         promote_to_user(contact, user)
