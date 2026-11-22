@@ -2,8 +2,11 @@
 publish life cycle, using an app, and the public pages.
 
 * Managing an app (install, on/off, public, remove) is `integrations` (admin).
-* Maintaining it (drafts, changes, checks, publish, rollback) is `access.may_maintain`:
-  managers, or a member granted the app's `maintainer` role (the head of HR).
+* Maintaining it (drafts, changes, checks, publish, rollback, a new version of the
+  workspace's own template) is `access.may_maintain`: managers, or a member granted
+  the app's `maintainer` role (the head of HR, or an agent's login). A version that
+  changes who can see or do what also needs `access.may_widen`: an admin, or a
+  maintainer an admin gave the `permissions` level (`…/maintainers`).
 * Using it is by the app's own roles (`access.roles_for`). `?draft=<id>` points a
   read or action at that draft's TEST COPY — sample records, nothing sent — and
   needs maintainer rights.
@@ -61,8 +64,11 @@ from .schemas import (
     InstallIn,
     LinkOut,
     LinkPageOut,
+    MaintainerIn,
+    MaintainerOut,
     PageOut,
     PublicAppOut,
+    ReleaseIn,
     RollbackIn,
     SetupIn,
     SetupOut,
@@ -404,10 +410,14 @@ def get_workspace_app_guide(request: HttpRequest, workspace: str, key: str) -> G
 def list_workspace_app_versions(request: HttpRequest, workspace: str, key: str) -> list[VersionOut]:
     inst = _installation(request, workspace, key, enabled=False)
     _require_maintain(request, inst)
-    return [VersionOut(number=v.number, status=v.status, origin=v.origin, template_version=v.template_version.version,
-                       note=v.note, changes=len(v.overlay), created_by=_email(v.created_by), created_at=v.created_at,
-                       published_by=_email(v.published_by), published_at=v.published_at)
-            for v in inst.versions.select_related("template_version", "created_by", "published_by")]
+    return [_version_out(v) for v in inst.versions.select_related("template_version", "created_by", "published_by")]
+
+
+def _version_out(v: AppVersion) -> VersionOut:
+    return VersionOut(number=v.number, status=v.status, origin=v.origin, template_version=v.template_version.version,
+                      note=v.note, changes=len(v.overlay), created_by=_email(v.created_by), created_at=v.created_at,
+                      published_by=_email(v.published_by), published_at=v.published_at,
+                      reach_changes=v.reach_changes or [], published_under=v.published_under)
 
 
 @router.get("/workspace-apps/{workspace}/{key}/draft", response=DraftOut,
@@ -555,10 +565,12 @@ def add_workspace_app_helper(request: HttpRequest, workspace: str, key: str, pay
 @gate("member", kind="content", viewer_write="an app's maintainer may be a viewer granted the role by name")
 def publish_workspace_app_draft(request: HttpRequest, workspace: str, key: str) -> InstallationOut:
     """Refused while a change is set aside or a check fails. A change to what the
-    public sees or who can do what needs a workspace admin."""
+    public sees or who can do what needs a workspace admin, or a maintainer an admin
+    allowed to change this app's permissions."""
     inst, v = _open_draft(request, workspace, key)
     try:
-        services.publish(v, user=request.user, may_approve_risk=access.may_manage(request.user, workspace))
+        services.publish(v, user=request.user, may_approve_risk=access.may_widen(request.user, inst),
+                         authority=access.authority(request.user, inst))
     except services.Refused as exc:
         raise _refusal(exc) from exc
     inst.refresh_from_db()
@@ -569,14 +581,114 @@ def publish_workspace_app_draft(request: HttpRequest, workspace: str, key: str) 
              summary="Make an earlier version live again (as a new version)")
 @gate("member", kind="content", viewer_write="an app's maintainer may be a viewer granted the role by name")
 def rollback_workspace_app(request: HttpRequest, workspace: str, key: str, payload: RollbackIn) -> InstallationOut:
+    """Going back is judged like going forward: a version that would change who can see
+    or do what needs a workspace admin, or a maintainer allowed to change permissions."""
     inst = _installation(request, workspace, key, enabled=False)
     _require_maintain(request, inst)
     try:
-        services.rollback(inst, number=payload.number, user=request.user)
+        services.rollback(inst, number=payload.number, user=request.user,
+                          may_widen=access.may_widen(request.user, inst),
+                          authority=access.authority(request.user, inst))
     except services.Refused as exc:
         raise _refusal(exc) from exc
     inst.refresh_from_db()
     return _out(request, inst)
+
+
+@router.post("/workspace-apps/{workspace}/{key}/versions", response={201: VersionOut},
+             summary="Publish a new version of your workspace's own app from its whole manifest (a repo's build)")
+@gate("member", kind="content", viewer_write="an app's maintainer may be a viewer granted the role by name")
+def publish_workspace_app_version(request: HttpRequest, workspace: str, key: str, payload: ReleaseIn) -> Status:
+    """`manifest` is the app's whole manifest, pages included, in the shape installing
+    your own app takes; it is validated the same way (connections and `browser` too) and
+    goes live over the workspace's changes as a new version, so every earlier version
+    can be restored. Only for an app whose template this workspace owns. For its
+    maintainers and admins. A version that changes who can see or do what (403 names
+    each change) needs a workspace admin, or a maintainer at the `permissions` level;
+    409 while a draft is open, a check fails or the version string is taken; 422 for
+    a manifest that does not validate."""
+    inst = _installation(request, workspace, key, enabled=False)
+    _require_maintain(request, inst)
+    try:
+        v = services.release(inst, manifest=payload.manifest, user=request.user, note=payload.note,
+                             may_widen=access.may_widen(request.user, inst),
+                             authority=access.authority(request.user, inst))
+    except services.Refused as exc:
+        raise _refusal(exc) from exc
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, _version_out(v))
+
+
+# --- maintainers: who may publish new versions of one app --------------------------------------
+
+
+def _maintainer_out(g: AppRoleGrant) -> MaintainerOut:
+    agent = getattr(g.user, "agent_identity", None)
+    return MaintainerOut(id=g.pk, email=g.user.email, agent=agent.slug if agent else None,
+                         name=agent.name if agent else (g.user.get_full_name() or g.user.email), level=g.level,
+                         granted_by=_email(g.granted_by), granted_at=g.granted_at)
+
+
+def _maintainers(inst: AppInstallation) -> list[MaintainerOut]:
+    qs = (inst.grants.filter(role=access.MAINTAINER)
+          .select_related("user", "user__agent_identity", "granted_by").order_by("granted_at", "id"))
+    return [_maintainer_out(g) for g in qs]
+
+
+@router.get("/workspace-apps/{workspace}/{key}/maintainers", response=list[MaintainerOut],
+            summary="Who may publish new versions of this app, and at which level")
+@gate("integrations")
+def list_workspace_app_maintainers(request: HttpRequest, workspace: str, key: str) -> list[MaintainerOut]:
+    """`content`: versions that change nothing about who can see or do what.
+    `permissions`: those too (connections, browser, roles, readers, public pages)."""
+    inst = _installation(request, workspace, key, enabled=False)
+    _require_manage(request, workspace)
+    return _maintainers(inst)
+
+
+@router.post("/workspace-apps/{workspace}/{key}/maintainers", response={201: MaintainerOut},
+             summary="Let a person or an agent publish new versions of this app, or change their level")
+@gate("integrations", setting=True)
+def set_workspace_app_maintainer(request: HttpRequest, workspace: str, key: str, payload: MaintainerIn) -> Status:
+    """Name a workspace member by `email`, or an agent by `agent` (its slug; its login must
+    already be a member here). `level` is `content` (versions that leave who can see or do
+    what unchanged) or `permissions` (any version: you approve widening this app ahead of
+    time). Naming someone who already maintains it changes their level."""
+    inst = _installation(request, workspace, key, enabled=False)
+    _require_manage(request, workspace)
+    if bool(payload.email.strip()) == bool(payload.agent.strip()):
+        raise HttpError(422, "name the maintainer by `email` or by `agent`, not both")
+    if payload.agent.strip():
+        agent = Agent.objects.filter(slug=payload.agent.strip(), user__isnull=False).select_related("user").first()
+        if agent is None or not perms.can(request.user, agent.workspace_id, perms.READ):
+            raise HttpError(404, f"agent '{payload.agent}' not found")
+        if not access.may_help(agent.user, workspace):
+            raise HttpError(422, f"{agent.name} is not a member of this workspace: add {agent.user.email} "
+                                 "as a member first")
+        user = agent.user
+    else:
+        user = User.objects.filter(email__iexact=payload.email.strip()).first()
+        if user is None or not perms.can(user, workspace, perms.READ):
+            raise HttpError(422, "maintainers must be members of the workspace")
+    grant, made = AppRoleGrant.objects.get_or_create(installation=inst, user=user, role=access.MAINTAINER,
+                                                     defaults={"granted_by": request.user, "level": payload.level})
+    if not made and grant.level != payload.level:
+        grant.level, grant.granted_by = payload.level, request.user
+        grant.save(update_fields=["level", "granted_by"])
+    grant = AppRoleGrant.objects.select_related("user", "granted_by").get(pk=grant.pk)
+    return Status(201, _maintainer_out(grant))
+
+
+@router.delete("/workspace-apps/{workspace}/{key}/maintainers/{grant_id}", response={204: None},
+               summary="Stop someone publishing new versions of this app")
+@gate("integrations", setting=True)
+def remove_workspace_app_maintainer(request: HttpRequest, workspace: str, key: str, grant_id: int):
+    inst = _installation(request, workspace, key, enabled=False)
+    _require_manage(request, workspace)
+    if not inst.grants.filter(pk=grant_id, role=access.MAINTAINER).delete()[0]:
+        raise HttpError(404, f"no maintainer {grant_id} on this app")
+    return Status(204, None)
 
 
 # --- using an app -----------------------------------------------------------------------------

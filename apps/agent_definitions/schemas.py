@@ -27,6 +27,38 @@ class DefinitionFileIn(StrictModel):
 class DefinitionConvertIn(StrictModel):
     files: list[DefinitionFileIn] = Field(max_length=400)
     message: str = Field(default="", max_length=4000)
+    #: A `git bundle` of the repository's branch (`git bundle create - main`), base64: its
+    #: history is kept under `refs/heads/imported` and revision 1 is a commit on its tip.
+    bundle_b64: str | None = None
+
+
+class DefinitionExportIn(StrictModel):
+    #: The EMPTY GitHub repository to move to, `owner/name`.
+    repo: str = Field(min_length=3, max_length=200)
+    #: The branch `main` is pushed to there, and that the agent then runs.
+    ref: str = Field(default="main", min_length=1, max_length=120)
+    #: A GitHub token of the person exporting that may push to `repo`: used for this one
+    #: push, never kept. Required: canopy-web cannot open the agent's delegated GitHub
+    #: token, which is sealed to the machines that run it (without one, 422 `no_token`).
+    github_token: str = Field(default="", max_length=400)
+
+
+class DefinitionDetachIn(StrictModel):
+    #: The GitHub repository the person pushed the definition to themselves.
+    repo_url: str = Field(min_length=3, max_length=300)
+    ref: str = Field(default="main", min_length=1, max_length=120)
+
+
+class DefinitionMovedOut(StrictModel):
+    #: `owner/name`, and the agent's new `repo_url` / `repo_ref`.
+    repo: str
+    repo_url: str
+    repo_ref: str
+    #: The commit (and revision) that was live, now the tip of `repo_ref` on GitHub.
+    commit: str
+    revision: int
+    #: The `refs/tags/r<N>` pushed with it (empty for a detach).
+    tags: list[str] = Field(default_factory=list)
 
 
 class DefinitionChangeIn(StrictModel):
@@ -62,6 +94,8 @@ class DefinitionRevisionSummaryOut(StrictModel):
     number: int
     status: Literal["draft", "published", "superseded", "discarded"]
     root_sha256: str
+    #: The revision's commit in the agent's repository (`DefinitionOut.git_url`).
+    commit: str = ""
     message: str
     parent: int | None = None
     author: DefinitionAuthorOut
@@ -84,6 +118,11 @@ class DefinitionPolicyOut(StrictModel):
 
 class DefinitionOut(StrictModel):
     source: Literal["repo", "stored"]
+    #: Where to `git clone` the definition (with a canopy token), when canopy hosts its
+    #: repository: a stored agent, or one exported to GitHub (then a read-only archive).
+    git_url: str | None = None
+    #: `owner/name` the definition moved to, once exported; nothing here can change then.
+    exported_to: str = ""
     live: DefinitionRevisionSummaryOut | None = None
     draft: DefinitionRevisionSummaryOut | None = None
     policy: DefinitionPolicyOut

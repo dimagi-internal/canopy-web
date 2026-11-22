@@ -112,6 +112,14 @@ WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot a
   whose team they are on, so a query can return fewer rows than exist — say "none you can see",
   never "none". An effect's `delay_param` holds its email back that many hours.
 
+A WHOLE NEW VERSION: changes never reach an app's `connections` or `browser`. For an app the
+workspace installed from its own manifest, a maintainer (a person or an agent an admin named on
+…/maintainers) publishes the whole manifest, pages included, as a new version: POST
+/api/workspace-apps/{workspace}/{key}/versions (tool `publish_workspace_app_version`) with
+{manifest, note}. It is validated like an install, must pass its scenarios, and goes live at once
+(any earlier version can be restored). A maintainer at the `content` level gets a 403 naming each
+change to who can see or do what; that needs the `permissions` level or an admin.
+
 ALWAYS: one change per request item; tell the person in plain words what you changed and that they
 should open the draft's test copy and try it before publishing. Never claim it is live. If you were
 asked onto the draft by a maintainer (an agent helping), you may read, change, test and check this

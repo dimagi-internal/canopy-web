@@ -1,10 +1,10 @@
-"""A stored agent's files: where their bytes live, and what the core reads from a revision.
+"""A stored agent's files: what the core reads from a revision, and the files canopy writes.
 
-The bytes of every file are content-addressed blobs (`AgentDefinitionBlob`), in the
-attachment bucket when one is configured and in the row otherwise — the same split as a
-local app's package. This module stores and reads them, renders the files canopy writes
-itself, builds a revision's archive, and reads the skill catalog out of a revision. Who
-may change a definition, and how (drafts, publish, rollback, approvals), is
+Every revision is a commit in the agent's git repository (`definition_git`, objects and
+refs in the database). This module reads a revision's files out of its commit, renders
+the files canopy writes itself, builds a revision's archive, reads the skill catalog out
+of a revision, and names the repository's address (`git_url`). Who may change a
+definition, and how (drafts, publish, rollback, convert, export, approvals), is
 `apps/agent_definitions`, one layer up. Doc: `docs/architecture/stored-agents.md`.
 """
 from __future__ import annotations
@@ -18,81 +18,69 @@ import tarfile
 
 from canopy_agent_factory import AgentSpec
 from canopy_sdk import agent_definition as policy
+from django.conf import settings
 
-from apps.canopy_sessions import attachment_storage
 from apps.workspaces.links import scoped_url
 
+from . import definition_git as git
 from .creation import render
-from .models import Agent, AgentDefinitionBlob, AgentDefinitionRevision, AgentSkill
+from .models import Agent, AgentDefinitionRevision, AgentGitRef, AgentSkill
 
-#: Where blobs go in the attachment bucket.
-STORAGE_PREFIX = "agent-definitions"
-#: Committer of the deterministic commit runners make (`canopy agent materialize`), and
-#: the owner named in the generated plugin manifests.
+#: The owner named in the generated plugin manifests.
 CANOPY_NAME = "canopy"
 CANOPY_EMAIL = "agents@canopy.dimagi.com"
 
 
-def _storage_key(sha256: str) -> str:
-    return f"{STORAGE_PREFIX}/{sha256[:2]}/{sha256}"
-
-
-def put_blob(data: bytes) -> AgentDefinitionBlob:
-    """Store `data` once, by its sha256; an existing blob is returned as it is."""
-    sha = policy.sha256_hex(data)
-    existing = AgentDefinitionBlob.objects.filter(sha256=sha).first()
-    if existing is not None:
-        return existing
-    storage_key, local = "", None
-    if attachment_storage.is_configured():
-        storage_key = _storage_key(sha)
-        attachment_storage.put(storage_key, data, "application/octet-stream")
-    else:
-        local = data
-    blob, _ = AgentDefinitionBlob.objects.get_or_create(
-        sha256=sha, defaults={"size": len(data), "storage_key": storage_key, "local": local})
-    return blob
-
-
-def read_blob(sha256: str) -> bytes:
-    blob = AgentDefinitionBlob.objects.get(sha256=sha256)
-    data = attachment_storage.get(blob.storage_key).body if blob.storage_key else bytes(blob.local or b"")
-    if policy.sha256_hex(data) != sha256:
-        # Never hand out bytes that are not what the manifest names.
-        raise ValueError(f"blob {sha256} does not match its content")
-    return data
+def object_store(agent_or_id) -> git.AgentObjectStore:
+    return git.AgentObjectStore(getattr(agent_or_id, "pk", agent_or_id))
 
 
 def read_file(revision: AgentDefinitionRevision, path: str) -> bytes | None:
-    entry = (revision.tree or {}).get(path)
-    return read_blob(entry["sha256"]) if entry else None
+    if path not in (revision.tree or {}) or not revision.commit:
+        return None
+    return git.read_path(object_store(revision.agent_id), revision.commit, path)
 
 
-def files_of(revision: AgentDefinitionRevision) -> dict[str, tuple[bytes, bool]]:
-    """{path: (content, executable)} of a whole revision."""
-    return {path: (read_blob(e["sha256"]), bool(e.get("executable")))
-            for path, e in sorted((revision.tree or {}).items())}
+def files_of(revision: AgentDefinitionRevision, store: git.AgentObjectStore | None = None,
+             ) -> dict[str, tuple[bytes, bool]]:
+    """{path: (content, executable)} of a whole revision, read from its commit."""
+    if not revision.commit:
+        return {}
+    return git.files_at(store or object_store(revision.agent_id), revision.commit)
 
 
 def tree_of(files: dict[str, tuple[bytes, bool]]) -> dict[str, dict]:
-    """Store every file's blob and return the tree `{path: {sha256, size, executable}}`."""
-    tree = {}
-    for path, (data, executable) in sorted(files.items()):
-        blob = put_blob(data)
-        tree[path] = {"sha256": blob.sha256, "size": len(data), "executable": bool(executable)}
-    return tree
+    """The revision's `tree` field for `files`: `{path: {sha256, size, executable}}`."""
+    return git.manifest(files)
 
 
 def root_of(tree: dict[str, dict]) -> str:
     return policy.manifest_root(tree)
 
 
+def git_url(agent: Agent) -> str:
+    """The address of the agent's canopy-hosted repository:
+    `<CANOPY_PUBLIC_BASE_URL>/git/<workspace>/<slug>.git` (`git_http`)."""
+    base = (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").rstrip("/")
+    return f"{base}/git/{agent.workspace_id}/{agent.slug}.git"
+
+
+def has_repository(agent: Agent) -> bool:
+    """Does canopy host a repository for this agent — a stored agent, or one exported
+    from canopy whose repository is kept as an archive?"""
+    return agent.is_stored or AgentGitRef.objects.filter(agent=agent).exists()
+
+
 def source_of(agent: Agent) -> dict:
-    """`{source, revision, root_sha256}`: where a runner gets this agent's definition.
-    A repo agent's is `{"source": "repo", "revision": None, "root_sha256": None}`."""
+    """`{source, revision, root_sha256, commit, git_url}`: where a runner gets this agent's
+    definition. A repo agent's is `{"source": "repo", "revision": None, "root_sha256": None,
+    "commit": None, "git_url": None}`; one exported from canopy keeps its archive's
+    `git_url`."""
     live = agent.live_revision if agent.is_stored else None
     return {"source": agent.source, "revision": live.number if live else None,
-            "root_sha256": live.root_sha256 if live else None}
+            "root_sha256": live.root_sha256 if live else None,
+            "commit": (live.commit or None) if live else None,
+            "git_url": git_url(agent) if has_repository(agent) else None}
 
 
 # --- the files canopy writes itself ---------------------------------------

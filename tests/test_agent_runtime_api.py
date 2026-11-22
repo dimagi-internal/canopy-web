@@ -51,7 +51,8 @@ def test_runtime_serves_repo_pointer_secrets_clis_and_tenant(client, workspace):
         "workspace": "canopy",
         "clis": ["claude-code"],
         "cli_models": {},
-        "definition": {"source": "repo", "revision": None, "root_sha256": None},
+        "definition": {"source": "repo", "revision": None, "root_sha256": None,
+                       "commit": None, "git_url": None},
     }
 
 

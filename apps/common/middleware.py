@@ -113,6 +113,11 @@ PUBLIC_PATH_PREFIXES = (
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
     "/api/beta-requests",        # auth=None — the public site's request-access form; grants nothing
     "/api/public-apps/",         # auth=None — an enabled AND public workspace app's public pages, projections and create-only forms (apps/workspace_apps)
+    # A stored agent's git repository (apps/agent_definitions/git_http.py): git asks
+    # with HTTP Basic, which this middleware cannot see, and needs the view's own 401
+    # with `WWW-Authenticate: Basic` to prompt — never a 302 to Google sign-in. The view
+    # takes a canopy token and nothing else, and serves reads only.
+    "/git/",
     # NOTE: "/about" and "/get-started" are NOT here. Every other entry above
     # ends in "/" (or is a full path), so prefix-matching it is safe; "/about"
     # alone would also admit any future "/about-billing" or "/aboutus" route as

@@ -2,6 +2,14 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.36.0 — 2026-11-22
+
+**Stored agents are git repositories canopy hosts.**
+
+- `canopy_sdk.agent_definition`: `git_url(base_url, workspace, slug)` (the repository's address,
+  `<base>/git/<workspace>/<slug>.git`) and `is_git_url(url, base_url)` (whether a clone's origin is
+  one). Additive.
+
 ## 0.35.0 — 2026-11-21
 
 **Stored agents: an agent whose definition canopy keeps, with no git repo.**

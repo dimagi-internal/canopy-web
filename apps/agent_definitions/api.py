@@ -8,8 +8,12 @@ Who may do what, and why (docs/architecture/stored-agents.md):
 * a draft is `agent_edit` on the agent, and its own login may write one: an edit by an
   agent (its login, or any turn's token) files an approval request instead of reaching
   anything live;
-* publish, rollback and convert are the agent's owner or admins acting as THEMSELVES:
-  refused to an agent's login and to every token a turn holds (`harness.acting_person`).
+* publish, rollback, convert, export and detach are the agent's owner or admins acting
+  as THEMSELVES: refused to an agent's login and to every token a turn holds
+  (`harness.acting_person`);
+* once the definition moved to GitHub, every write here is 409 `exported`.
+
+The repository itself is served read-only over git by `git_http`.
 """
 from __future__ import annotations
 
@@ -30,7 +34,16 @@ from apps.agents.gates import agent_for_admin, agent_for_edit, agent_for_read
 from apps.agents.holding import runner_may_hold_agent
 from apps.agents.models import Agent, AgentDefinitionRevision
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_CONFLICT, TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
+from apps.api.errors import (
+    TYPE_CONFLICT,
+    TYPE_FORBIDDEN,
+    TYPE_NOT_FOUND,
+    TYPE_PAYLOAD_TOO_LARGE,
+    TYPE_UPSTREAM,
+    TYPE_VALIDATION,
+    ProblemError,
+    refusals,
+)
 from apps.api.route_gates import gate
 from apps.common import request_context
 from apps.events import audit
@@ -43,8 +56,11 @@ from . import services
 from .schemas import (
     DefinitionAuthorOut,
     DefinitionConvertIn,
+    DefinitionDetachIn,
     DefinitionDiffOut,
     DefinitionDraftIn,
+    DefinitionExportIn,
+    DefinitionMovedOut,
     DefinitionOut,
     DefinitionPolicyOut,
     DefinitionRevisionOut,
@@ -56,7 +72,8 @@ from .schemas import (
 
 router = Router(auth=session_auth, tags=["agents"])
 
-_TYPES = {404: TYPE_NOT_FOUND, 403: TYPE_FORBIDDEN, 409: TYPE_CONFLICT, 422: TYPE_VALIDATION}
+_TYPES = {404: TYPE_NOT_FOUND, 403: TYPE_FORBIDDEN, 409: TYPE_CONFLICT, 413: TYPE_PAYLOAD_TOO_LARGE,
+          422: TYPE_VALIDATION, 502: TYPE_UPSTREAM}
 
 
 def _problem(exc: services.Refused) -> ProblemError:
@@ -80,6 +97,11 @@ def _require_person(request: HttpRequest, agent: Agent, what: str) -> None:
 
 
 def _stored_or_409(agent: Agent) -> None:
+    if agent.definition_exported_to:
+        raise ProblemError(409, f"{agent.slug}'s definition moved to GitHub", type_=TYPE_CONFLICT,
+                           detail=(f"It runs from github.com/{agent.definition_exported_to} now; its canopy "
+                                   "repository is a read-only archive. Change it there."),
+                           members={"error": "exported", "repo": agent.definition_exported_to})
     if not agent.is_stored:
         raise ProblemError(409, f"{agent.slug} is not a stored agent", type_=TYPE_CONFLICT,
                            detail="Its definition is its git repository.", members={"error": "not_stored"})
@@ -107,7 +129,8 @@ def _summary(rev: AgentDefinitionRevision | None) -> DefinitionRevisionSummaryOu
         return None
     tree = rev.tree or {}
     return DefinitionRevisionSummaryOut(
-        number=rev.number, status=rev.status, root_sha256=rev.root_sha256, message=rev.message,
+        number=rev.number, status=rev.status, root_sha256=rev.root_sha256, commit=rev.commit or "",
+        message=rev.message,
         parent=rev.parent.number if rev.parent_id else None,
         author=DefinitionAuthorOut(email=getattr(rev.author_user, "email", "") or "", by_agent=rev.by_agent,
                                    turn_id=str(rev.author_agent_turn_id) if rev.author_agent_turn_id else None),
@@ -174,7 +197,7 @@ def _decode(b64: str, path: str) -> bytes:
         raise ProblemError(422, f"{path}: content_b64 is not valid base64", type_=TYPE_VALIDATION) from None
 
 
-@router.post("/{slug}/definition/convert", response={201: DefinitionRevisionSummaryOut, **refusals(409, 422)},
+@router.post("/{slug}/definition/convert", response={201: DefinitionRevisionSummaryOut, **refusals(409, 413, 422)},
              summary="Turn a repo agent into a stored one, from its files")
 @gate("agent-admin", setting=True)  # its owner or an admin, as a person: never an agent login or a turn's token
 def convert_agent_definition(request: HttpRequest, slug: str, payload: DefinitionConvertIn) -> Status:
@@ -182,7 +205,12 @@ def convert_agent_definition(request: HttpRequest, slug: str, payload: Definitio
     stops pointing at a repository (`repo_url` becomes ""). The file policy applies to every file:
     one outside it refuses the whole conversion (422 with `problems`). The files canopy writes
     itself (`.claude-plugin/`, `.claude/settings.json`, `bin/<slug>-email`, `.gitignore`) are
-    ignored if uploaded and rewritten. 409 for an agent that is already stored."""
+    ignored if uploaded and rewritten. 409 for an agent that is already stored.
+
+    `bundle_b64` (a `git bundle` of the branch) keeps the repository's history: it is kept
+    under `refs/heads/imported` and revision 1 is a commit on its tip. Every blob in it is
+    scanned for secrets first (422 `secret` with `problems`). Files and history together are
+    held to one request's size: more is 413 — convert the files only."""
     agent = agent_for_admin(request, slug)
     _require_person(request, agent, "Converting an agent")
     files: dict[str, tuple[bytes, bool]] = {}
@@ -190,14 +218,66 @@ def convert_agent_definition(request: HttpRequest, slug: str, payload: Definitio
         if f.path in files:
             raise ProblemError(422, f"{f.path} is listed twice", type_=TYPE_VALIDATION)
         files[f.path] = (_decode(f.content_b64, f.path), f.executable)
+    bundle = _decode(payload.bundle_b64, "bundle_b64") if payload.bundle_b64 else None
     before = {"source": agent.source, "repo_url": agent.repo_url, "repo_ref": agent.repo_ref}
     try:
-        rev = services.convert(agent, files=files, message=payload.message, by=request.user)
+        rev = services.convert(agent, files=files, message=payload.message, by=request.user, bundle=bundle)
     except services.Refused as exc:
         raise _problem(exc) from None
     audit.note_change(scope=f"agent:{agent.slug}/definition", before=before,
                       after={"source": "stored", "revision": rev.number, "root_sha256": rev.root_sha256})
     return Status(201, _summary(rev))
+
+
+@router.post("/{slug}/definition/export", response={200: DefinitionMovedOut, **refusals(409, 422, 502)},
+             summary="Move a stored agent's definition, with its history, to an empty GitHub repository")
+# its owner or an admin, as a person: never an agent login or a turn's token
+@gate("agent-admin", setting=True,
+      step_up="the person's GitHub token is used for this one push and never kept; the canopy CLI runs it with a PAT")
+def export_agent_definition(request: HttpRequest, slug: str, payload: DefinitionExportIn) -> DefinitionMovedOut:
+    """Pushes `main` — every commit and every `r<N>` tag — to the EMPTY GitHub repository `repo`
+    with `github_token` (the exporting person's, used for this push only), then switches the
+    agent to `source=repo` there: `repo_url=https://github.com/<repo>`, `repo_ref=ref`, no live
+    revision. Its runners clone it from GitHub from then on. Without `github_token`, 422 `no_token`:
+    canopy cannot open the agent's delegated token. canopy's repository stays,
+    read-only: every later draft or publish is 409 `exported`. 409 `not_empty` when the GitHub
+    repository has any ref; 502 when it cannot be reached or refuses the push. Create the
+    repository first."""
+    agent = agent_for_admin(request, slug)
+    _stored_or_409(agent)
+    _require_person(request, agent, "Exporting a definition")
+    before = {"source": agent.source, "repo_url": agent.repo_url, "repo_ref": agent.repo_ref}
+    try:
+        out = services.export(agent, repo=payload.repo, github_token=payload.github_token, ref=payload.ref,
+                              by=request.user)
+    except services.Refused as exc:
+        raise _problem(exc) from None
+    audit.note_change(scope=f"agent:{agent.slug}/definition", before=before,
+                      after={"source": "repo", "repo_url": out["repo_url"], "repo_ref": out["repo_ref"],
+                             "exported_from_revision": out["revision"]})
+    return DefinitionMovedOut(**out)
+
+
+@router.post("/{slug}/definition/detach", response={200: DefinitionMovedOut, **refusals(409, 422)},
+             summary="Point a stored agent at the GitHub repository its definition was pushed to")
+@gate("agent-admin", setting=True)  # its owner or an admin, as a person: never an agent login or a turn's token
+def detach_agent_definition(request: HttpRequest, slug: str, payload: DefinitionDetachIn) -> DefinitionMovedOut:
+    """For a person who pushed the definition to GitHub themselves (`canopy agent definition
+    export --push-myself`): the same switch as `export`, with nothing pushed by canopy. The
+    agent runs from `repo_url` @ `ref` from then on and its canopy repository is a read-only
+    archive."""
+    agent = agent_for_admin(request, slug)
+    _stored_or_409(agent)
+    _require_person(request, agent, "Detaching a definition")
+    before = {"source": agent.source, "repo_url": agent.repo_url, "repo_ref": agent.repo_ref}
+    try:
+        out = services.detach(agent, repo_url=payload.repo_url, ref=payload.ref, by=request.user)
+    except services.Refused as exc:
+        raise _problem(exc) from None
+    audit.note_change(scope=f"agent:{agent.slug}/definition", before=before,
+                      after={"source": "repo", "repo_url": out["repo_url"], "repo_ref": out["repo_ref"],
+                             "detached_at_revision": out["revision"]})
+    return DefinitionMovedOut(**out)
 
 
 # ---- reading -------------------------------------------------------------------
@@ -212,10 +292,12 @@ def get_agent_definition(request: HttpRequest, slug: str) -> DefinitionOut:
     agent = agent_for_read(request, slug)
     person = acting_person.refusal(request) is None and not agent.is_own_login(request.user)
     return DefinitionOut(
-        source=agent.source, live=_summary(agent.live_revision), draft=_summary(services.draft(agent)),
+        source=agent.source, git_url=store.git_url(agent) if store.has_repository(agent) else None,
+        exported_to=agent.definition_exported_to,
+        live=_summary(agent.live_revision), draft=_summary(services.draft(agent)),
         policy=DefinitionPolicyOut(**policy.policy()),
-        can_draft=agent.is_stored and access.may_edit_agent(request.user, agent),
-        can_publish=agent.is_stored and person and agent.is_admin(request.user))
+        can_draft=agent.is_stored and not agent.definition_exported_to and access.may_edit_agent(request.user, agent),
+        can_publish=agent.is_stored and not agent.definition_exported_to and person and agent.is_admin(request.user))
 
 
 @router.get("/{slug}/definition/revisions", response=list[DefinitionRevisionSummaryOut],

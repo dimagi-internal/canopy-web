@@ -319,8 +319,9 @@ class InvocationOut(Schema):
 class ClaimDefinitionOut(Schema):
     """Where the turn's agent definition lives (`harness.stored_agents`)."""
 
-    # "stored": a file tree kept in canopy-web, which the runner materializes
+    # "stored": a git repository canopy-web hosts, which the runner clones and syncs
     # (`canopy agent prepare` / `canopy agent sync`); its turns get no GitHub identity.
+    # "repo": the agent's GitHub repository.
     source: str
     # The live revision's number, and the sha256 of its manifest; null/"" before one
     # is published.

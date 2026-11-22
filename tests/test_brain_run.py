@@ -209,6 +209,23 @@ def test_a_run_ends_with_its_turn_and_with_the_gate(w, settings):
         _call("brain_read", {})
 
 
+
+@pytest.mark.parametrize(("status", "state"), [(Turn.DONE, BrainRun.DONE), (Turn.FAILED, BrainRun.FAILED)])
+def test_a_run_closes_when_its_runner_finishes_the_turn(w, status, state):
+    """The runner's finish (`finish_turn`, through `close_turn`) closes the run: a clean end is DONE, so what it
+    read counts as learned; a failure is FAILED, so the next run reads it again."""
+    from apps.harness import services as harness_services  # noqa: PLC0415 — as the other lazy imports here
+
+    run, turn, raw = _start(w)
+    with as_token(raw):
+        assert _call("brain_read", {"limit": 1})["sources"]
+    Turn.objects.filter(pk=turn.pk).update(session_key="claude-1")     # it ran (a turn with no session is requeued)
+    turn.refresh_from_db()
+    harness_services.finish_turn(turn, status=status)
+    run.refresh_from_db()
+    assert (run.state, run.finished_at is not None) == (state, True)
+
+
 # ---- reading ---------------------------------------------------------------------------------------
 
 def test_a_run_reads_only_its_subject_s_eligible_sessions_scrubbed_and_the_hostile_words_are_just_material(w):

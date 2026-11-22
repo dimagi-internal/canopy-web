@@ -103,9 +103,11 @@ def test_a_followed_order_does_not_count_a_laptop_as_missing_a_stored_agents_rep
 
 # ---- the claim -------------------------------------------------------------------
 
-def test_the_claim_says_a_stored_agent_is_stored_and_a_repo_agent_nothing(fleet, stored):
+def test_the_claim_says_whether_the_agent_is_stored_or_a_repo_agent(fleet, stored):
     t = _turn(fleet.helper)
-    assert claim_payload(t)["definition"] is None
+    # A repo agent's claim says so, so a box whose clone is still a stored agent's (an
+    # agent exported to GitHub since) clones it again from GitHub.
+    assert claim_payload(t)["definition"] == {"source": "repo", "revision": None, "root_sha256": ""}
     stored.add("connect-helper")
     out = claim_payload(Turn.objects.get(pk=t.pk))["definition"]
     assert out["source"] == "stored"
@@ -119,8 +121,8 @@ def test_the_definition_names_the_live_revision():
                                                    "root_sha256": "ab" * 32}
     unpublished = types.SimpleNamespace(slug="x", source="stored", live_revision=None)
     assert stored_agents.definition_of(unpublished)["revision"] is None
-    # An agents app without the field reads as a repo agent.
-    assert stored_agents.definition_of(types.SimpleNamespace(slug="x")) is None
+    # An agents app without the field reads as a repo agent; a turn with no agent says nothing.
+    assert stored_agents.definition_of(types.SimpleNamespace(slug="x"))["source"] == "repo"
     assert stored_agents.definition_of(None) is None
 
 

@@ -486,30 +486,39 @@ def _run_scenario(inst, m, space, sc, saved):
 # --- publishing ----------------------------------------------------------------------------
 
 
-def publish(v: AppVersion, *, user, may_approve_risk: bool) -> AppVersion:
+def publish(v: AppVersion, *, user, may_approve_risk: bool, authority: str = "") -> AppVersion:
     """Make a draft the live version. Refused while anything is quarantined or a
-    check fails; a risky change needs someone who may approve it. The checks run
-    (and their result is kept) before the publish itself, so a refusal still
-    leaves the person the failures to read."""
+    check fails; a risky change needs someone who may approve it (an admin, or a
+    maintainer at the `permissions` level). The checks run (and their result is
+    kept) before the publish itself, so a refusal still leaves the person the
+    failures to read."""
     _require_draft(v)
     r = review(v)
     if r["quarantine"]:
         raise Refused("some changes no longer fit this template version — fix or remove them first", status=409)
     if r["risks"] and not may_approve_risk:
-        raise Refused("this draft " + "; ".join(sorted({x["risk"] for x in r["risks"]}))
-                      + " — a workspace admin must publish it")
+        raise Refused("this draft " + "; ".join(sorted({x["risk"] for x in r["risks"]})) + " — " + NEEDS_WIDEN)
     if r["template_change"] and r["template_change"]["risks"] and not may_approve_risk:
-        raise Refused("this template update " + "; ".join(r["template_change"]["risks"])
-                      + " — a workspace admin must publish it")
+        raise Refused("this template update " + "; ".join(r["template_change"]["risks"]) + " — " + NEEDS_WIDEN)
     checks = run_checks(v)
     if not checks["ok"]:
         failed = [x["name"] for x in checks["results"] if not x["ok"]]
         raise Refused(f"checks failed: {', '.join(failed)}", status=409)
-    return _publish(v, user=user)
+    return _publish(v, user=user, authority=authority)
+
+
+#: Who may publish a version that changes who can see or do what (`access.may_widen`).
+NEEDS_WIDEN = ("a workspace admin must publish it, or a maintainer the admin allowed to change "
+               "this app's permissions")
+
+
+def _reach(inst: AppInstallation, m: dict) -> list[str]:
+    """What making `m` live changes about who can see and do what, against the live app."""
+    return template_diff.changes(inst.manifest, m) if inst.live_id else []
 
 
 @transaction.atomic
-def _publish(v: AppVersion, *, user) -> AppVersion:
+def _publish(v: AppVersion, *, user, authority: str = "") -> AppVersion:
     inst = AppInstallation.objects.select_for_update().get(pk=v.installation_id)
     v = AppVersion.objects.select_for_update().get(pk=v.pk)
     _require_draft(v)
@@ -517,31 +526,92 @@ def _publish(v: AppVersion, *, user) -> AppVersion:
     if inst.live_id:
         AppVersion.objects.filter(pk=inst.live_id).update(status=AppVersion.SUPERSEDED)
     v.status, v.published_by, v.published_at = AppVersion.PUBLISHED, user, timezone.now()
-    v.save(update_fields=["status", "published_by", "published_at"])
+    v.reach_changes, v.published_under = _reach(inst, effective(v)[0]), authority
+    v.save(update_fields=["status", "published_by", "published_at", "reach_changes", "published_under"])
     _clear_space(inst, space)
     _make_live(inst, v)
     return v
 
 
 @transaction.atomic
-def rollback(inst: AppInstallation, *, number: int, user) -> AppVersion:
+def rollback(inst: AppInstallation, *, number: int, user, may_widen: bool, authority: str = "") -> AppVersion:
     """Publish an earlier version's overlay, over ITS template version, as a new
     version: history only grows. Records are untouched — overlays only add, so
-    an earlier version reads today's records fine."""
+    an earlier version reads today's records fine. Going back is judged like going
+    forward: one that changes who can see or do what needs `may_widen`."""
     if open_draft(inst) is not None:
         raise Refused("discard the open draft before rolling back", status=409)
     old = inst.versions.filter(number=number).exclude(status=AppVersion.DRAFT).first()
     if old is None:
         raise Refused(f"no version {number}", status=404)
+    reach = _reach(inst, ov.compose(old.template_version.manifest, old.overlay)[0])
+    if reach and not may_widen:
+        raise Refused(f"going back to version {number} " + "; ".join(reach) + " — " + NEEDS_WIDEN)
     nxt = (inst.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
     if inst.live_id:
         AppVersion.objects.filter(pk=inst.live_id).update(status=AppVersion.SUPERSEDED)
     v = AppVersion.objects.create(installation=inst, number=nxt, template_version=old.template_version,
                                   overlay=copy.deepcopy(old.overlay), status=AppVersion.PUBLISHED, origin="rollback",
                                   note=f"rolled back to version {number}", created_by=user, published_by=user,
-                                  published_at=timezone.now())
+                                  published_at=timezone.now(), reach_changes=reach, published_under=authority)
     _make_live(inst, v)
     return v
+
+
+@transaction.atomic
+def release(inst: AppInstallation, *, manifest: dict, user, may_widen: bool, authority: str = "",
+            note: str = "") -> AppVersion:
+    """Publish a whole new version of the workspace's OWN template — the manifest a
+    repo's build owns, in the shape `install` takes — and make it live over the
+    workspace's changes, as a new version (so rollback reaches every earlier one).
+
+    Validated exactly as an install is (`manifest.validate`: pages, `connections`,
+    `browser`, everything), so this is how an app's connections and browser
+    declaration change after install. Judged against the live app on who can see
+    and do what (`template_diff.changes`): any finding needs `may_widen`, and the
+    refusal names each one. The app's checks (its scenarios) must pass. Nothing is
+    kept when it is refused."""
+    if inst.template.owner_id != inst.workspace_id:
+        raise Refused(f"'{inst.key}' runs canopy's own template '{inst.template.key}': its new versions come "
+                      "from canopy, and arrive here as an update", status=409)
+    if open_draft(inst) is not None:
+        raise Refused("this app has a draft open — publish or discard it before publishing a new version",
+                      status=409)
+    m = mf.validate(manifest)
+    if m["key"] != inst.key:
+        raise ValueError(f"key: this is the '{inst.key}' app; the manifest says '{m['key']}'")
+    tmpl = AppTemplate.objects.select_for_update().get(pk=inst.template_id)
+    taken = set(tmpl.versions.values_list("version", flat=True))
+    if m["version"] in taken:
+        raise Refused(f"version '{m['version']}' of this app already exists — give the manifest a new `version`",
+                      status=409)
+    if not m["version"]:
+        n = len(taken) + 1
+        while str(n) in taken:
+            n += 1
+        m["version"] = str(n)
+    live = inst.live
+    composed, quarantine = ov.compose(m, live.overlay)
+    if quarantine:
+        raise Refused("the workspace's own changes no longer fit this version: "
+                      + "; ".join(f"{ov.describe(q['op'], composed)} ({q['reason']})" for q in quarantine)
+                      + " — remove them from the live app, or keep what they anchor to", status=409)
+    reach = _reach(inst, composed)
+    if reach and not may_widen:
+        raise Refused("this version " + "; ".join(reach) + " — " + NEEDS_WIDEN)
+    tv = AppTemplateVersion.objects.create(template=tmpl, version=m["version"], manifest=m, changelog=m["changelog"])
+    tmpl.name, tmpl.description = m["name"], m["description"]
+    tmpl.save(update_fields=["name", "description"])
+    number = (inst.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
+    who = user if getattr(user, "is_authenticated", False) else None
+    v = AppVersion.objects.create(installation=inst, number=number, template_version=tv,
+                                  overlay=copy.deepcopy(live.overlay), status=AppVersion.DRAFT, origin="release",
+                                  note=(note or f"version {m['version']}")[:300], created_by=who)
+    checks = run_checks(v)
+    if not checks["ok"]:
+        failed = [x["name"] for x in checks["results"] if not x["ok"]]
+        raise Refused(f"checks failed: {', '.join(failed)}", status=409)
+    return _publish(v, user=who, authority=authority)
 
 
 # --- test copies ---------------------------------------------------------------------------

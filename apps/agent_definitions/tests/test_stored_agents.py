@@ -21,8 +21,6 @@ import uuid
 
 import pytest
 from canopy_sdk import agent_definition as sdk
-from django.test import Client
-from django.utils import timezone
 
 from apps.agent_definitions import services
 from apps.agents import definition_store as store
@@ -30,66 +28,20 @@ from apps.agents.models import Agent, AgentAdmin, AgentDefinitionRevision, Agent
 from apps.approvals import services as approvals
 from apps.approvals.models import ApprovalRequest
 from apps.common import redact
-from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
-from apps.passkeys.testing import grant_step_up
-from apps.workspaces.models import WorkspaceMembership
-from apps.workspaces.testing import a_member, a_workspace
-from tests.access_helpers import editors_run
+from apps.harness.models import Turn
 from tests.token_helpers import pat_client
 
+from tests.fixtures.stored_agents import (
+    SLUG,
+    _browser,
+    _create,
+    _draft,
+    _files,
+    _post,
+    _runner_client,
+)
+
 pytestmark = pytest.mark.django_db
-
-SLUG = "scout"
-
-
-@pytest.fixture
-def w():
-    ws = a_workspace("scouts")
-    owner = a_member(ws, email="olive@dimagi.com", role=WorkspaceMembership.EDITOR)
-    editor = a_member(ws, email="eddie@dimagi.com", role=WorkspaceMembership.EDITOR)
-    viewer = a_member(ws, email="vera@dimagi.com", role=WorkspaceMembership.VIEWER)
-    admin = a_member(ws, email="ada@dimagi.com", role=WorkspaceMembership.EDITOR)
-    outsider_ws = a_workspace("elsewhere")
-    outsider = a_member(outsider_ws, email="otto@dimagi.com", role=WorkspaceMembership.OWNER)
-    bot = a_member(ws, email="scout@agents.test", role=WorkspaceMembership.EDITOR)
-    return {"ws": ws, "owner": owner, "editor": editor, "viewer": viewer, "admin": admin,
-            "outsider": outsider, "bot": bot}
-
-
-def _browser(user) -> Client:
-    c = Client()
-    c.force_login(user)
-    grant_step_up(c)
-    return c
-
-
-def _create(client, slug=SLUG, ws="scouts"):
-    return client.post("/api/agents/stored", data={"name": "Scout", "slug": slug, "mandate": "Finds trails.",
-                                                   "workspace": ws}, content_type="application/json")
-
-
-@pytest.fixture
-def agent(w):
-    r = _create(_browser(w["owner"]))
-    assert r.status_code == 201, r.content
-    a = Agent.objects.get(slug=SLUG)
-    AgentAdmin.objects.create(agent=a, user=w["admin"], granted_by=w["owner"])
-    a.user = w["bot"]
-    a.save(update_fields=["user"])
-    editors_run(a)
-    return a
-
-
-def _post(client, url, body=None, **extra):
-    return client.post(url, data=json.dumps(body or {}), content_type="application/json", **extra)
-
-
-def _draft(client, base=1, changes=None, **extra):
-    changes = changes or [{"path": "skills/trail/SKILL.md",
-                           "content": "---\nname: trail\ndescription: Walk a trail.\n---\nWalk it.\n"}]
-    return _post(client, f"/api/agents/{SLUG}/definition/drafts",
-                 {"base": base, "changes": changes, "message": "add trail"}, **extra)
-
 
 # --- creating ---------------------------------------------------------------
 
@@ -328,18 +280,6 @@ def test_rollback_appends_a_new_revision(w, agent):
 # --- converting a repo agent ------------------------------------------------
 
 
-def _files(**files):
-    return [{"path": p, "content_b64": base64.b64encode(c.encode()).decode(), "executable": False}
-            for p, c in files.items()]
-
-
-@pytest.fixture
-def repo_agent(w):
-    a = Agent.objects.create(slug="ranger", name="Ranger", workspace=w["ws"], owner=w["owner"],
-                             repo_url="https://github.com/olive/ranger", user=None)
-    return a
-
-
 def test_convert_turns_a_repo_agent_into_a_stored_one(w, repo_agent):
     files = _files(**{"CLAUDE.md": "# Ranger\n", "skills/patrol/SKILL.md": "---\nname: patrol\n---\nGo.\n",
                       ".claude-plugin/plugin.json": '{"name": "ranger", "hooks": {"x": 1}}'})
@@ -403,17 +343,6 @@ def test_the_archive_is_what_the_manifest_root_names(w, agent):
     assert _browser(w["outsider"]).get(f"/api/agents/{SLUG}/definition/archive").status_code == 404
 
 
-def _runner_client(owner, ws, agent=None) -> tuple[Client, Runner]:
-    runner = Runner.objects.create(name=f"box-{uuid.uuid4().hex[:6]}", kind=Runner.CLOUD, owner=owner,
-                                   workspace=ws, last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
-    if agent is not None:
-        RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
-    key = RunnerDeviceKey.objects.create(runner=runner, kind=RunnerDeviceKey.SOFTWARE,
-                                         jkt=uuid.uuid4().hex, status=RunnerDeviceKey.ACTIVE)
-    raw, _ = RunnerAccessToken.mint(key)
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}"), runner
-
-
 def test_a_box_that_may_hold_the_agent_fetches_its_published_revisions_only(w, agent):
     box, _ = _runner_client(w["owner"], w["ws"], agent)
     r = box.get(f"/api/agents/{SLUG}/definition/archive")
@@ -465,15 +394,18 @@ def test_agent_detail_runtime_and_list_name_the_stored_definition(w, agent):
     assert d["source"] == "stored" and d["revision"] == 1 and d["root_sha256"] == agent.live_revision.root_sha256
     assert d["key"] == f"canopy:scouts/{SLUG}" and d["shared_with"] == []
     rt = c.get(f"/api/agents/{SLUG}/runtime").json()
-    assert rt["repo_url"] == "" and rt["definition"] == {"source": "stored", "revision": 1,
-                                                          "root_sha256": agent.live_revision.root_sha256}
+    assert rt["repo_url"] == "" and rt["definition"] == {
+        "source": "stored", "revision": 1, "root_sha256": agent.live_revision.root_sha256,
+        "commit": agent.live_revision.commit, "git_url": f"{store.git_url(agent)}"}
+    assert rt["definition"]["git_url"].endswith(f"/git/scouts/{SLUG}.git")
     listed = {a["slug"]: a for a in c.get("/api/agents/?workspace=scouts", HTTP_X_CANOPY_WORKSPACE="scouts").json()["items"]}
     assert listed[SLUG]["source"] == "stored"
 
 
 def test_a_repo_agent_reads_as_one(w, repo_agent):
     rt = _browser(w["owner"]).get("/api/agents/ranger/runtime").json()
-    assert rt["definition"] == {"source": "repo", "revision": None, "root_sha256": None}
+    assert rt["definition"] == {"source": "repo", "revision": None, "root_sha256": None, "commit": None,
+                                "git_url": None}
     assert store.source_of(repo_agent)["source"] == "repo"
 
 
