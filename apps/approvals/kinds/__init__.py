@@ -118,6 +118,14 @@ def get(key: str) -> Kind:
     return kind
 
 
+def needs_step_up(key: str) -> bool:
+    """Whether approving a request of kind `key` needs a passkey (`Kind.step_up`); an unknown kind does not."""
+    try:
+        return get(key).step_up
+    except KindError:
+        return False
+
+
 def parse(key: str, params: dict):
     """(kind, validated params) — or KindError saying what is wrong, in words an agent can fix."""
     kind = get(key)

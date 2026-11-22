@@ -17015,7 +17015,8 @@ export interface paths {
         /**
          * Requests waiting on you
          * @description Requests in your workspaces that YOU could approve. `status=all` also lists decided ones you
-         *     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`).
+         *     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`). A card with `step_up`
+         *     is approved only on its page (`page_url`), with a passkey.
          */
         readonly get: operations["list_approvals"];
         readonly put?: never;
@@ -17068,6 +17069,9 @@ export interface paths {
          * @description Approve (runs the kind's handler as you, once) or decline (nothing happens). A request is
          *     decided once: a second decision is a 409 naming who got there first. 403 when you do not hold
          *     the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason.
+         *     A request whose card says `step_up` is approved only from its page (`page_url`) in a browser, with
+         *     the approver's passkey (a browser without a fresh one gets 403 `step_up_required`; a token is always
+         *     refused): send the person that link. Declining needs no passkey.
          */
         readonly post: operations["decide_approval"];
         readonly delete?: never;
@@ -48411,8 +48415,21 @@ export interface components {
             readonly status: "pending" | "done" | "failed" | "declined" | "cancelled" | "expired";
             /** Workspace */
             readonly workspace: string;
-            /** Url */
+            /**
+             * Url
+             * @description The request's page, app-relative.
+             */
             readonly url: string;
+            /**
+             * Page Url
+             * @description The request's page, absolute: the link to give a person.
+             */
+            readonly page_url: string;
+            /**
+             * Step Up
+             * @description Approving needs the approver's passkey, so only the request's page (`page_url`), in a browser, can approve it; Slack, an alert, a token and an agent can only decline it.
+             */
+            readonly step_up: boolean;
             /** Requested By */
             readonly requested_by: string;
             /** Reason */

@@ -28,6 +28,10 @@ its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalP
   confirm (mail scanners open every link: `channel_email.py`). A Slack click decides, but only from
   the DM canopy sent THAT person for THAT request, matched on the message ts
   (`slack/approvals.py::handle_click`). A decision carries no passkey step-up, except for a kind with `Kind.step_up` (`vault.attach_agent`, which stands in for a route that needs one; `agent.definition.publish`, so a turn acting as an admin never approves its agent's own change): the web decide route asks for it (`apps/approvals/api.py::decide_approval`), and `services.decide` refuses an approval from a Slack click or alert button for such a kind.
+- **A passkey kind offers no Approve anywhere but its page.** The card says `step_up` and carries
+  `page_url` (`cards.py::build`); in Approve's place the Slack DM, the alert and the email offer a
+  link to the request's page (`cards.STEP_UP_APPROVE`), the push opens that page, and the page asks
+  for the passkey. Decline needs none and stays on every channel.
 
 ## Delivery (`delivery.deliver`)
 

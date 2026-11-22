@@ -16,10 +16,11 @@ from django.test import Client, TestCase
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.approvals import alerts_approval, delivery, kinds, services
+from apps.approvals import alerts_approval, cards, channel_email, delivery, kinds, services
 from apps.approvals.models import ApprovalDelivery, ApprovalEvent, ApprovalRequest
 from apps.attention import alerts
 from apps.attention.models import Alert
+from apps.workspaces.links import base_url
 from apps.harness.models import Turn
 from apps.push.models import NotificationPreference
 from apps.slack import approvals as slack_cards
@@ -388,3 +389,72 @@ def test_my_list_shows_what_i_could_approve_and_filters_by_scope(world, pushes):
     agent_only = _client(world["alice"]).get("/api/approvals/?scope=agent:hal").json()
     assert [c["id"] for c in agent_only] == [admin["id"]]
     assert _client(world["viewer"]).get("/api/approvals/").json() == []
+
+
+# ---- a kind whose approval needs a passkey -------------------------------------------------------
+
+@pytest.fixture
+def step_up():
+    """`workspace.member.add`, made to need a passkey the way `vault.attach_agent` and
+    `agent.definition.publish` do."""
+    with mock.patch.object(type(kinds.get("workspace.member.add")), "step_up", True):
+        yield
+
+
+def test_a_passkey_kinds_card_says_so_and_links_its_page(world, pushes, step_up):
+    card = file(world)
+    page = f"/w/connect/approvals/{card['id']}"
+    assert card["step_up"] is True and card["url"] == page and card["page_url"] == base_url() + page
+    plain = _client(world["alice"]).get(f"/api/approvals/{card['id']}").json()
+    assert plain["step_up"] is True
+    with mock.patch.object(type(kinds.get("workspace.member.add")), "step_up", False):
+        assert _client(world["alice"]).get(f"/api/approvals/{card['id']}").json()["step_up"] is False
+
+
+def test_a_passkey_kind_in_slack_links_to_its_page_instead_of_approve_and_can_be_declined(
+        world, pushes, installation, slack, linked, django_capture_on_commit_callbacks, step_up):
+    card = file(world, {**ADD, "for_email": "alice@dimagi.com", "idempotency_key": "p"})
+    dm = ApprovalDelivery.objects.get(request_id=card["id"], channel="slack")
+    post = [p for p in slack.said("chat.postMessage") if p["channel"] == ALICE][-1]
+    buttons = [b for b in post["blocks"] if b["type"] == "actions"][0]["elements"]
+    assert [b["action_id"] for b in buttons] == [slack_cards.OPEN, slack_cards.DECLINE]
+    assert buttons[0]["text"]["text"] == cards.STEP_UP_APPROVE
+    assert buttons[0]["url"] == card["page_url"]
+    assert slack_cards.APPROVE not in str(post["blocks"])
+    # A click on an Approve from a message sent before is refused, and says where to approve.
+    click(slack_cards.APPROVE, str(card["id"]), user=ALICE, channel=dm.ref["channel"], message_ts=dm.ref["ts"])
+    assert ApprovalRequest.objects.get(pk=card["id"]).status == "pending"
+    assert card["page_url"] in str(slack.said("chat.postEphemeral")[-1])
+    with django_capture_on_commit_callbacks(execute=True):
+        click(slack_cards.DECLINE, str(card["id"]), user=ALICE, channel=dm.ref["channel"], message_ts=dm.ref["ts"])
+    req = ApprovalRequest.objects.get(pk=card["id"])
+    assert req.status == "declined" and req.via == "slack"
+
+
+def test_a_passkey_kinds_push_opens_its_page_and_its_email_says_where_to_approve(world, pushes, step_up):
+    card = file(world, {**ADD, "for_email": "alice@dimagi.com", "idempotency_key": "q"})
+    kwargs = pushes.call_args.kwargs
+    assert kwargs["url"] == card["url"] and kwargs["title"].startswith("Approve with your passkey?")
+    _subject, text, html = channel_email.render(card)
+    assert f"{cards.STEP_UP_APPROVE}: {card['page_url']}?do=approve" in text
+    assert cards.STEP_UP_APPROVE in html and f"Decline: {card['page_url']}?do=decline" in text
+
+
+def test_a_passkey_kinds_alert_links_its_page_instead_of_approve_and_can_be_declined(world, pushes, step_up):
+    card = file(world)
+    alert = Alert.objects.get(kind=alerts_approval.KIND, subject_key=f"approval:{card['id']}")
+    offered = alerts.visible_actions(alert, world["admin"])
+    assert [a.id for a in offered] == ["open", "decline"]
+    assert offered[0].label == cards.STEP_UP_APPROVE and offered[0].href == card["url"]
+    with pytest.raises(alerts.ActionNotOffered):
+        alerts.act(alert, world["admin"], "approve")
+    alerts.act(alert, world["admin"], "decline")
+    assert ApprovalRequest.objects.get(pk=card["id"]).status == "declined"
+
+
+def test_a_passkey_kind_is_declined_on_the_web_without_one_and_approved_only_with_one(world, pushes, step_up):
+    card = file(world)
+    refused = _post(_client(world["admin"]), f"/api/approvals/{card['id']}/decide", {"decision": "approve"})
+    assert refused.status_code == 403 and refused.json()["error"] == "step_up_required"
+    declined = _post(_client(world["admin"]), f"/api/approvals/{card['id']}/decide", {"decision": "decline"})
+    assert declined.status_code == 200 and declined.json()["status"] == "declined"
