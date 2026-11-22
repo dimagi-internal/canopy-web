@@ -34,7 +34,7 @@ export async function getBrainRuns(ws: string, before = 0): Promise<BrainRunPage
 
 /** What learning produced at `ws` that you may see. */
 export async function listBrainOutputs(ws: string): Promise<BrainOutput[]> {
-  const res = await apiV2.GET('/api/brain/outputs/', { params: { query: { limit: 50 } }, headers: pin(ws) })
+  const res = await apiV2.GET('/api/brain/outputs/', { params: { query: { limit: 300 } }, headers: pin(ws) })
   return unwrap(res, 'Failed to load outputs') as BrainOutput[]
 }
 

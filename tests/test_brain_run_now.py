@@ -177,8 +177,13 @@ def test_an_output_names_only_the_sessions_the_viewer_reads(w):
     rows = _client(w["root"]).get("/api/brain/outputs/").json()                  # a canopy admin sees system findings
     row = next(r for r in rows if r["id"] == out.pk)
     assert row["sessions"] == [] and row["hidden_sessions"] == 2                # but reads neither session
+    assert row["source_sessions"] == []                                         # so no evidence quote links anywhere
     w["owner"].refresh_from_db()
     rows = _client(w["owner"]).get("/api/brain/outputs/").json()                  # the workspace owner
     row = next(r for r in rows if r["id"] == out.pk)
     assert row["hidden_sessions"] + len(row["sessions"]) == 2
     assert all(set(s) == {"session_id", "workspace", "title"} for s in row["sessions"])
+    # Evidence names a source id; only a session the viewer already reads gets mapped to it, and only its own source's.
+    src = {str(s.pk): sources.for_session(s).pk for s in (seen, unseen)}
+    assert {x["session_id"] for x in row["source_sessions"]} == {s["session_id"] for s in row["sessions"]}
+    assert all(x["source"] == src[x["session_id"]] for x in row["source_sessions"])

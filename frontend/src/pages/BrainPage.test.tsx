@@ -80,21 +80,46 @@ const RUN = {
     how: 'Read only with brain_read' },
 }
 
-function setup(owner = false) {
+const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
+const finding = (id: number, more: Record<string, unknown> = {}) => ({
+  id, learner: 'system-learning', kind: 'finding', workspace: 'dimagi', subject_type: 'system', subject: '', key: `k${id}`,
+  title: `finding ${id}`, body: {}, state: 'active', status: 'open', seen: 1, may_set_status: true,
+  created_at: ago(5), last_seen_at: ago(5), sessions: [], hidden_sessions: 0, source_sessions: [], ...more,
+})
+const OUTPUTS = [
+  finding(1, {
+    title: 'The runner idles without a delegation', seen: 3, last_seen_at: ago(1),
+    body: {
+      severity: 'high', type: 'provision', signal: 'over_claim', suggested_fix: 'surface the 409',
+      fix_belongs: { repo: 'canopy', agent: 'ada', skill: 'turn' },
+      evidence: [
+        { source: 41, index: 12, quote: 'claim refused: no delegation' },
+        { source: 42, index: 3, quote: 'still waiting on the runner' },
+        { source: 41, index: 30, quote: 'third quote' },
+        { source: 41, index: 31, quote: 'fourth quote' },
+      ],
+      proof: 'proven', not_checked: 'whether it is fixed on main', nested: { x: 1 }, extra_note: ['a', 'b'],
+    },
+    sessions: [{ session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }], hidden_sessions: 2,
+    source_sessions: [{ source: 41, session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }],
+  }),
+  finding(2, { title: 'A medium one seen lately', last_seen_at: ago(0), body: { severity: 'medium',
+    fix_belongs: { repo: 'canopy-web' } } }),
+  finding(3, { title: 'A high one seen long ago', last_seen_at: ago(9), body: { severity: 'high',
+    fix_belongs: { repo: 'canopy-web' } } }),
+  finding(4, { title: 'An old dismissed one', status: 'dismissed', body: { severity: 'high', fix_belongs: { repo: 'ace' } } }),
+]
+
+function setup(owner = false, url = '/w/dimagi/brain?tab=setup') {
   getBrainState.mockResolvedValue(STATE(owner))
   getBrainLinks.mockResolvedValue({ links: [{ id: 9, project: 'supply', name: 'Supply', workspace: 'dimagi', tier: 'core',
     how: 'declared', confidence: null, evidence: [], session_id: 's1', title: 'tender work', started_at: '' }],
   next_before: 9, done: true })
   getBrainRuns.mockResolvedValue({ runs: [RUN], next_before: 3, done: true })
-  listBrainOutputs.mockResolvedValue([{
-    id: 1, learner: 'system-learning', kind: 'finding', workspace: 'dimagi', subject_type: 'system', subject: '',
-    title: 'The runner idles without a delegation', body: { severity: 'high', fix: 'surface the 409', nested: { x: 1 } },
-    state: 'active', status: 'open', seen: 3, may_set_status: true, created_at: new Date().toISOString(),
-    sessions: [{ session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }], hidden_sessions: 2,
-  }])
+  listBrainOutputs.mockResolvedValue(OUTPUTS)
   runTargetNow.mockResolvedValue({ ...RUN, id: 4, state: 'open' })
   return render(
-    <MemoryRouter initialEntries={['/w/dimagi/brain']}>
+    <MemoryRouter initialEntries={[url]}>
       <Routes>
         <Route path="/w/:workspace/brain" element={<BrainPage />} />
       </Routes>
@@ -127,12 +152,13 @@ describe('BrainPage', () => {
   })
 
   it('moves a finding along its lifecycle and shows how often it was seen', async () => {
-    setup(true)
-    expect(await screen.findByText('seen 3 times')).toBeTruthy()
-    setOutputStatus.mockResolvedValue({ ...(await listBrainOutputs.mock.results[0].value)[0], status: 'accepted' })
-    fireEvent.click(screen.getByRole('button', { name: 'Accept' }))
+    setup(true, '/w/dimagi/brain')
+    expect(await screen.findByText(/seen 3 times/)).toBeTruthy()
+    const card = screen.getByRole('listitem', { name: 'The runner idles without a delegation' })
+    setOutputStatus.mockResolvedValue({ ...OUTPUTS[0], status: 'accepted' })
+    fireEvent.click(within(card).getByRole('button', { name: 'Accept' }))
     await waitFor(() => expect(setOutputStatus).toHaveBeenCalledWith('dimagi', 1, 'accepted'))
-    expect(await screen.findByRole('button', { name: 'Done' })).toBeTruthy()
+    expect(await within(card).findByRole('button', { name: 'Done' })).toBeTruthy()
   })
 
   it('says why a session is not read, naming no one', async () => {
@@ -158,7 +184,6 @@ describe('BrainPage', () => {
     expect(getBrainState).toHaveBeenCalledWith('dimagi')
     await waitFor(() => expect(getBrainLinks).toHaveBeenCalledWith('dimagi', 0))
     expect(getBrainRuns).toHaveBeenCalledWith('dimagi', 0)
-    expect(listBrainOutputs).toHaveBeenCalledWith('dimagi')
     const consent = screen.getByRole('region', { name: 'Consent' })
     expect(within(consent).getByText('12')).toBeTruthy()
     expect(within(consent).getAllByText('<3')).toHaveLength(3)             // a count under three is never shown
@@ -168,7 +193,7 @@ describe('BrainPage', () => {
       .toBe('/w/dimagi/sessions/s1'))
     const runs = screen.getByRole('region', { name: 'Runs' })
     expect(await within(runs).findByText(/\+1 you do not read/)).toBeTruthy()
-    expect(screen.queryByRole('tab')).toBeNull()                          // one page, no preview tab
+    expect(screen.getByRole('tab', { name: 'Setup and audit' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.queryByRole('button', { name: 'Run now' })).toBeNull()   // not this workspace's owner
     expect(screen.queryByRole('form', { name: 'Add a target' })).toBeNull()
     const aimed = screen.getByRole('region', { name: 'Targets' })
@@ -176,16 +201,83 @@ describe('BrainPage', () => {
     expect(within(aimed).getByText('(paused)', { exact: false })).toBeTruthy()
   })
 
-  it('renders findings with their fields and the sessions they cite', async () => {
-    setup()
+  it('opens on Findings: no setup reads until the setup tab is chosen', async () => {
+    setup(false, '/w/dimagi/brain')
+    expect(await screen.findByRole('region', { name: 'Findings' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: 'Findings' }).getAttribute('aria-selected')).toBe('true')
+    expect(listBrainOutputs).toHaveBeenCalledWith('dimagi')
+    expect(getBrainState).not.toHaveBeenCalled()
+    expect(screen.queryByRole('region', { name: 'Consent' })).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: 'Setup and audit' }))
+    expect(await screen.findByRole('region', { name: 'Consent' })).toBeTruthy()
+    expect(getBrainState).toHaveBeenCalledWith('dimagi')
+  })
+
+  it('reads a finding top to bottom: chips, where the fix belongs, the fix, quoted evidence linked to its session', async () => {
+    setup(false, '/w/dimagi/brain')
+    const card = await screen.findByRole('listitem', { name: 'The runner idles without a delegation' })
+    for (const chip of ['High severity', 'Open', 'Provision', 'Over claim']) expect(within(card).getByText(chip)).toBeTruthy()
+    expect(within(card).getByText('canopy · ada · turn')).toBeTruthy()
+    expect(within(card).getByText('surface the 409')).toBeTruthy()
+    expect(card.textContent).not.toContain('[object Object]')
+    expect(card.textContent).not.toMatch(/fix_belongs|suggested_fix|not_checked/)
+    // A quote is text, linked to the session its source is, when the viewer reads it; otherwise said plainly.
+    expect(within(card).getByText('claim refused: no delegation')).toBeTruthy()
+    const links = within(card).getAllByRole('link', { name: 'runner debugging' })
+    expect(links[0].getAttribute('href')).toBe('/w/dimagi/sessions/s1')
+    expect(within(card).getByText(/a session you do not read at message 3/)).toBeTruthy()
+    // Beyond three quotes, the rest are collapsed.
+    expect(within(card).queryByText('fourth quote')).toBeNull()
+    fireEvent.click(within(card).getByRole('button', { name: 'Show 1 more quote' }))
+    expect(within(card).getByText('fourth quote')).toBeTruthy()
+    expect(within(card).getByText('How sure: proven')).toBeTruthy()
+    expect(within(card).getByText('Not checked: whether it is fixed on main')).toBeTruthy()
+    // Unknown fields fall back to plain words; an object reads as key: value.
+    expect(within(card).getByText('Nested')).toBeTruthy()
+    expect(within(card).getByText('X: 1')).toBeTruthy()
+    expect(within(card).getByText('a, b')).toBeTruthy()
+    expect(card.textContent).toContain('2 sessions you do not read')
+  })
+
+  it('collapses faded findings in their own group, offers Keep, and never lists a merged duplicate', async () => {
+    listBrainOutputs.mockResolvedValueOnce([
+      ...OUTPUTS,
+      finding(5, { title: 'Nobody saw this lately', faded: true, body: { severity: 'high' } }),
+      finding(6, { title: 'A merged duplicate', status: 'duplicate', merged_into: 1 }),
+    ])
+    setup(true, '/w/dimagi/brain')
     const findings = await screen.findByRole('region', { name: 'Findings' })
-    expect(await within(findings).findByText('The runner idles without a delegation')).toBeTruthy()
-    expect(within(findings).getByText('severity')).toBeTruthy()
-    expect(within(findings).getByText('surface the 409')).toBeTruthy()
-    expect(within(findings).queryByText('nested')).toBeNull()
-    expect(within(findings).getByRole('link', { name: 'runner debugging' }).getAttribute('href'))
-      .toBe('/w/dimagi/sessions/s1')
-    expect(findings.textContent).toContain('2 sessions you do not read')
+    await within(findings).findByText('The runner idles without a delegation')
+    expect(within(findings).queryByText('A merged duplicate')).toBeNull()
+    const group = within(findings).getByText('Faded: not seen again lately (1)').closest('details')!
+    expect(group.open).toBe(false)
+    const card = within(group).getByRole('listitem', { name: 'Nobody saw this lately' })
+    setOutputStatus.mockResolvedValue({ ...finding(5), faded: false })
+    fireEvent.click(within(card).getByRole('button', { name: 'Keep' }))
+    await waitFor(() => expect(setOutputStatus).toHaveBeenCalledWith('dimagi', 5, 'open'))
+  })
+
+  it('filters by status, severity and repo with counts, and sorts by severity then last seen', async () => {
+    setup(false, '/w/dimagi/brain')
+    const findings = await screen.findByRole('region', { name: 'Findings' })
+    await within(findings).findByText('The runner idles without a delegation')
+    const titles = () => within(findings).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
+    // Open and accepted by default: the dismissed one is hidden. High before medium; within high, newest seen first.
+    expect(titles()).toEqual(['The runner idles without a delegation', 'A high one seen long ago', 'A medium one seen lately'])
+    const status = within(findings).getByRole('group', { name: 'Status' })
+    expect(within(status).getByRole('button', { name: 'Open 3' }).getAttribute('aria-pressed')).toBe('true')
+    expect(within(status).getByRole('button', { name: 'Dismissed 1' }).getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(within(status).getByRole('button', { name: 'Dismissed 1' }))
+    expect(titles()).toContain('An old dismissed one')
+    const repo = within(findings).getByRole('group', { name: 'Fix belongs in' })
+    expect(within(repo).getByRole('button', { name: 'canopy-web 2' })).toBeTruthy()
+    fireEvent.click(within(repo).getByRole('button', { name: 'canopy 1' }))   // turn canopy off
+    fireEvent.click(within(repo).getByRole('button', { name: 'ace 1' }))      // and ace
+    expect(titles()).toEqual(['A high one seen long ago', 'A medium one seen lately'])
+    const severity = within(findings).getByRole('group', { name: 'Severity' })
+    expect(within(severity).getByRole('button', { name: 'High 1' })).toBeTruthy()   // counted under the other filters
+    fireEvent.click(within(severity).getByRole('button', { name: 'High 1' }))
+    expect(titles()).toEqual(['A medium one seen lately'])
   })
 
   it('lets its owners and admins run a target now, add one and take one away', async () => {

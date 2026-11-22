@@ -499,6 +499,13 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   an output's citation of it, is a count (`state.run_page`, `api_admin._cited`). A sub-workspace's owner never sees a
   sibling's or a parent's aggregate, runs or findings; a canopy admin also sees the unscoped runs. The runs list reads
   again while one is open.
+- **Two tabs.** Findings, the default (`frontend/src/pages/BrainFindings.tsx`), is written for whoever acts on them:
+  filtered by status (open and accepted at first), severity and the repo the fix belongs in, most severe first then the
+  most recently seen; a body's known fields (`brain-learn`'s system finding) drawn in plain words, any other as
+  "label: value". Each evidence quote names a source id; the outputs list maps it to a session only through
+  `source_sessions`, which lists the cited sources whose session the viewer already reads (`api_admin._cited`), so a
+  quote from any other says "a session you do not read". A faded finding sits in its own collapsed group with Keep; a
+  merged duplicate is never listed. Everything else is "Setup and audit" (`?tab=setup`).
 
 ## Managing a workspace's learning (`apps/brain/api_manage.py`, `learning_reads.py`)
 

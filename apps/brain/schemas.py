@@ -137,6 +137,10 @@ class BrainOutputSession(StrictModel):
     title: str = Field(description="Scrubbed of secrets.")
 
 
+class BrainOutputSourceSession(BrainOutputSession):
+    source: int = Field(description="The source id its body's evidence names (`evidence[].source`).")
+
+
 class BrainOutputOut(StrictModel):
     id: int
     learner: str = Field(description="The slug of the learning feature that produced it.")
@@ -162,6 +166,9 @@ class BrainOutputOut(StrictModel):
     sessions: list[BrainOutputSession] = Field(default_factory=list,
                                                description="The sessions it cites that you read yourself.")
     hidden_sessions: int = Field(0, description="The sessions it cites that you do not read: a count only.")
+    source_sessions: list[BrainOutputSourceSession] = Field(
+        default_factory=list, description="Which of `sessions` each cited source is, by source id, so a quote in its "
+        "evidence links to its session. Only sessions you read yourself; a source not listed is one you do not read.")
 
 
 class BrainReadMessage(StrictModel):
