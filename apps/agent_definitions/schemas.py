@@ -59,6 +59,8 @@ class DefinitionMovedOut(StrictModel):
     revision: int
     #: The `refs/tags/r<N>` pushed with it (empty for a detach).
     tags: list[str] = Field(default_factory=list)
+    #: The agent that did it as the person, under an act-as-you permission; else null.
+    acted_by: DefinitionActedByOut | None = None
 
 
 class DefinitionChangeIn(StrictModel):
@@ -90,6 +92,18 @@ class DefinitionAuthorOut(StrictModel):
     turn_id: str | None = None
 
 
+class DefinitionActedByOut(StrictModel):
+    """An agent that did a person's act AS them, under an act-as-you permission the person
+    approved with their passkey."""
+
+    #: The agent's slug.
+    agent: str
+    #: The person it acted as (their email).
+    person: str
+    #: The act-as-you permission it held ("" once that record is gone).
+    act_as_grant: str = ""
+
+
 class DefinitionRevisionSummaryOut(StrictModel):
     number: int
     status: Literal["draft", "published", "superseded", "discarded"]
@@ -106,6 +120,9 @@ class DefinitionRevisionSummaryOut(StrictModel):
     published_by: str | None = None
     #: The approval request an agent's own draft filed, while it waits.
     approval_id: int | None = None
+    #: When an agent created or published this revision AS its person (`published_by`, or
+    #: the author of a revision created live), the agent and its permission; else null.
+    acted_by: DefinitionActedByOut | None = None
 
 
 class DefinitionPolicyOut(StrictModel):
@@ -161,3 +178,7 @@ class StoredAgentOut(StrictModel):
     source: Literal["stored"] = "stored"
     revision: int
     root_sha256: str
+    #: The agent's owner (their email).
+    owner: str = ""
+    #: The agent that created it as its owner, under an act-as-you permission; else null.
+    acted_by: DefinitionActedByOut | None = None

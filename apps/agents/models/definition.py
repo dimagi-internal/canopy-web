@@ -92,6 +92,14 @@ class AgentDefinitionRevision(models.Model):
     published_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                      on_delete=models.SET_NULL, related_name="+")
     published_at = models.DateTimeField(null=True, blank=True)
+    #: The agent that did this revision's person's act (create, convert, publish, roll back)
+    #: AS that person, under the act-as-you permission `act_as_grant` they approved with
+    #: their passkey (`harness.acting_person.person_or_act_as`). `author_user` /
+    #: `published_by` stay the person. Both are empty when the person acted themselves.
+    acting_agent = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name="+")
+    act_as_grant = models.ForeignKey("harness.ActAsGrant", null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

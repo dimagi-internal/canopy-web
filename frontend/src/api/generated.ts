@@ -5828,7 +5828,9 @@ export interface paths {
          * @description Draft `number` goes live and the old live revision is superseded; the files canopy writes
          *     itself are rewritten for it, and the agent's skill catalog is read again from it. 409 when
          *     `number` is not the draft, or was drafted on a revision that is no longer live. 403 for an
-         *     agent's own login or any token a turn holds: an agent proposes, a person publishes.
+         *     agent's own login or any token a turn holds: an agent proposes, a person publishes — or an
+         *     agent the person let act as them (an act-as-you permission, read + write), named in
+         *     `acted_by`.
          */
         readonly post: operations["publish_agent_definition"];
         readonly delete?: never;
@@ -30893,6 +30895,22 @@ export interface components {
              */
             readonly projects: readonly components["schemas"]["SpawnedProjectOut"][];
         };
+        /**
+         * DefinitionActedByOut
+         * @description An agent that did a person's act AS them, under an act-as-you permission the person
+         *     approved with their passkey.
+         */
+        readonly DefinitionActedByOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Person */
+            readonly person: string;
+            /**
+             * Act As Grant
+             * @default
+             */
+            readonly act_as_grant: string;
+        };
         /** StoredAgentOut */
         readonly StoredAgentOut: {
             /** Slug */
@@ -30911,6 +30929,12 @@ export interface components {
             readonly revision: number;
             /** Root Sha256 */
             readonly root_sha256: string;
+            /**
+             * Owner
+             * @default
+             */
+            readonly owner: string;
+            readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
         };
         /** StoredAgentIn */
         readonly StoredAgentIn: {
@@ -30979,6 +31003,7 @@ export interface components {
             readonly published_by?: string | null;
             /** Approval Id */
             readonly approval_id?: number | null;
+            readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
         };
         /** DefinitionConvertIn */
         readonly DefinitionConvertIn: {
@@ -31018,6 +31043,7 @@ export interface components {
             readonly revision: number;
             /** Tags */
             readonly tags?: readonly string[];
+            readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
         };
         /** DefinitionExportIn */
         readonly DefinitionExportIn: {
@@ -31121,6 +31147,7 @@ export interface components {
             readonly published_by?: string | null;
             /** Approval Id */
             readonly approval_id?: number | null;
+            readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
             /** Tree */
             readonly tree: {
                 readonly [key: string]: components["schemas"]["DefinitionTreeEntryOut"];

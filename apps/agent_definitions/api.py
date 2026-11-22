@@ -10,7 +10,10 @@ Who may do what, and why (docs/architecture/stored-agents.md):
   anything live;
 * publish, rollback, convert, export and detach are the agent's owner or admins acting
   as THEMSELVES: refused to an agent's login and to every token a turn holds
-  (`harness.acting_person`);
+  (`harness.acting_person`) — except an agent acting AS that owner or admin under an
+  act-as-you permission they approved with their passkey, live and `write`, naming no
+  other turn (`acting_person.person_or_act_as`). The revision, the response
+  (`acted_by`) and the audit row then name the agent and the permission;
 * once the definition moved to GitHub, every write here is 409 `exported`.
 
 The repository itself is served read-only over git by `git_http`.
@@ -54,6 +57,7 @@ from apps.workspaces import services as wsvc
 
 from . import services
 from .schemas import (
+    DefinitionActedByOut,
     DefinitionAuthorOut,
     DefinitionConvertIn,
     DefinitionDetachIn,
@@ -83,17 +87,62 @@ def _problem(exc: services.Refused) -> ProblemError:
     return ProblemError(exc.status, str(exc), type_=_TYPES.get(exc.status, TYPE_CONFLICT), members=members)
 
 
-def _require_person(request: HttpRequest, agent: Agent, what: str) -> None:
-    """`what` is a person's own act: never an agent's login, never a turn's token."""
-    why = acting_person.refusal(request)
+def _require_person(request: HttpRequest, agent: Agent, what: str):
+    """`what` is a person's own act: never an agent's login, never a turn's token. A person
+    acting as themselves passes (None), and so does an agent acting AS the agent's owner or
+    an admin under a live, `write` act-as-you permission that names no other turn (the
+    permission, `harness.acting_person.person_or_act_as`)."""
+    got = acting_person.person_or_act_as(request)
+    why, grant = (got, None) if isinstance(got, str) else (None, got[1])
     if why is None and agent.is_own_login(request.user):
         why = "agent_login"
+    if why is None and grant is not None and not agent.is_admin(grant.person):
+        why = "act_as_not_admin"
     if why is not None:
         raise ProblemError(403, f"{what} is a person's act", type_=TYPE_FORBIDDEN,
                            detail=(f"{what} changes what runs with {agent.slug}'s credentials, so only its owner "
-                                   f"or an admin, acting as themselves, may do it — not an agent or a turn "
-                                   f"({why}). An agent proposes a draft; a person publishes it."),
+                                   f"or an admin may do it: as themselves, or through an agent they let act as "
+                                   f"them with an act-as-you permission (read + write) — not an agent's own "
+                                   f"login or a turn's token ({why}). An agent proposes a draft; a person "
+                                   f"publishes it."),
                            members={"error": "not_a_person", "reason": why})
+    _note_acting(request, grant)
+    return grant
+
+
+def _acted_by(grant) -> DefinitionActedByOut | None:
+    """The agent that did a person's act as them, and the permission it held, or None."""
+    if grant is None:
+        return None
+    return DefinitionActedByOut(agent=grant.agent.slug, person=grant.person.email, act_as_grant=str(grant.pk))
+
+
+def _revision_acted_by(rev: AgentDefinitionRevision) -> DefinitionActedByOut | None:
+    """Who made `rev` (created it live, or published it) as a person, under act-as."""
+    if not rev.acting_agent_id:
+        return None
+    if rev.act_as_grant_id:
+        return _acted_by(rev.act_as_grant)
+    person = rev.published_by or rev.author_user
+    return DefinitionActedByOut(agent=rev.acting_agent.slug, person=getattr(person, "email", "") or "",
+                                act_as_grant="")
+
+
+def _who(request: HttpRequest, grant) -> str:
+    """The actor, for an audit summary: "<agent> as <person>" under act-as."""
+    email = getattr(request.user, "email", "") or ""
+    return f"{grant.agent.slug} as {email}" if grant is not None else email
+
+
+_REVISION_RELATED = ("parent", "author_user", "published_by", "acting_agent", "act_as_grant__agent",
+                     "act_as_grant__person")
+
+
+def _note_acting(request: HttpRequest, grant) -> None:
+    """The audit row says who did a person's act under act-as: the agent, and the permission."""
+    if grant is not None:
+        audit.note_acting(request, {"agent": grant.agent.slug, "act_as_grant": str(grant.pk),
+                                    "for_id": grant.person_id, "for": grant.person.email})
 
 
 def _stored_or_409(agent: Agent) -> None:
@@ -137,11 +186,12 @@ def _summary(rev: AgentDefinitionRevision | None) -> DefinitionRevisionSummaryOu
         files=len(tree), size=sum(int(e.get("size", 0)) for e in tree.values()),
         created_at=rev.created_at, published_at=rev.published_at,
         published_by=getattr(rev.published_by, "email", None) if rev.published_by_id else None,
-        approval_id=rev.approval_id if rev.status == AgentDefinitionRevision.DRAFT else None)
+        approval_id=rev.approval_id if rev.status == AgentDefinitionRevision.DRAFT else None,
+        acted_by=_revision_acted_by(rev))
 
 
 def _revision_or_404(agent: Agent, number: int) -> AgentDefinitionRevision:
-    rev = (AgentDefinitionRevision.objects.select_related("parent", "author_user", "published_by")
+    rev = (AgentDefinitionRevision.objects.select_related(*_REVISION_RELATED)
            .filter(agent=agent, number=number).first())
     if rev is None:
         raise ProblemError(404, f"{agent.slug} has no revision {number}", type_=TYPE_NOT_FOUND)
@@ -175,19 +225,23 @@ def create_stored_agent(request: HttpRequest, payload: StoredAgentIn) -> Status:
         raise ProblemError(409, f"The slug '{slug}' is taken", type_=TYPE_CONFLICT,
                            detail="Agent slugs are unique across canopy. Pick another name.")
     home = wsvc.Workspace.objects.get(slug=workspace)
+    got = acting_person.person_or_act_as(request)
+    grant = None if isinstance(got, str) else got[1]
+    _note_acting(request, grant)
     try:
         agent = services.create_stored_agent(
             slug=slug, name=payload.name.strip(), mandate=payload.mandate.strip(),
             stakeholders=payload.stakeholders.strip(), workspace=home,
-            owner=creating_owner(request, home), by=request.user)
+            owner=creating_owner(request, home), by=request.user, act_as=grant)
     except services.Refused as exc:
         raise _problem(exc) from None
     rev = agent.live_revision
     audit.note_change(scope=f"agent:{agent.slug}/definition", before=None,
                       after={"source": "stored", "revision": rev.number, "root_sha256": rev.root_sha256},
-                      workspace=home, summary=f"{request.user.email} created stored agent {agent.slug}")
+                      workspace=home, summary=f"{_who(request, grant)} created stored agent {agent.slug}")
     return Status(201, StoredAgentOut(slug=agent.slug, name=agent.name, workspace=agent.workspace_id,
-                                      revision=rev.number, root_sha256=rev.root_sha256))
+                                      revision=rev.number, root_sha256=rev.root_sha256,
+                                      owner=getattr(agent.owner, "email", "") or "", acted_by=_acted_by(grant)))
 
 
 def _decode(b64: str, path: str) -> bytes:
@@ -212,7 +266,7 @@ def convert_agent_definition(request: HttpRequest, slug: str, payload: Definitio
     scanned for secrets first (422 `secret` with `problems`). Files and history together are
     held to one request's size: more is 413 — convert the files only."""
     agent = agent_for_admin(request, slug)
-    _require_person(request, agent, "Converting an agent")
+    grant = _require_person(request, agent, "Converting an agent")
     files: dict[str, tuple[bytes, bool]] = {}
     for f in payload.files:
         if f.path in files:
@@ -221,7 +275,8 @@ def convert_agent_definition(request: HttpRequest, slug: str, payload: Definitio
     bundle = _decode(payload.bundle_b64, "bundle_b64") if payload.bundle_b64 else None
     before = {"source": agent.source, "repo_url": agent.repo_url, "repo_ref": agent.repo_ref}
     try:
-        rev = services.convert(agent, files=files, message=payload.message, by=request.user, bundle=bundle)
+        rev = services.convert(agent, files=files, message=payload.message, by=request.user, bundle=bundle,
+                               act_as=grant)
     except services.Refused as exc:
         raise _problem(exc) from None
     audit.note_change(scope=f"agent:{agent.slug}/definition", before=before,
@@ -245,7 +300,7 @@ def export_agent_definition(request: HttpRequest, slug: str, payload: Definition
     repository first."""
     agent = agent_for_admin(request, slug)
     _stored_or_409(agent)
-    _require_person(request, agent, "Exporting a definition")
+    grant = _require_person(request, agent, "Exporting a definition")
     before = {"source": agent.source, "repo_url": agent.repo_url, "repo_ref": agent.repo_ref}
     try:
         out = services.export(agent, repo=payload.repo, github_token=payload.github_token, ref=payload.ref,
@@ -255,7 +310,7 @@ def export_agent_definition(request: HttpRequest, slug: str, payload: Definition
     audit.note_change(scope=f"agent:{agent.slug}/definition", before=before,
                       after={"source": "repo", "repo_url": out["repo_url"], "repo_ref": out["repo_ref"],
                              "exported_from_revision": out["revision"]})
-    return DefinitionMovedOut(**out)
+    return DefinitionMovedOut(**out, acted_by=_acted_by(grant))
 
 
 @router.post("/{slug}/definition/detach", response={200: DefinitionMovedOut, **refusals(409, 422)},
@@ -268,7 +323,7 @@ def detach_agent_definition(request: HttpRequest, slug: str, payload: Definition
     archive."""
     agent = agent_for_admin(request, slug)
     _stored_or_409(agent)
-    _require_person(request, agent, "Detaching a definition")
+    grant = _require_person(request, agent, "Detaching a definition")
     before = {"source": agent.source, "repo_url": agent.repo_url, "repo_ref": agent.repo_ref}
     try:
         out = services.detach(agent, repo_url=payload.repo_url, ref=payload.ref, by=request.user)
@@ -277,7 +332,7 @@ def detach_agent_definition(request: HttpRequest, slug: str, payload: Definition
     audit.note_change(scope=f"agent:{agent.slug}/definition", before=before,
                       after={"source": "repo", "repo_url": out["repo_url"], "repo_ref": out["repo_ref"],
                              "detached_at_revision": out["revision"]})
-    return DefinitionMovedOut(**out)
+    return DefinitionMovedOut(**out, acted_by=_acted_by(grant))
 
 
 # ---- reading -------------------------------------------------------------------
@@ -290,7 +345,8 @@ def get_agent_definition(request: HttpRequest, slug: str) -> DefinitionOut:
     draft (if any) and the file policy every write is held to. `can_draft` / `can_publish` say
     what the caller may do here."""
     agent = agent_for_read(request, slug)
-    person = acting_person.refusal(request) is None and not agent.is_own_login(request.user)
+    person = (not isinstance(acting_person.person_or_act_as(request), str)
+              and not agent.is_own_login(request.user))
     return DefinitionOut(
         source=agent.source, git_url=store.git_url(agent) if store.has_repository(agent) else None,
         exported_to=agent.definition_exported_to,
@@ -306,7 +362,7 @@ def get_agent_definition(request: HttpRequest, slug: str) -> DefinitionOut:
 def list_agent_definition_revisions(request: HttpRequest, slug: str) -> list[DefinitionRevisionSummaryOut]:
     agent = agent_for_read(request, slug)
     rows = (AgentDefinitionRevision.objects.filter(agent=agent)
-            .select_related("parent", "author_user", "published_by").order_by("-number"))
+            .select_related(*_REVISION_RELATED).order_by("-number"))
     return [_summary(r) for r in rows]
 
 
@@ -399,13 +455,15 @@ def publish_agent_definition(request: HttpRequest, slug: str, number: int) -> De
     """Draft `number` goes live and the old live revision is superseded; the files canopy writes
     itself are rewritten for it, and the agent's skill catalog is read again from it. 409 when
     `number` is not the draft, or was drafted on a revision that is no longer live. 403 for an
-    agent's own login or any token a turn holds: an agent proposes, a person publishes."""
+    agent's own login or any token a turn holds: an agent proposes, a person publishes — or an
+    agent the person let act as them (an act-as-you permission, read + write), named in
+    `acted_by`."""
     agent = agent_for_admin(request, slug)
     _stored_or_409(agent)
-    _require_person(request, agent, "Publishing a definition")
+    grant = _require_person(request, agent, "Publishing a definition")
     before = agent.live_revision.number if agent.live_revision_id else None
     try:
-        rev = services.publish(agent, number, by=request.user)
+        rev = services.publish(agent, number, by=request.user, act_as=grant)
     except services.Refused as exc:
         raise _problem(exc) from None
     audit.note_change(scope=f"agent:{agent.slug}/definition", before={"revision": before},
@@ -437,10 +495,11 @@ def rollback_agent_definition(request: HttpRequest, slug: str, payload: Definiti
     never rewritten. Any open draft is discarded. 409 for a revision that was never published."""
     agent = agent_for_admin(request, slug)
     _stored_or_409(agent)
-    _require_person(request, agent, "Rolling back a definition")
+    grant = _require_person(request, agent, "Rolling back a definition")
     before = agent.live_revision.number if agent.live_revision_id else None
     try:
-        rev = services.rollback(agent, payload.revision, by=request.user, message=payload.message)
+        rev = services.rollback(agent, payload.revision, by=request.user, message=payload.message,
+                                act_as=grant)
     except services.Refused as exc:
         raise _problem(exc) from None
     audit.note_change(scope=f"agent:{agent.slug}/definition", before={"revision": before},

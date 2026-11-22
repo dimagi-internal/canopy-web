@@ -14,8 +14,11 @@ and credentials, so:
   every revision and never taken from an upload;
 * a draft goes live only by a PERSON who administers the agent: `publish`, `rollback`
   and `convert` are refused to any agent login or turn token (the routes ask
-  `harness.acting_person`), and an agent's own draft files an approval request
-  (`agent.definition.publish`) its owner and admins decide;
+  `harness.acting_person.person_or_act_as`), and an agent's own draft files an approval
+  request (`agent.definition.publish`) its owner and admins decide. The person's act may
+  be done by an agent acting AS them under an act-as-you permission they approved with
+  their passkey; the revision then names that agent and permission (`acting_agent`,
+  `act_as_grant`);
 * revisions are append-only: nothing here deletes or edits a published tree;
 * once an agent's definition moved to GitHub (`export`, `detach`), its canopy repository
   is a read-only archive: every further write is 409 `exported`.
@@ -148,9 +151,10 @@ def revision(agent: Agent, number: int) -> AgentDefinitionRevision | None:
     return AgentDefinitionRevision.objects.filter(agent=agent, number=number).first()
 
 
-def _publish_now(agent: Agent, rev: AgentDefinitionRevision, by) -> AgentDefinitionRevision:
+def _publish_now(agent: Agent, rev: AgentDefinitionRevision, by, act_as=None) -> AgentDefinitionRevision:
     """Make `rev` live: `refs/heads/main` and `refs/tags/r<N>` name its commit, and the
-    draft ref goes. The caller holds the agent's lock."""
+    draft ref goes. `act_as`: the act-as-you permission an agent did it under, as `by`
+    (recorded on the revision). The caller holds the agent's lock."""
     previous = agent.live_revision
     if previous is not None and previous.pk != rev.pk:
         previous.status = SUPERSEDED
@@ -158,7 +162,10 @@ def _publish_now(agent: Agent, rev: AgentDefinitionRevision, by) -> AgentDefinit
     rev.status = PUBLISHED
     rev.published_by = by if getattr(by, "pk", None) else None
     rev.published_at = timezone.now()
-    rev.save(update_fields=["status", "published_by", "published_at", "tree", "root_sha256", "commit"])
+    rev.act_as_grant = act_as
+    rev.acting_agent = act_as.agent if act_as is not None else None
+    rev.save(update_fields=["status", "published_by", "published_at", "tree", "root_sha256", "commit",
+                            "act_as_grant", "acting_agent"])
     git.set_ref(agent.pk, git.MAIN, rev.commit)
     git.set_ref(agent.pk, git.tag_ref(rev.number), rev.commit)
     git.delete_ref(agent.pk, git.DRAFT)
@@ -181,7 +188,7 @@ def _after_publish(agent_pk: int) -> None:
 
 def _new_revision(agent: Agent, *, editable: dict[str, tuple[bytes, bool]], message: str, status: str,
                   parent: AgentDefinitionRevision | None, by, by_agent: bool = False,
-                  turn=None, parent_commit: str = "") -> AgentDefinitionRevision:
+                  turn=None, parent_commit: str = "", act_as=None) -> AgentDefinitionRevision:
     """A new revision, committed on `parent`'s commit (or `parent_commit`, for a first
     revision with history behind it): live at once when `status` is published, else the
     agent's draft (`refs/heads/draft`)."""
@@ -195,7 +202,7 @@ def _new_revision(agent: Agent, *, editable: dict[str, tuple[bytes, bool]], mess
         message=message, author_user=by if getattr(by, "pk", None) else None,
         author_agent_turn=turn, by_agent=by_agent, status=DRAFT)
     if status == PUBLISHED:
-        _publish_now(agent, rev, by)
+        _publish_now(agent, rev, by, act_as)
     else:
         git.set_ref(agent.pk, git.DRAFT, commit)
     return rev
@@ -218,21 +225,44 @@ def factory_files(agent: Agent, *, mandate: str, stakeholders: str = "", author)
 
 
 def create_stored_agent(*, slug: str, name: str, mandate: str, stakeholders: str, workspace, owner,
-                        by) -> Agent:
-    """A new agent whose definition is the factory's scaffold, as revision 1, published."""
+                        by, act_as=None) -> Agent:
+    """A new agent whose definition is the factory's scaffold, as revision 1, published.
+    `act_as`: the act-as-you permission an agent created it under, as `by`."""
     with transaction.atomic():
         agent = Agent.objects.create(slug=slug, name=name, description=mandate[:2000], workspace=workspace,
                                      owner=owner, source=Agent.STORED, repo_url="", repo_ref="")
         files = factory_files(agent, mandate=mandate, stakeholders=stakeholders, author=owner or by)
         agent = _locked(agent)
         _new_revision(agent, editable=files, message="Created from the canopy agent factory",
-                      status=PUBLISHED, parent=None, by=by)
+                      status=PUBLISHED, parent=None, by=by, act_as=act_as)
         agent.refresh_from_db()
     return agent
 
 
+def _read_history(bundle: bytes | None):
+    if not bundle:
+        return None
+    try:
+        return git.read_bundle(bundle)
+    except git.GitError as exc:
+        raise Refused(str(exc), exc.status, code=exc.code, problems=exc.problems) from None
+
+
+def _import_history(agent: Agent, history) -> str:
+    """Write a read bundle's objects into the agent's repository under
+    `refs/heads/imported`; return its tip (or "" without one)."""
+    if history is None:
+        return ""
+    objects = store.object_store(agent)
+    for obj in history.objects:
+        objects.add_object(obj)
+    objects.flush()
+    git.set_ref(agent.pk, git.IMPORTED, history.tip)
+    return history.tip
+
+
 def convert(agent: Agent, *, files: dict[str, tuple[bytes, bool]], message: str, by,
-            bundle: bytes | None = None) -> AgentDefinitionRevision:
+            bundle: bytes | None = None, act_as=None) -> AgentDefinitionRevision:
     """Turn a repo agent into a stored one: `files` (the repo's tracked files) become
     revision 1, published. Generated paths in the upload are ignored — canopy rewrites
     them — and anything else outside the policy refuses the whole conversion.
@@ -245,12 +275,7 @@ def convert(agent: Agent, *, files: dict[str, tuple[bytes, bool]], message: str,
         raise Refused(f"the conversion is {size // 1024} KB, more than the {MAX_CONVERT_BYTES // 1024} KB one "
                       "request carries" + (" — its history is too large to import: convert its files only, "
                                             "without --with-history" if bundle else ""), 413, code="too_large")
-    history = None
-    if bundle:
-        try:
-            history = git.read_bundle(bundle)
-        except git.GitError as exc:
-            raise Refused(str(exc), exc.status, code=exc.code, problems=exc.problems) from None
+    history = _read_history(bundle)
     with transaction.atomic():
         agent = _locked(agent)
         if agent.is_stored:
@@ -258,17 +283,9 @@ def convert(agent: Agent, *, files: dict[str, tuple[bytes, bool]], message: str,
         _refuse_exported(agent)
         if AgentGitRef.objects.filter(agent=agent).exists():
             raise Refused(f"canopy already keeps a repository for {agent.slug}", 409, code="exported")
-        parent_commit = ""
-        if history is not None:
-            objects = store.object_store(agent)
-            for obj in history.objects:
-                objects.add_object(obj)
-            objects.flush()
-            git.set_ref(agent.pk, git.IMPORTED, history.tip)
-            parent_commit = history.tip
         rev = _new_revision(agent, editable=_editable_only(files, agent.slug),
                             message=message or "Converted from its repository", status=PUBLISHED,
-                            parent=None, by=by, parent_commit=parent_commit)
+                            parent=None, by=by, parent_commit=_import_history(agent, history), act_as=act_as)
         agent.source = Agent.STORED
         agent.repo_url = ""
         agent.repo_ref = ""
@@ -345,7 +362,7 @@ def create_draft(agent: Agent, *, base: int, changes: list[dict], message: str, 
     return rev
 
 
-def publish(agent: Agent, number: int, *, by, expect_root: str = "") -> AgentDefinitionRevision:
+def publish(agent: Agent, number: int, *, by, expect_root: str = "", act_as=None) -> AgentDefinitionRevision:
     """Draft `number` goes live; the old live revision is superseded."""
     with transaction.atomic():
         agent = _locked(agent)
@@ -374,7 +391,7 @@ def publish(agent: Agent, number: int, *, by, expect_root: str = "") -> AgentDef
                                  author=drafted.author if drafted is not None else _author(agent, by, False),
                                  message=rev.message or f"Revision {rev.number}")
         rev.tree, rev.root_sha256 = tree, root
-        return _publish_now(agent, rev, by)
+        return _publish_now(agent, rev, by, act_as)
 
 
 def discard(agent: Agent, number: int, *, by) -> AgentDefinitionRevision:
@@ -398,7 +415,7 @@ def _discard(rev: AgentDefinitionRevision, by) -> None:
     git.delete_ref(rev.agent_id, git.DRAFT)
 
 
-def rollback(agent: Agent, number: int, *, by, message: str = "") -> AgentDefinitionRevision:
+def rollback(agent: Agent, number: int, *, by, message: str = "", act_as=None) -> AgentDefinitionRevision:
     """A NEW revision whose files are revision `number`'s, published. History is kept."""
     with transaction.atomic():
         agent = _locked(agent)
@@ -413,7 +430,7 @@ def rollback(agent: Agent, number: int, *, by, message: str = "") -> AgentDefini
             _discard(pending, by)
         return _new_revision(agent, editable=_editable_only(store.files_of(old), agent.slug),
                              message=message or f"Roll back to revision {number}", status=PUBLISHED,
-                             parent=agent.live_revision, by=by)
+                             parent=agent.live_revision, by=by, act_as=act_as)
 
 
 # --- moving to GitHub ---------------------------------------------------------

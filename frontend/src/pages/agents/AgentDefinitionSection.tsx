@@ -175,7 +175,14 @@ export function AgentDefinitionSection(): JSX.Element {
               </Td>
               <Td>{r.status}</Td>
               <Td title={r.message}>{r.message}</Td>
-              <Td>{r.author.by_agent ? `${r.author.email} (agent)` : r.author.email}</Td>
+              <Td>
+                {r.acted_by ? (
+                  <span data-testid="definition-acted-by"
+                    title={`${r.acted_by.agent} did this as ${r.acted_by.person}, under an act-as-you permission they approved with their passkey`}>
+                    {r.acted_by.agent} as {r.acted_by.person}
+                  </span>
+                ) : r.author.by_agent ? `${r.author.email} (agent)` : r.author.email}
+              </Td>
               <Td tone="muted" nowrap>
                 {new Date(r.published_at ?? r.created_at).toLocaleString()}
               </Td>
