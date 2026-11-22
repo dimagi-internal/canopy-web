@@ -100,6 +100,12 @@ class AgentDefinitionRevision(models.Model):
                                      related_name="+")
     act_as_grant = models.ForeignKey("harness.ActAsGrant", null=True, blank=True, on_delete=models.SET_NULL,
                                      related_name="+")
+    #: The agent whose own login published this revision (or created it live, rolling back)
+    #: as ITSELF, because it administers this revision's agent and is not that agent
+    #: (`harness.acting_person.admin_agent`). `published_by` is then that agent's login.
+    #: Empty when a person published it, themselves or through an act-as-you permission.
+    published_by_agent = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.SET_NULL,
+                                           related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

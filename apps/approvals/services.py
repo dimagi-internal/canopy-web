@@ -189,6 +189,22 @@ def cancel(request_id: int, user) -> ApprovalRequest:
     return req
 
 
+def supersede(request_id: int, user, *, why: str) -> ApprovalRequest | None:
+    """Close a pending request whose action someone with the authority to take it took
+    directly, so nobody need decide it: cancelled, with `why` as its comment and
+    `{"superseded": True}` as its result. The caller has already been allowed the act; this
+    asks no authority of `user`. None when the request is gone or already closed."""
+    with transaction.atomic():
+        req = ApprovalRequest.objects.select_for_update(of=("self",)).filter(pk=request_id).first()
+        if req is None or not req.is_pending:
+            return None
+        _close(req, ApprovalRequest.CANCELLED, user, via="", comment=why[:1000], event=ApprovalEvent.CANCELLED,
+               result={"superseded": True})
+        pk = req.pk
+        transaction.on_commit(lambda: _after_close(pk))
+    return req
+
+
 def expire_due(now=None) -> int:
     """Close every pending request past its time. Returns how many."""
     now = now or timezone.now()

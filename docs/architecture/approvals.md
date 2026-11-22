@@ -27,7 +27,15 @@ its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalP
 - **A link never decides by itself.** The email's buttons open the request with the choice made, to
   confirm (mail scanners open every link: `channel_email.py`). A Slack click decides, but only from
   the DM canopy sent THAT person for THAT request, matched on the message ts
-  (`slack/approvals.py::handle_click`). A decision carries no passkey step-up, except for a kind with `Kind.step_up` (`vault.attach_agent`, which stands in for a route that needs one; `agent.definition.publish`, so a turn acting as an admin never approves its agent's own change): the web decide route asks for it (`apps/approvals/api.py::decide_approval`), and `services.decide` refuses an approval from a Slack click or alert button for such a kind.
+  (`slack/approvals.py::handle_click`). A decision carries no passkey step-up, except for a kind with `Kind.step_up` (`vault.attach_agent`, which stands in for a route that needs one; `agent.definition.publish`, so a turn acting as an admin never approves an agent's change it was asked for): the web decide route asks for it (`apps/approvals/api.py::decide_approval`), and `services.decide` refuses an approval from a Slack click or alert button for such a kind.
+- **Superseded, not left pending.** When someone with the authority to take a request's action
+  takes it directly, the request is closed by `services.supersede`: `cancelled`, result
+  `{"superseded": true}`, a comment naming who acted, and no authority asked of them (the route
+  already allowed the act). `agent.definition.publish` is the one kind that uses it: publishing
+  a draft directly (a person, an act-as agent, or another agent that administers the target)
+  closes the draft's open request. That kind is filed only for a draft no agent may publish: an
+  agent's draft of itself, or one by an agent that does not administer the target
+  ([stored-agents.md](stored-agents.md)).
 - **A passkey kind offers no Approve anywhere but its page.** The card says `step_up` and carries
   `page_url` (`cards.py::build`); in Approve's place the Slack DM, the alert and the email offer a
   link to the request's page (`cards.STEP_UP_APPROVE`), the push opens that page, and the page asks

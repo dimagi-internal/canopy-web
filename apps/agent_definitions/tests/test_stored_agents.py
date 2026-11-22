@@ -5,7 +5,8 @@ What is pinned, each with its refusal:
 - every write goes through the file policy (hooks, generated paths, executables,
   traversal, secrets, caps), and generated files are always canopy's own;
 - an agent may draft its own definition, which files an approval; it may never publish,
-  roll back or convert — nor may any turn's token;
+  roll back or convert it — nor may any turn's token (another agent that administers it may
+  publish and roll back: test_stored_agents_admin_agent.py);
 - publishing supersedes, rollback appends, history is never rewritten;
 - the archive is what the manifest root names, and only a box that may hold the agent
   (or a member) gets it — a box never gets a draft.

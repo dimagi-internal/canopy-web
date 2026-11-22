@@ -251,6 +251,11 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     old_email = (existing.email or "").strip().lower() if existing is not None else ""
     agent = services.upsert_agent(payload, workspace=home,
                                   owner=_creating_owner(request, home) if existing is None else None)
+    if existing is None:
+        # The agent whose login registers a new agent administers it, beside the person who owns it.
+        creator = creation.creating_agent(request)
+        if creator is not None:
+            creation.creator_administers(agent, creator)
     new_email = (agent.email or "").strip().lower()
     if existing is not None and new_email and new_email != old_email and agent.is_admin(request.user):
         # Its canopy login is the account at its email: derived again from the new one.

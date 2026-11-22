@@ -5708,7 +5708,8 @@ export interface paths {
          * An agent's stored definition: live, draft, policy
          * @description `source` says where the definition lives. For a stored agent, the live revision, the one
          *     draft (if any) and the file policy every write is held to. `can_draft` / `can_publish` say
-         *     what the caller may do here.
+         *     what the caller may do here: `can_publish` is a person who administers the agent, or
+         *     another agent that does, signed in as itself.
          */
         readonly get: operations["get_agent_definition"];
         readonly put?: never;
@@ -5813,10 +5814,11 @@ export interface paths {
          * @description `changes` are applied to the LIVE revision `base`: `content` (text) or `content_b64`
          *     writes a file, `content: null` deletes one. The result replaces any earlier draft (whose
          *     approval request, if any, is withdrawn). A `base` that is not live is 409 `stale_base`; a
-         *     change the file policy refuses is 422 with `problems`. Nothing goes live: a person who
-         *     administers the agent publishes the draft. When an agent writes it (its own login, or any
-         *     turn's token), canopy files an approval request (`approval_id`) to the agent's owner and
-         *     admins, who approve it from its page with a passkey.
+         *     change the file policy refuses is 422 with `problems`. Nothing goes live: whoever may
+         *     publish it does (`publish`). When an agent writes it (its own login, or any turn's token),
+         *     canopy files an approval request (`approval_id`) to the agent's owner and admins, who
+         *     approve it from its page with a passkey, unless that agent may publish it itself:
+         *     another agent that administers this one, signed in as itself, asks for no approval.
          */
         readonly post: operations["draft_agent_definition"];
         readonly delete?: never;
@@ -5838,10 +5840,12 @@ export interface paths {
          * Publish a stored agent's draft: it becomes what its runners run
          * @description Draft `number` goes live and the old live revision is superseded; the files canopy writes
          *     itself are rewritten for it, and the agent's skill catalog is read again from it. 409 when
-         *     `number` is not the draft, or was drafted on a revision that is no longer live. 403 for an
-         *     agent's own login or any token a turn holds: an agent proposes, a person publishes — or an
-         *     agent the person let act as them (an act-as-you permission, read + write), named in
-         *     `acted_by`.
+         *     `number` is not the draft, or was drafted on a revision that is no longer live. Its owner
+         *     or an admin publishes it, as themselves or through an agent they let act as them (an
+         *     act-as-you permission, read + write, named in `acted_by`); so may ANOTHER agent that
+         *     administers this one, signed in as itself (named in `published_by_agent`). 403 for the
+         *     agent's own login, a caller token, or an agent that is not its admin. An approval the
+         *     draft waited on is closed as superseded.
          */
         readonly post: operations["publish_agent_definition"];
         readonly delete?: never;
@@ -5883,6 +5887,7 @@ export interface paths {
          * Roll a stored agent back to an earlier revision
          * @description A NEW revision with revision `revision`'s files is created and published; history is
          *     never rewritten. Any open draft is discarded. 409 for a revision that was never published.
+         *     Who may: the same as `publish`.
          */
         readonly post: operations["rollback_agent_definition"];
         readonly delete?: never;
@@ -31109,6 +31114,8 @@ export interface components {
             readonly published_at?: string | null;
             /** Published By */
             readonly published_by?: string | null;
+            /** Published By Agent */
+            readonly published_by_agent?: string | null;
             /** Approval Id */
             readonly approval_id?: number | null;
             readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
@@ -31253,6 +31260,8 @@ export interface components {
             readonly published_at?: string | null;
             /** Published By */
             readonly published_by?: string | null;
+            /** Published By Agent */
+            readonly published_by_agent?: string | null;
             /** Approval Id */
             readonly approval_id?: number | null;
             readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;

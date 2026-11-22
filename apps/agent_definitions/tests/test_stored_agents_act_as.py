@@ -6,8 +6,9 @@ permission is live, approved, `write`, names no other turn, and whose person is 
 agent's owner or an admin (`acting_person.person_or_act_as`). The revision, the response
 (`acted_by`) and the audit row name the agent and the permission.
 
-Still refused: an agent's own login, a turn's token or login, `X-Canopy-On-Behalf-Of` with
-no permission, a runner, and every act-as token that fails one of the conditions.
+Still refused: the login of an agent that does not administer the target (an admin agent's
+own login is test_stored_agents_admin_agent.py), a turn's token or login, `X-Canopy-On-Behalf-Of`
+with no permission, a runner, and every act-as token that fails one of the conditions.
 """
 from __future__ import annotations
 
