@@ -19876,8 +19876,8 @@ export interface paths {
          * @description For a turn in a learning run: one output of a kind its feature declares, about the run's own subject,
          *     citing the sources it came from. Every cited source must be one this run read and must still be open to
          *     it; otherwise nothing is written (422). The words are scrubbed. The same output twice is one, and one whose
-         *     `key` matches an open finding of this learner and subject folds into it (`folded`). Past the run's budget of
-         *     outputs a new one is refused (422).
+         *     `key` matches an open finding of this learner and subject, or that names one by `same_as`, folds into it
+         *     (`folded`). Past the run's budget of outputs a new one is refused (422).
          */
         readonly post: operations["brain_emit"];
         readonly delete?: never;
@@ -20015,7 +20015,8 @@ export interface paths {
          *     canopy's system findings where you own or administer the workspace a run was started for (or one above it),
          *     as yourself only. Pinned to a workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it;
          *     unpinned, your one organisation's (the read rule every list follows). Never a withdrawn or stale one. `status`
-         *     narrows to open, accepted, dismissed or done. Newest first.
+         *     narrows to open, accepted, dismissed, done or duplicate (one merged into another, left out unless asked for).
+         *     Newest first, a faded finding (no run re-saw it within its fade window) below the fresh ones.
          */
         readonly get: operations["list_outputs"];
         readonly put?: never;
@@ -20044,6 +20045,30 @@ export interface paths {
          *     A repeat later folds into it while it is open or accepted. Every change is in its workspace's log.
          */
         readonly post: operations["set_output_status"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/outputs/{output_id}/merge": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Merge a duplicate finding into this one
+         * @description Two findings that are one problem: fold `duplicate` into this one. This one takes its sightings (`seen` adds up),
+         *     the sessions it came from and a note of it (`merged_from`); the duplicate's status becomes `duplicate`
+         *     (`merged_into` this one), and a later repeat of its key folds here. Both must be of the same learner, subject and
+         *     workspace, and yours to set by the rule that sets a status (`set_output_status`). Recorded in the workspace's
+         *     log.
+         */
+        readonly post: operations["merge_outputs"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -20292,8 +20317,10 @@ export interface paths {
         /**
          * Change a target's budget (its owners and admins)
          * @description How much one run of this target may read (sessions) and write (outputs), and how many runs, outputs and tokens
-         *     it may spend in a UTC day. A run stops cleanly at a cap: nothing more is read or written, and a fire past a daily
-         *     cap starts nothing and says why. Fields left out keep their value; `clear_tokens` removes the token cap.
+         *     it may spend in a UTC day, how far back its runs read (`lookback_days`: only sessions active that recently) and how
+         *     long an open finding nobody re-sees stays fresh (`fade_days`). A run stops cleanly at a cap: nothing more is read or
+         *     written, and a fire past a daily cap starts nothing and says why. Fields left out keep their value; `clear_tokens`
+         *     removes the token cap.
          */
         readonly patch: operations["set_target_budget"];
         readonly trace?: never;
@@ -52532,7 +52559,7 @@ export interface components {
             readonly view: string;
             /**
              * Next After
-             * @description Pass this as `after` to read on.
+             * @description Pass this back as `after` to read on (with `next_index` when set).
              */
             readonly next_after: number;
             /**
@@ -52542,7 +52569,7 @@ export interface components {
             readonly next_index?: number | null;
             /**
              * Done
-             * @description Nothing is left past `next_after`.
+             * @description Nothing more is due for this run.
              */
             readonly done: boolean;
             /**
@@ -52584,6 +52611,11 @@ export interface components {
             readonly truncated: boolean;
             /** Next Index */
             readonly next_index?: number | null;
+            /**
+             * Read Before
+             * @description Set when this session was learned from before and has grown since: only the rows after this one are served (what is new).
+             */
+            readonly read_before?: number | null;
             /**
              * Directives
              * @description Words the people in this source asked every reader to be shown.
@@ -52649,10 +52681,15 @@ export interface components {
             readonly sources: readonly number[];
             /**
              * Key
-             * @description A short stable slug naming WHAT this is (e.g. `canopy-web:friction:mcp-422-shape`): an output of the same kind and key, still open or accepted, for the same subject and workspace, takes this one in as a repeat instead of a new output.
+             * @description A short stable slug naming WHAT this is (e.g. `canopy-web:friction:mcp-422-shape`): an output of the same kind and key, still open or accepted, for the same subject and workspace, takes this one in as a repeat instead of a new output. Reuse the key of an open finding in your run context when it is the same problem.
              * @default
              */
             readonly key: string;
+            /**
+             * Same As
+             * @description The id of an open finding in your run context this one is the same problem as: it folds into that one (more evidence, `seen` + 1) whatever its key.
+             */
+            readonly same_as?: number | null;
         };
         /** CapabilityOut */
         readonly CapabilityOut: {
@@ -52887,6 +52924,17 @@ export interface components {
             /** Last Seen At */
             readonly last_seen_at?: string | null;
             /**
+             * Faded
+             * @description Open or accepted, but no run re-saw it within its target's fade window: listed below the fresh ones and not shown to runs; setting it open or accepted keeps it.
+             * @default false
+             */
+            readonly faded: boolean;
+            /**
+             * Merged Into
+             * @description For a `duplicate`: the output it was merged into.
+             */
+            readonly merged_into?: number | null;
+            /**
              * May Set Status
              * @description Whether you may change its status.
              * @default false
@@ -52931,6 +52979,14 @@ export interface components {
              * @description open | accepted | dismissed | done
              */
             readonly status: string;
+        };
+        /** BrainOutputMergeIn */
+        readonly BrainOutputMergeIn: {
+            /**
+             * Duplicate
+             * @description The id of the output that is the same problem: it is folded into this one.
+             */
+            readonly duplicate: number;
         };
         /** GraphEdgeOut */
         readonly GraphEdgeOut: {
@@ -53321,6 +53377,17 @@ export interface components {
             readonly max_outputs_per_day: number;
             /** Max Tokens Per Day */
             readonly max_tokens_per_day?: number | null;
+            /**
+             * Lookback Days
+             * @description Its runs read only sessions active in this many days.
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Fade Days
+             * @description An open finding no run re-saw in this many days is faded.
+             * @default 21
+             */
+            readonly fade_days: number;
             readonly today: components["schemas"]["BrainBudgetToday"];
         };
         /** BrainTargetOut */
@@ -53545,9 +53612,52 @@ export interface components {
             readonly sessions_due: number;
             /** Source Ids Due */
             readonly source_ids_due?: readonly number[];
+            /**
+             * Lookback Days
+             * @description Only sessions active in this many days are due (none: no window).
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Open Findings Total
+             * @default 0
+             */
+            readonly open_findings_total: number;
+            /**
+             * Open Findings
+             * @description The open findings this learner holds for the subject and workspace, most recently seen first and capped: reuse one's key (or name it by `same_as`) when a finding is the same problem.
+             */
+            readonly open_findings?: readonly components["schemas"]["BrainRunContextFinding"][];
             readonly budget: components["schemas"]["BrainRunBudgetLeft"];
             /** How */
             readonly how: string;
+        };
+        /** BrainRunContextFinding */
+        readonly BrainRunContextFinding: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Seen
+             * @default 1
+             */
+            readonly seen: number;
+            /**
+             * Last Seen At
+             * @description ISO time a run last saw it.
+             * @default
+             */
+            readonly last_seen_at: string;
         };
         /** BrainRunContextPerson */
         readonly BrainRunContextPerson: {
@@ -53721,6 +53831,16 @@ export interface components {
              * @default false
              */
             readonly clear_tokens: boolean;
+            /**
+             * Lookback Days
+             * @description Read only sessions active in this many days.
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Fade Days
+             * @description Fade an open finding no run re-saw in this many days.
+             */
+            readonly fade_days?: number | null;
         };
         /** BrainWhyOut */
         readonly BrainWhyOut: {
@@ -80826,6 +80946,59 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["BrainOutputStatusIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly merge_outputs: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrainOutputMergeIn"];
             };
         };
         readonly responses: {

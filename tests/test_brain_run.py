@@ -437,7 +437,7 @@ def test_one_read_serves_at_most_the_call_budget_and_never_splits_a_source(w, mo
     run = runs.start(w["pace"], subject=w["carol"])
     monkeypatch.setattr(reading, "MAX_CHARS", 100)
     first = reading.read_next(run, limit=5)
-    assert [s["title"] for s in first["sources"]] == ["about carol", "s0"]   # 27 + 40 chars; s1 would pass 100
+    assert [s["title"] for s in first["sources"]] == ["s2", "s1"]   # newest first; 40 + 40 chars, a third would pass 100
     assert sum(len(m["text"]) for s in first["sources"] for m in s["messages"]) <= 100 and first["done"] is False
     rest = reading.read_next(run, after=first["next_after"], limit=5)
     assert len(first["sources"]) + len(rest["sources"]) == 4 and BrainRunRead.objects.filter(run=run).count() == 4

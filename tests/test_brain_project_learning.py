@@ -98,20 +98,23 @@ def test_a_session_linked_or_agreed_to_late_is_still_read(w):
     newest = _chat(w, w["alice"], "newest", "z")
     _link(w, newest)
     [run] = fire(w["target"])
-    assert _titles(run) == ["early", "newest"]
+    assert _titles(run) == ["newest", "early"]                           # most recently active first
     _end(run)
     LearningConsent.objects.create(user=w["carol"], classes=["project"])  # late consent, an OLDER source id
     [again] = fire(w["target"])
     assert _titles(again) == ["late"]                                     # a max-id cursor would have skipped it
 
 
-def test_a_run_reads_past_its_floor_only(w):
+def test_a_project_run_reads_only_sessions_active_in_its_window(w):
     old, new = _chat(w, w["alice"], "old", "x"), _chat(w, w["alice"], "new", "y")
     _link(w, old)
     _link(w, new)
-    run = runs.start(w["proj"], subject=w["project"], floor=sources.for_session(old).pk)
-    page = reading.read_next(run, limit=5)
-    assert [s["title"] for s in page["sources"]] == ["new"]
+
+    stale = timezone.now() - dt.timedelta(days=45)                     # past a project target's 30 days
+    Session.objects.filter(pk=old.pk).update(created_at=stale)
+    Message.objects.filter(session=old).update(created_at=stale)
+    [run] = fire(w["target"])
+    assert _titles(run) == ["new"]
 
 
 def test_a_failed_run_counts_nothing_and_is_tried_again(w):
@@ -163,7 +166,7 @@ def test_a_stale_output_s_remaining_sources_are_read_again_and_its_request_close
     ask = RederiveRequest.objects.get(output=both, done_at__isnull=True)
     [again] = fire(w["target"])
     page = reading.read_next(again, limit=5)
-    assert [x["title"] for x in page["sources"]] == ["two"] and page["revoked"] == [ids[0]]
+    assert [x["title"] for x in page["sources"]] == ["two"] and page["revoked"] == [sources.for_session(a).pk]
     assert reading.read_next(again, after=page["next_after"])["revoked"] == []           # told once
     _end(again)
     ask.refresh_from_db()
@@ -375,7 +378,8 @@ def test_an_idea_withdraws_with_its_only_source_and_goes_stale_with_one_of_sever
     second = reading.read_next(run, after=first["next_after"], limit=1)
     ids = [first["sources"][0]["source"], second["sources"][0]["source"]]
     both = emit.emit(run, kind="idea", title="Stop re-keying", body={"why": "y"}, source_ids=ids)
-    consent.exclude(w["alice"], sources.for_session(a))
+    read_first = sources.for_session(a) if ids[0] == sources.for_session(a).pk else sources.for_session(b)
+    consent.exclude(w["alice"], read_first)
     cascade.sweep()
     only.refresh_from_db()
     both.refresh_from_db()

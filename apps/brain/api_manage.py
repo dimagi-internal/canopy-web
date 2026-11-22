@@ -401,22 +401,25 @@ def run_learning_target(request: HttpRequest, target_id: int) -> dict:
 @gate("brain.manage", setting=True)  # a manager of its workspace or above, or the project's (actor.of)
 def set_target_budget(request: HttpRequest, target_id: int, payload: BrainTargetBudgetIn) -> dict:
     """How much one run of this target may read (sessions) and write (outputs), and how many runs, outputs and tokens
-    it may spend in a UTC day. A run stops cleanly at a cap: nothing more is read or written, and a fire past a daily
-    cap starts nothing and says why. Fields left out keep their value; `clear_tokens` removes the token cap."""
+    it may spend in a UTC day, how far back its runs read (`lookback_days`: only sessions active that recently) and how
+    long an open finding nobody re-sees stays fresh (`fade_days`). A run stops cleanly at a cap: nothing more is read or
+    written, and a fire past a daily cap starts nothing and says why. Fields left out keep their value; `clear_tokens`
+    removes the token cap."""
     actor = actor_mod.of(request)
     t = _target_or_404(_pinned(request), target_id)
     if not may_manage_target(actor, t.workspace_id, t.project):
         raise ProblemError(403, f"Only the owners and admins of {t.workspace_id} (or an ancestor's) change its budget",
                            type_=TYPE_FORBIDDEN)
     actor_mod.note(request, actor)
-    changes = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None and k in budget.FIELDS}
+    fields = (*budget.FIELDS, *budget.WINDOW_FIELDS)
+    changes = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None and k in fields}
     if payload.clear_tokens:
         changes["max_tokens_per_day"] = None
     before = budget.out(t)
     targets.set_budget(t, **changes)
     after = budget.out(t)
-    audit.note_change(scope=f"brain-target:{t.pk}/budget", before={k: before[k] for k in budget.FIELDS},
-                      after={k: after[k] for k in budget.FIELDS}, workspace=t.workspace,
+    audit.note_change(scope=f"brain-target:{t.pk}/budget", before={k: before[k] for k in fields},
+                      after={k: after[k] for k in fields}, workspace=t.workspace,
                       summary=f"{actor.label} changed the budget of {t.capability.slug}'s target {targets.label(t)}")
     return target_out(t, can_manage=True)
 

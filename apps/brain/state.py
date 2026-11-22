@@ -257,11 +257,12 @@ def link_page(user, slugs, *, before: int = 0, limit: int = 50) -> dict:
 
 def context_shown(run: BrainRun) -> dict | None:
     """The context document a run was started with (`context.document`), as the page shows it: the ids of the
-    sessions due left out (their count stays), since the viewer may not read them. None for a run from before it was
+    sessions due left out (their count stays), since the viewer may not read them, and the open findings it was told
+    of (their count stays), since who sees a run is not who sees its findings. None for a run from before it was
     kept."""
     if not run.context:
         return None
-    return {**run.context, "source_ids_due": []}
+    return {**run.context, "source_ids_due": [], "open_findings": []}
 
 
 def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:

@@ -277,6 +277,9 @@ class BrainOutput(models.Model):
     #: How many emits folded into it (the first counts), and when the last one did.
     seen = models.PositiveIntegerField(default=1, db_default=1)
     last_seen_at = models.DateTimeField(null=True, blank=True)
+    #: The output this one was merged into as the same problem (`findings.merge`, status `duplicate`): a repeat of its
+    #: key folds there.
+    merged_into = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="merged")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -330,8 +333,8 @@ class BrainRun(models.Model):
     #: owners and its ancestors' (`outputs.visible_to`). A `system` run's subject is this slug too, so one run is
     #: open per feature and workspace (`brain_one_open_run`).
     scope = models.CharField(max_length=64, blank=True, default="", db_default="")
-    #: A lower bound a caller may set by hand: the run reads only sources past this pk. The scheduler passes 0 and
-    #: relies on what earlier clean runs read (`reading.candidates`), so a source that becomes eligible late is read.
+    #: Unused: what a run reads is bounded by its target's window of recent activity (`reading.window_start`), never by
+    #: a source id. Kept only because migrations are additive.
     floor = models.BigIntegerField(default=0)
     #: Its conversation (`canopy_sessions.Session`, `metadata.brain_run`).
     session = models.ForeignKey("canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
@@ -381,6 +384,10 @@ class BrainTarget(models.Model):
     max_outputs_per_day = models.PositiveIntegerField(default=50, db_default=50)
     #: Null: no token cap. Checked before a run starts, from what the boxes reported (`events.SessionUsage`).
     max_tokens_per_day = models.PositiveBigIntegerField(null=True, blank=True)
+    #: How far back its runs read: only sessions active in the last this many days (`budget.lookback_days`; null: the
+    #: kind's default). And how long an open finding nobody re-sees stays fresh (`budget.fade_days`; null: the default).
+    lookback_days = models.PositiveIntegerField(null=True, blank=True)
+    fade_days = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -398,6 +405,9 @@ class BrainRunRead(models.Model):
     run = models.ForeignKey(BrainRun, on_delete=models.CASCADE, related_name="reads")
     source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="+")
     read_at = models.DateTimeField(auto_now_add=True)
+    #: How far into the session it read: the last row (`Message.turn_index`) served. A session that grew well past it
+    #: since a clean read is due again, from here (`reading.REREAD_ROWS`). Null: unknown (read before it was kept).
+    through = models.IntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["run", "source"], name="brain_run_reads_once")]
