@@ -4,8 +4,9 @@ import { expect, test, type Page } from '@playwright/test'
 // the app, drawn in canopy's sandbox with canopy's client injected. This drives the real thing: the
 // page's own script writes and reads through `canopy.app` (the bridge to the canopy page), its
 // sandbox refuses the network, eval and storage, and `canopy.open` moves to another page of the app.
+// `/api/csrf/` sets Django's CSRF cookie; a write needs it echoed back.
 const csrf = async (page: Page) => {
-  await page.request.get('/')
+  await page.request.get('/api/csrf/')
   return (await page.context().cookies()).find((c) => c.name === 'csrftoken')?.value ?? ''
 }
 
