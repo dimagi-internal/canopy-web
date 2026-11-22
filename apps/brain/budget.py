@@ -26,6 +26,8 @@ from dataclasses import asdict, dataclass
 from django.db.models import F, Sum
 from django.utils import timezone
 
+from apps.events.models import SessionUsage
+
 from .models import BrainOutput, BrainRun, BrainRunRead, BrainTarget
 
 #: A target's budget unless its managers set another; what `BrainTarget`'s columns default to.
@@ -77,8 +79,6 @@ def _today_start(now=None) -> dt.datetime:
 
 def today(target: BrainTarget, now=None) -> dict:
     """What `target` spent since midnight UTC: runs started, outputs written, tokens its runs' conversations used."""
-    from apps.events.models import SessionUsage  # noqa: PLC0415 — events reads this app's neighbours
-
     since = _today_start(now)
     runs = BrainRun.objects.filter(target=target, created_at__gte=since)
     outputs = BrainOutput.objects.filter(run__target=target, created_at__gte=since).count()

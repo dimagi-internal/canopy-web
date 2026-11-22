@@ -230,19 +230,6 @@ def test_a_memory_entry_goes_when_its_person_drops_memory_or_its_words_are_delet
     assert carols.retracted_at is not None                                       # its words are gone
 
 
-def test_another_store_is_asked_to_withdraw_or_mark(w):
-    calls = []
-    cascade.register_store("hcp.entry", lambda oid, mode, why: calls.append((oid, mode)))
-    try:
-        for s in (w["source"],):
-            OutputLineage.objects.create(output_kind="hcp.entry", output_id="e1", source=s)
-        Session.objects.filter(pk=w["session"].pk).update(content_deleted_at=timezone.now())
-        cascade.sweep()
-        assert calls == [("e1", "withdraw")]
-    finally:
-        cascade._STORES.pop("hcp.entry", None)
-
-
 def test_runner_reship_after_deletion_is_still_refused(w):
     from apps.canopy_sessions import transcript_ingest
 

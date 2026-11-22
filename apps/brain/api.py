@@ -19,6 +19,7 @@ from apps.api.errors import TYPE_CONFLICT, TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_
 from apps.api.route_gates import gate
 from apps.canopy_sessions import access
 from apps.canopy_sessions.models import Session
+from apps.harness import turn_asker
 from apps.workspaces import services as wsvc
 
 from . import associate, consent, disclosure, participants, person, sources
@@ -212,8 +213,6 @@ def declare_session_project(request: HttpRequest, session_id: uuid.UUID, handle:
     in worked on project `handle` of its workspace (`core`, or `adjacent` if it only touched it).
     Only that conversation (not another session), only a project the agent's own login may read. It
     outranks canopy's guess but never a person's call, and it makes no one's session readable."""
-    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports contacts, which imports this app
-
     turn = turn_asker.serving_turn(request.user)
     agent = turn_asker.turn_agent(turn) if turn is not None else None
     if agent is None or not agent.is_own_login(request.user):

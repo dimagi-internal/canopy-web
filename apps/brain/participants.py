@@ -12,9 +12,18 @@ from __future__ import annotations
 from django.db.models import Q
 
 from apps.agents.models import Agent
+from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import runner_requirements as rr
+from apps.harness import sensitivity
+from apps.harness.models import Turn
 
 from .models import BRAIN_RUN_KEY, BrainSource, SourceParticipant
+
+
+def is_agent_login(user) -> bool:
+    """Is `user` (a user or a user id) an agent's own canopy login: never a person, never a participant."""
+    pk = getattr(user, "pk", user)
+    return pk is not None and Agent.objects.filter(user_id=pk).exists()
 
 
 def sealed_reason(session) -> str:
@@ -39,8 +48,6 @@ def sealed_reason(session) -> str:
 
 def people_of(session) -> list[tuple[str, int | None, int | None]]:
     """`(how, user_id, contact_id)` for each person whose words are in `session`, once each."""
-    from apps.canopy_sessions.models import SessionParticipant  # noqa: PLC0415 — as the other lazy imports here
-
     found: dict[tuple, str] = {}
     if session.created_by_id is not None:
         found[("u", session.created_by_id)] = SourceParticipant.CREATOR
@@ -64,9 +71,6 @@ def people_of(session) -> list[tuple[str, int | None, int | None]]:
 def spoke_in(session) -> set[tuple[str, int]]:
     """`("u", user_id)` / `("c", contact_id)` for everyone who wrote a line in `session` or started a
     turn in it, whether or not they are still in it."""
-    from apps.harness import sensitivity  # noqa: PLC0415 — as the other lazy imports here
-    from apps.harness.models import Turn  # noqa: PLC0415 — as the other lazy imports here
-
     out: set[tuple[str, int]] = set()
     for author in (session.messages.filter(author__isnull=False).values_list("author", flat=True).distinct()):
         if not isinstance(author, dict):

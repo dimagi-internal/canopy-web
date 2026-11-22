@@ -18,7 +18,13 @@ against the type; `runs.start` keeps the one the run was started with (`BrainRun
 on the run. A new field is additive; a change in meaning is a new `VERSION`."""
 from __future__ import annotations
 
+from apps.canopy_sessions import access
+from apps.harness.models import Turn
+
+from . import budget, findings
 from .models import BRAIN_RUN_KEY, BrainRun
+from .reading import candidates
+from .schemas import BrainRunContext
 
 #: How many due source ids the envelope names at most; `sessions_due` is the whole count.
 MAX_DUE_IDS = 200
@@ -32,28 +38,20 @@ def _name(u) -> str:
 
 def due(run: BrainRun) -> tuple[int, list[int]]:
     """How many sources the run may still read, and the first of them, most recently active first."""
-    from .reading import candidates  # noqa: PLC0415 — reading reads this module's neighbours
-
     qs = candidates(run)
     return qs.count(), list(qs.values_list("pk", flat=True)[:MAX_DUE_IDS])
 
 
 def document(run: BrainRun, *, accountable=None) -> dict:
     """The run's context document, checked against its type (`schemas.BrainRunContext`)."""
-    from .schemas import BrainRunContext  # noqa: PLC0415 — schemas reads this app's models
-
     return BrainRunContext.model_validate(block(run, accountable=accountable)).model_dump()
 
 
 def block(run: BrainRun, *, accountable=None) -> dict:
     """The envelope's `brain_run`: everything the run is, by id and name, nothing a session said."""
-    from . import budget, findings  # noqa: PLC0415 — budget reads this module's neighbours
-
     cap, t = run.capability, run.target
     count, ids = due(run) if run.state == BrainRun.OPEN else (0, [])
     if accountable is None and run.session_id is not None:
-        from apps.harness.models import Turn  # noqa: PLC0415 — harness reads this app's neighbours
-
         first = (Turn.objects.filter(chat_session_id=run.session_id).order_by("created_at")
                  .select_related("initiator_user").first())
         accountable = getattr(first, "initiator_user", None)      # a system turn's accountable person
@@ -85,8 +83,6 @@ def block(run: BrainRun, *, accountable=None) -> dict:
 
 def of_turn(turn) -> dict | None:
     """The `brain_run` block for a turn in a run's conversation, or None."""
-    from apps.canopy_sessions import access  # noqa: PLC0415 — canopy_sessions reads this app's readers
-
     conversation = access.turn_conversation(turn)
     if not access.is_brain_conversation(conversation):
         return None

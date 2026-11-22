@@ -13,6 +13,7 @@ from django.db import transaction
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
+from apps.harness.models import Turn
 from apps.harness.signals import session_content_deleted, turn_closed
 
 from . import associate, cascade, runs, sources
@@ -88,10 +89,8 @@ def _cascade_content_deletion(sender, session, **kwargs):
 
 @receiver(turn_closed, dispatch_uid="brain_run_ends_with_its_turn")
 def _run_ends_with_its_turn(sender, turn, **kwargs):
-    """A turn in a brain run's conversation reached an end: the run is over, and a clean end moves the
-    feature's cursor (`runs.finish`)."""
-    from apps.harness.models import Turn  # noqa: PLC0415 — receivers load at ready()
-
+    """A turn in a brain run's conversation reached an end: the run is over, and a clean end counts what it read as
+    learned (`runs.finish`)."""
     if turn.status not in Turn.TERMINAL or not turn.chat_session_id:
         return
     run = BrainRun.objects.filter(session_id=turn.chat_session_id, state=BrainRun.OPEN).select_related("capability").first()

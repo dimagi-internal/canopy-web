@@ -292,7 +292,7 @@ def propose_signals(session, workspace_id) -> list[Proposal]:
 
 def propose(session, workspace_id) -> list[Proposal]:
     """What layers 1 and 2 would make for `session` (a `tier` of "" proposes nothing), stored nowhere: what
-    `associate` writes and a preview shows. It asks no consent: the writer asks that first."""
+    `associate` writes and the graph's proposed links show. It asks no consent: the writer asks that first."""
     return propose_dispatched(session, workspace_id) + propose_signals(session, workspace_id)
 
 
@@ -353,7 +353,7 @@ def link_signals(source: BrainSource, session) -> int:
 def may_look(source: BrainSource | None, session) -> bool:
     """May the automatic layers look at this session at all: it has a source and a session, is not sealed, and
     everyone in it agreed to `project` where "Learning reads" is on (`everyone_agreed`). What `associate` asks before
-    it writes and what a preview of its links asks before it shows one (`proposals_for`)."""
+    it writes and what the graph's proposed links ask before showing one (`proposals_for`)."""
     return (source is not None and session is not None and not participants.sealed_reason(session)
             and everyone_agreed(source, PROJECT))
 
@@ -418,8 +418,8 @@ def run_due(limit: int = BATCH) -> dict:
         except Exception:  # noqa: BLE001 — one bad session (a race on its source) must not stop the pass
             logger.exception("could not make a source for session %s", session.pk)
     now = timezone.now()
-    due = list(BrainSource.objects.filter(kind=BrainSource.SESSION, state=BrainSource.OPEN)
-               .filter(Q(associated_at__isnull=True) | Q(associate_due_at__lte=now))
+    # A source is due from when it is made (`BrainSource.associate_due_at`'s default): one indexed column says it all.
+    due = list(BrainSource.objects.filter(kind=BrainSource.SESSION, state=BrainSource.OPEN, associate_due_at__lte=now)
                .select_related("session").order_by("associate_due_at", "pk")[:limit])
     looked = 0
     for source in due:

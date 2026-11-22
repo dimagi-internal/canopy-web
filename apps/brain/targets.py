@@ -24,11 +24,12 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.agents.models import AgentProject
-from apps.harness import schedule_hooks
+from apps.events import services as events
+from apps.harness import schedule_hooks, schedule_turns, triggers
 from apps.harness.models import AgentSchedule
 from apps.workspaces.models import Workspace
 
-from . import budget, reading, readers, registry, runs
+from . import budget, readers, reading, registry, runs
 from .models import PROJECT, SYSTEM, BrainCapability, BrainRun, BrainTarget
 
 logger = logging.getLogger(__name__)
@@ -143,8 +144,6 @@ def follow(cap: BrainCapability) -> int:
 
 
 def _record(target: BrainTarget, kind: str, summary: str, **payload) -> None:
-    from apps.events import services as events  # noqa: PLC0415 — as the other event writers of this app
-
     try:
         events.record([{"source": "brain.target", "kind": kind, "summary": summary[:500],
                         "key": f"brain-target:{target.pk}:{kind}",
@@ -232,8 +231,6 @@ def announce(schedule: AgentSchedule, slot, *, manual: bool = False) -> tuple[Br
 def run_now(target: BrainTarget, *, by) -> BrainRun | None:
     """Run now from the brain page: the target's schedule's own Run now, as its creator's standing request with `by`
     recorded as who pressed it. Raises `TargetRefusedError` with why when no run starts."""
-    from apps.harness import schedule_turns, triggers  # noqa: PLC0415 — harness's firing path
-
     why = why_not(target, accountable=target.schedule.created_by)
     if why:
         raise TargetRefusedError(why)
