@@ -16,7 +16,7 @@ from apps.brain.models import BrainCapability, BrainRun, BrainTarget, LearningCo
 from apps.canopy_sessions.models import Message, Session
 from apps.harness import turn_agent_tokens
 from apps.harness.models import AgentSchedule, Runner, Turn
-from apps.harness.signals import turn_status_changed
+from apps.harness.turn_close import close_turn
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
 from tests.fixtures.brain_world import aim, brain_world, fire, member, reads, user
@@ -61,9 +61,7 @@ def _link(w, s, project=None, tier="core"):
 
 def _end(run, status=Turn.DONE):
     turn = Turn.objects.get(chat_session=run.session)
-    Turn.objects.filter(pk=turn.pk).update(status=status, finished_at=timezone.now())
-    turn.refresh_from_db()
-    turn_status_changed.send(sender=Turn, turn=turn)
+    close_turn(turn, status, from_states=Turn.NON_TERMINAL, chat_hooks=False)   # every terminal path
     run.refresh_from_db()
     return run
 
