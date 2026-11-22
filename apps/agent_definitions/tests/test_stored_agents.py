@@ -84,6 +84,11 @@ def test_create_gate(w, agent):
 # --- reading ----------------------------------------------------------------
 
 
+def test_agent_detail_names_a_stored_agents_source(w, agent):
+    detail = _browser(w["viewer"]).get(f"/api/agents/{SLUG}/").json()
+    assert detail["source"] == "stored" and detail["definition"]["source"] == "stored"
+
+
 def test_reading_a_definition(w, agent):
     c = _browser(w["viewer"])
     d = c.get(f"/api/agents/{SLUG}/definition").json()

@@ -276,6 +276,7 @@ def agent_detail(agent: Agent) -> dict:
         "google_account": agent.google_account,
         "avatar_url": agent.avatar_url,
         "workspace_id": agent.workspace_id,
+        "source": agent.source,
         "definition": _definition_summary(agent),
         "owner": _owner_summary(agent),
         "canopy_user": _canopy_user_summary(agent),
