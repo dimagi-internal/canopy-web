@@ -10,8 +10,7 @@ from __future__ import annotations
 from django.utils import timezone
 
 from apps.attention.alerts import Action, Raise
-from apps.workspaces import permissions as perms
-
+from . import actor as actor_mod
 from .models import BrainRunArtifact
 
 KIND = "learning_removal"
@@ -62,8 +61,7 @@ def _artifact_of(alert):
 
 def may_acknowledge(user, art: BrainRunArtifact) -> bool:
     return getattr(user, "is_authenticated", False) and (
-        art.owner_id == user.pk or bool(getattr(user, "is_superuser", False))
-        or perms.can(user, art.workspace_id, perms.BRAIN_MANAGE))
+        art.owner_id == user.pk or actor_mod.may_manage(user, art.workspace_id))
 
 
 def actions(alert, user) -> list[Action]:

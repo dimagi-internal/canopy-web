@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from apps.agents.models import AgentProject
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import MAX_DEPTH, Workspace
 
@@ -66,8 +67,6 @@ def on_slugs() -> set[str]:
 
 def area(cap, subject=None, scope: str = "") -> set[str] | None:
     """The workspaces a run of `cap` reads in: `scope`'s subtree, else a project's own subtree, else None (anywhere)."""
-    from apps.agents.models import AgentProject  # noqa: PLC0415 — as the other lazy imports of this app
-
     if not scope and cap.purpose_class == PROJECT and subject is not None:
         project = subject if isinstance(subject, AgentProject) else AgentProject.objects.filter(pk=subject).first()
         scope = project.workspace_id if project is not None else ""
@@ -98,7 +97,7 @@ def set_reads(workspace: Workspace, value: bool | None, *, by) -> tuple[Effectiv
     now_on = on_slugs() - was_on
     if now_on:
         # The associator skipped these workspaces' sessions while reads were off: it looks at them again.
-        from .associate import due_again  # noqa: PLC0415 — associate reads this module
+        from .associate import due_again  # noqa: PLC0415 — cycle: associate -> eligibility -> learning_reads
 
         due_again(workspace_id__in=now_on)
     return before, effective(workspace.slug)

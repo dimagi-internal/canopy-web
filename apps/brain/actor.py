@@ -17,13 +17,20 @@ owner or admin there. A person's own choices (`/api/me/learning/…`), the manag
 management and stay the person's alone (`person.py`). `tests/test_brain_agent_admin.py`."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from apps.api.errors import TYPE_FORBIDDEN, ProblemError
+from apps.canopy_sessions import access
+from apps.events import audit
+from apps.events import services as events
+from apps.harness import turn_asker
+from apps.harness.models import Turn
 from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 
+from . import lineage
 from . import person as person_mod
 from .models import BRAIN_RUN_KEY
 
@@ -85,8 +92,6 @@ def _managed(user, slugs: set[str]) -> set[str]:
 
 def _names_a_run(turn) -> bool:
     """`turn` is a learning run's own turn: its conversation is a run's, or canopy started it as one."""
-    from apps.canopy_sessions import access  # noqa: PLC0415 — canopy_sessions imports this app's readers
-
     if turn is None:
         return False
     if (turn.initiator_via or "") == "brain-run":
@@ -97,10 +102,6 @@ def _names_a_run(turn) -> bool:
 
 def _named_turns(request) -> list:
     """Every turn the request names: by its credential (a caller token's turn, a turn's own login) or a header."""
-    from apps.harness.models import Turn  # noqa: PLC0415 — harness imports contacts, which imports this app
-
-    from . import lineage  # noqa: PLC0415 — lineage reads harness
-
     out = []
     try:
         out.append(lineage.turn_of_request(request))
@@ -129,8 +130,6 @@ def resolve(request) -> tuple[Actor | None, str]:
 
 
 def _agent(request) -> tuple[Actor | None, str]:
-    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports contacts, which imports this app
-
     if getattr(request, "contact", None) is not None or getattr(request, "runner_token", None) is not None:
         return None, "not_an_agent"
     user = getattr(request, "user", None)
@@ -167,17 +166,11 @@ def of(request) -> Actor:
 
 def note(request, actor: Actor) -> None:
     """Put who acted on the request's settings audit row (`audit.note_acting`)."""
-    from apps.events import audit  # noqa: PLC0415 — as this app's other event writers
-
     audit.note_acting(request, actor.record())
 
 
 def event(actor: Actor, *, kind: str, summary: str, workspace, payload: dict) -> None:
     """One `brain.manage` event in `workspace` for an act that is not a setting (Run now, a flag), naming who did it."""
-    import logging  # noqa: PLC0415 — only a failure pays
-
-    from apps.events import services as events  # noqa: PLC0415 — as above
-
     try:
         events.record([{"source": "brain.manage", "kind": kind, "summary": f"{actor.label}: {summary}"[:500],
                         "payload": {**payload, **actor.record()}}], workspace=workspace)

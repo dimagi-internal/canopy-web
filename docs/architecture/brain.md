@@ -391,8 +391,8 @@ content deletion, `signals._cascade_content_deletion`). It is idempotent.
 - **A tombstone, not a toggle.** `consent.include` restores eligibility only; a withdrawn output stays
   withdrawn, a replay cannot cite a removed source (`cascade.emit_allowed`), and a runner re-ship of deleted
   words is refused as before (`transcript_ingest.refuses_ship`).
-- Another store that writes `OutputLineage` registers with `cascade.register_store` and is asked to withdraw or mark
-  stale. The sweep skips withdrawn outputs.
+- The one other store that writes `OutputLineage`, personal memory, is swept by name (`hcp_store.sweep`); a new
+  store is added to `cascade.sweep` beside it. The sweep skips withdrawn outputs.
 
 ## Disclosure (`apps/brain/disclosure.py`)
 

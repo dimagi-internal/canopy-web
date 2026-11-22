@@ -22,7 +22,7 @@ from apps.common import redact
 
 from . import associate, budget, findings, learning_reads
 from .eligibility import eligible
-from .models import ABOUT_A_PERSON, BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
+from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
 
 MAX_BODY_CHARS, MAX_SOURCES = 20_000, 50
 
@@ -56,7 +56,7 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
     if set(ids) - read:
         raise EmitRefusedError(f"cites a source this run did not read: {sorted(set(ids) - read)}")
     sources = list(BrainSource.objects.filter(pk__in=ids).select_related("session"))
-    subject = int(run.subject) if cap.purpose_class in ABOUT_A_PERSON else None
+    subject = run.subject_user_id
     for s in sources:
         if not eligible(s, cap, run.purpose, subject):
             raise EmitRefusedError(f"source {s.pk} is no longer open to this feature")

@@ -28,6 +28,7 @@ from apps.workspaces.models import Workspace
 from . import learning_reads
 from .eligibility import eligible_sources
 from .models import BrainSource, SourceLink
+from .participants import is_agent_login
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +41,6 @@ EVENT_SOURCE = "brain.read"
 
 def _core_links():
     return SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, tier=SourceLink.CORE)
-
-
-def is_agent_login(user) -> bool:
-    return Agent.objects.filter(user_id=getattr(user, "pk", None)).exists()
 
 
 def project_q(user) -> Q:

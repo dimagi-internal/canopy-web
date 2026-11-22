@@ -36,10 +36,11 @@ from django.utils import timezone
 
 from apps.agents.models import AgentProject
 from apps.agents.services.projects import may_read_project, project_read_q
-from apps.workspaces import permissions as perms
+from apps.events import services as events
 from apps.workspaces import services as wsvc
 
-from . import budget
+from . import actor as actor_mod
+from . import budget, outputs
 from .models import ABOUT_A_PERSON, PROJECT, SYSTEM, BrainOutput, BrainRun, BrainTarget, OutputLineage
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ def open_for(run: BrainRun, *, workspace: str | None, limit: int = MAX_OPEN_IN_C
 
 def fold(out: BrainOutput, run: BrainRun, *, title: str, body: dict, cited) -> BrainOutput:
     """Take a repeat into `out`: one more sighting, the newer words, and lineage to what this run read."""
-    from .emit import write_lineage  # noqa: PLC0415 — emit calls this module
+    from .emit import write_lineage  # noqa: PLC0415 — cycle: emit -> findings
 
     with transaction.atomic():
         locked = BrainOutput.objects.select_for_update().get(pk=out.pk)
@@ -148,7 +149,6 @@ def may_set(user, out: BrainOutput) -> bool:
     """May `user` (as themselves) change `out`'s status: they see it and act for its audience."""
     if not getattr(user, "is_authenticated", False) or out.state != BrainOutput.ACTIVE:
         return False
-    from . import outputs  # noqa: PLC0415 — outputs reads this module's neighbours
 
     if not outputs.visible_to(user, as_person=True).filter(pk=out.pk).exists():
         return False
@@ -166,10 +166,10 @@ def actor_may_set(actor, out: BrainOutput) -> bool:
     if cls == SYSTEM:
         return actor.may_manage(out.workspace_id)
     if cls == PROJECT:
-        from .api_manage import may_manage_target  # noqa: PLC0415 — api_manage reads this module
+        from .api_manage import may_manage_target  # noqa: PLC0415 — cycle: api_manage -> api_admin -> findings
 
-        project = (AgentProject.objects.filter(project_read_q(actor.user), pk=out.subject).first()
-                   if out.subject.isdecimal() else None)
+        pk = out.subject_project_id
+        project = AgentProject.objects.filter(project_read_q(actor.user), pk=pk).first() if pk is not None else None
         return (project is not None and acts_for(actor.user, out)
                 and may_manage_target(actor, out.workspace_id, project))
     return False
@@ -183,13 +183,13 @@ def acts_for(user, out: BrainOutput, memo: dict | None = None) -> bool:
     if cls == SYSTEM:
         key = ("manage", out.workspace_id)
         if key not in memo:
-            memo[key] = (bool(getattr(user, "is_superuser", False))
-                         or perms.can(user, out.workspace_id, perms.BRAIN_MANAGE))
+            memo[key] = actor_mod.may_manage(user, out.workspace_id)
         return memo[key]
     if cls == PROJECT:
         key = ("project", out.workspace_id, out.subject)
         if key not in memo:
-            project = AgentProject.objects.filter(pk=out.subject).first() if out.subject.isdecimal() else None
+            pk = out.subject_project_id
+            project = AgentProject.objects.filter(pk=pk).first() if pk is not None else None
             memo[key] = (project is not None and wsvc.is_member(user, out.workspace_id)
                          and may_read_project(user, project))
         return memo[key]
@@ -216,8 +216,6 @@ def set_status(out: BrainOutput, status: str, *, by, acting: dict | None = None)
 
 
 def _record(out: BrainOutput, was: str, by, acting: dict, *, kind: str = "output.status", summary: str = "") -> None:
-    from apps.events import services as events  # noqa: PLC0415 — as the other event writers of this app
-
     try:
         events.record([{"source": "brain.output", "kind": kind,
                         "summary": summary or f"{out.capability.slug} output {out.pk}: {was} -> {out.status}",

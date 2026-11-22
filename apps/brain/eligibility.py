@@ -14,10 +14,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from django.contrib.auth import get_user_model
 from django.db.models import Exists, OuterRef, Q
 
 from apps.agents.models import Agent
+from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import runner_requirements as rr
+from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
@@ -215,8 +218,6 @@ def everyone_agreed(source: BrainSource, cls: str) -> bool:
 
 
 def _user(user_id):
-    from django.contrib.auth import get_user_model  # noqa: PLC0415 — as the other lazy imports here
-
     return get_user_model().objects.filter(pk=user_id).first()
 
 
@@ -238,7 +239,7 @@ def eligible_sources(capability, purpose: str, subject=None):
 def agreed_sources(cls: str):
     """`everyone_agreed` for a whole listing, as ONE queryset: the sources canopy's automatic layers may look at for a
     shared class (no capability, so only a standing rule naming nothing but the class or workspace counts, as
-    `explain` judges a class). What a preview of the associator's links asks (`associate.proposals_for`)."""
+    `explain` judges a class). What the graph's proposed links ask (`associate.proposals_for`)."""
     if cls not in SHARED:
         return BrainSource.objects.none()
     return _sources(cls, slug="", purpose="", kinds=[k for k, _ in BrainSource.KIND_CHOICES])
@@ -298,9 +299,6 @@ def _live_people_agree(qs, consenting: set[int], bad_in: dict[str, set[int]]):
     `sources.refresh` is asked too: no one added (`SessionParticipant`) or who started a turn (`Turn`
     initiator) may be without consent, and a contact starting a turn is a no. An agent's login is never
     asked. Indexed foreign keys only; a line written outside a turn is caught by `refresh`."""
-    from apps.canopy_sessions.models import SessionParticipant  # noqa: PLC0415 — as the other lazy imports here
-    from apps.harness.models import Turn  # noqa: PLC0415 — as the other lazy imports here
-
     agents = Agent.objects.filter(user__isnull=False).values("user_id")
     added = SessionParticipant.objects.filter(session=OuterRef("session_id")).exclude(user_id__in=agents)
     by_chat = Turn.objects.filter(chat_session=OuterRef("session_id"))
@@ -324,6 +322,4 @@ def _live_people_agree(qs, consenting: set[int], bad_in: dict[str, set[int]]):
 
 
 def _users(ids):
-    from django.contrib.auth import get_user_model  # noqa: PLC0415 — as the other lazy imports here
-
     return list(get_user_model().objects.filter(pk__in=ids))

@@ -23,7 +23,7 @@ from django.db.models import CharField, Exists, F, Max, OuterRef, Q, Subquery
 from django.db.models.functions import Cast, Coalesce
 from django.utils import timezone
 
-from apps.agents.models import AgentProject
+from apps.agents.models import AgentProject, AgentTask
 from apps.canopy_sessions import transcript_read
 from apps.canopy_sessions.models import Message
 from apps.common import redact
@@ -32,7 +32,6 @@ from apps.workspaces import services as wsvc
 from . import budget, learning_reads, readers
 from .eligibility import eligible_sources
 from .models import (
-    ABOUT_A_PERSON,
     BrainRun,
     BrainRunRead,
     BrainSource,
@@ -81,8 +80,7 @@ def window_start(run: BrainRun, now=None):
 def eligible_for(run: BrainRun):
     """The eligible sources of this run's feature, subject and scope (no window, nothing left out for having been read)."""
     cap = run.capability
-    subject = int(run.subject) if cap.purpose_class in ABOUT_A_PERSON else None
-    qs = eligible_sources(cap, run.purpose, subject)
+    qs = eligible_sources(cap, run.purpose, run.subject_user_id)
     if run.subject_type == "project" and run.purpose == JUDGE:
         # What the judge rules on: sessions only weakly tied to the project, never one already judged or
         # declared (a link above `signals` is settled).
@@ -157,8 +155,6 @@ def learned(run: BrainRun) -> Q:
 
 def _project_context(run: BrainRun) -> dict:
     """The project a judge rules for: what done looks like and what is still open. Its own words, not a session's."""
-    from apps.agents.models import AgentTask  # noqa: PLC0415 — as the other lazy imports here
-
     project = AgentProject.objects.filter(pk=run.subject).first()
     if project is None:
         return {}

@@ -24,7 +24,8 @@ from apps.harness import initiator as who
 from apps.harness import services as harness
 from apps.harness.models import Turn
 
-from . import learning_reads, registry
+from . import learning_reads, lineage, registry
+from .context import document, prompt_lines
 from .eligibility import eligible
 from .models import (
     ABOUT_A_PERSON,
@@ -97,8 +98,6 @@ def refusal(cap: BrainCapability, subject=None, *, scope: str = "", need_entry: 
 def prompt(cap: BrainCapability, run: BrainRun, *, accountable=None) -> str:
     """The operator's first words: the feature's own command, then the run's context (`context.prompt_lines`).
     Nothing from a source."""
-    from .context import prompt_lines  # noqa: PLC0415 — context reads reading, which reads this module's neighbours
-
     head = cap.entry or f"/{cap.slug}"
     return "\n".join([head, "", f"This is learning run {run.pk} of {cap.slug} ({run.purpose}).",
                        *prompt_lines(run, accountable=accountable),
@@ -132,7 +131,6 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", scope: str =
         workspace=cap.operator.workspace, agent=cap.operator, title=f"{cap.name}: learning run {run.pk}",
         metadata={BRAIN_RUN_METADATA_KEY: str(run.pk), **({"brain_target": target.pk} if target is not None else {})})
     run.session = session
-    from .context import document  # noqa: PLC0415 — context reads reading, which reads this module's neighbours
 
     run.context = document(run, accountable=accountable)     # what its turn is told, kept as it was told
     BrainRun.objects.filter(pk=run.pk).update(session=session, context=run.context)
@@ -164,8 +162,6 @@ def finish(run: BrainRun, *, ok: bool) -> None:
         if moved and ok:
             _close_rederivations(run)
     if moved:
-        from . import lineage  # noqa: PLC0415 — lineage reads this module's models
-
         lineage.record_reported(run)       # what the turn said it made outside canopy, failed or not
 
 
@@ -176,7 +172,7 @@ def _close_rederivations(run: BrainRun) -> None:
     if not read:
         return
     cap = run.capability
-    subject = int(run.subject) if cap.purpose_class in ABOUT_A_PERSON and run.subject.isdecimal() else None
+    subject = run.subject_user_id
     asks = RederiveRequest.objects.filter(done_at__isnull=True, output__capability=cap,
                                           output__subject_type=run.subject_type, output__subject=run.subject)
     for ask in asks:

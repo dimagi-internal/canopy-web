@@ -33,10 +33,11 @@ from django.db.models.functions import Cast
 
 from apps.agents.models import AgentProject
 from apps.agents.services.projects import project_read_q
+from apps.canopy_sessions import access
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import reporting
+from . import participants, reporting
 from .models import INDIVIDUAL, MEMORY, PROJECT, SYSTEM, BrainCapability, BrainOutput
 
 
@@ -48,7 +49,6 @@ def visible_to(user, *, as_person: bool = False, acting=None):
     (`_heard_by`)."""
     if not getattr(user, "is_authenticated", False):
         return BrainOutput.objects.none()
-    from apps.canopy_sessions import access  # noqa: PLC0415 — canopy_sessions imports this app's readers
 
     heard = _heard_by()
 
@@ -63,7 +63,7 @@ def visible_to(user, *, as_person: bool = False, acting=None):
     if coached:   # only where the coaching applies: the workspaces the coach covers, as their transcript reads
         q |= to(INDIVIDUAL, "coaches") & Q(subject_type="person", subject__in=coached,
                                            workspace_id__in=access.coach_scope(user))
-    person = as_person and not _is_agent_login(user)
+    person = as_person and not participants.is_agent_login(user)
     if person:
         for ws, report in reporting.lines_of(user, mine):
             q |= to(INDIVIDUAL, "manager") & Q(subject_type="person", subject=str(report), workspace_id=ws)
@@ -89,9 +89,3 @@ def _heard_by() -> dict[tuple[str, str], list[int]]:
         for word in audience if isinstance(audience, list) else []:
             out.setdefault((cls, word), []).append(pk)
     return out
-
-
-def _is_agent_login(user) -> bool:
-    from apps.agents.models import Agent  # noqa: PLC0415 — as the other lazy imports here
-
-    return Agent.objects.filter(user_id=user.pk).exists()

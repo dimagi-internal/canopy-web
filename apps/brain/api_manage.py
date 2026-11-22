@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import uuid
 
+from django.contrib.auth import get_user_model
 from django.http import HttpRequest
-from ninja import Router
+from ninja import Router, Status
 
-from apps.agents.models import Agent
+from apps.agents import member_roles, project_members
+from apps.agents.models import Agent, AgentProject
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
@@ -36,11 +38,23 @@ from apps.events import audit
 from apps.events.models import SettingChange
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import Workspace
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 from . import actor as actor_mod
-from . import budget, consent, eligibility, learning_reads, participants, readers, registry, sources, targets
-from .models import ABOUT_A_PERSON, BrainCapability, BrainRun, BrainTarget
+from . import (
+    alerts_removal,
+    budget,
+    consent,
+    eligibility,
+    learning_reads,
+    participants,
+    readers,
+    registry,
+    sources,
+    targets,
+)
+from .api_admin import _cap_out
+from .models import ABOUT_A_PERSON, BrainCapability, BrainRun, BrainRunArtifact, BrainTarget
 from .schemas import (
     BrainRunState,
     BrainTargetBudgetIn,
@@ -50,9 +64,9 @@ from .schemas import (
     CapabilityOut,
     ConsentPersonOut,
     LearnerConfigIn,
+    LearningOptInIn,
     LearningReadsIn,
     LearningReadsOut,
-    LearningOptInIn,
     OptInPersonOut,
 )
 
@@ -73,8 +87,6 @@ def _can(who, ws: str) -> bool:
 
 
 def _project_admin(user, project) -> bool:
-    from apps.agents import member_roles, project_members  # noqa: PLC0415 — as the other lazy agents imports here
-
     m = project_members.members(project).get(getattr(user, "pk", None))
     return m is not None and member_roles.is_admin(m.role)
 
@@ -182,8 +194,6 @@ def configure_learner(request: HttpRequest, slug: str, payload: LearnerConfigIn)
     of it is or above (its targets' schedules move to it). Enabling one that nobody active answers for makes you its
     accountable admin: its targets' schedules act for you (an agent's turn: the person it answers to). What it may learn
     and who sees it (its class, purposes, audience) are a canopy admin's, at its registration."""
-    from .api_admin import _cap_out  # noqa: PLC0415 — api_admin imports this module
-
     actor = actor_mod.of(request)
     ws = _pinned(request)
     cap = BrainCapability.objects.filter(slug=slug).select_related("operator").first()
@@ -219,8 +229,6 @@ def configure_learner(request: HttpRequest, slug: str, payload: LearnerConfigIn)
 def flags_out(user, ws: str, slugs) -> list[dict]:
     """Flagged artifacts at `ws` and below that `user` (or an `Actor`) sees: in a workspace they manage, or raised to
     them."""
-    from .models import BrainRunArtifact  # noqa: PLC0415 — as the other lazy model reads here
-
     where = set(slugs) & _subtree(ws)
     if isinstance(user, actor_mod.Actor):
         managed, sup, user = user.managed(where), False, user.user
@@ -241,11 +249,6 @@ def flags_out(user, ws: str, slugs) -> list[dict]:
 def acknowledge_learning_flag(request: HttpRequest, flag_id: int):
     """You have seen what a learning run made that canopy could not take back after a session it came from was
     removed, and decided what to do with it: the alert raised to its owner closes."""
-    from ninja import Status  # noqa: PLC0415 — only these routes answer 204
-
-    from . import alerts_removal  # noqa: PLC0415 — alerts_removal reads this app's models
-    from .models import BrainRunArtifact  # noqa: PLC0415 — as above
-
     actor = actor_mod.of(request)
     ws = _pinned(request)
     art = BrainRunArtifact.objects.filter(pk=flag_id, state=BrainRunArtifact.FLAGGED,
@@ -330,8 +333,6 @@ def add_learning_target(request: HttpRequest, payload: BrainTargetIn) -> dict:
     workspace = Workspace.objects.get(slug=where)
     project = None
     if payload.project.strip():
-        from apps.agents.models import AgentProject  # noqa: PLC0415 — as the other lazy model imports here
-
         project = AgentProject.objects.filter(workspace=workspace, handle=payload.project.strip().lower(),
                                               visibility=AgentProject.WORKSPACE).first()
         if project is None:
@@ -357,8 +358,6 @@ def add_learning_target(request: HttpRequest, payload: BrainTargetIn) -> dict:
 @gate("brain.manage", setting=True)  # a manager of its workspace or above, or the project's (actor.of)
 def remove_learning_target(request: HttpRequest, target_id: int):
     """The learner stops running there; its schedule goes too. A run still open for it finishes; what was found stays."""
-    from ninja import Status  # noqa: PLC0415 — only this route answers 204
-
     actor = actor_mod.of(request)
     t = _target_or_404(_pinned(request), target_id)
     if not may_manage_target(actor, t.workspace_id, t.project):
@@ -497,10 +496,6 @@ def why_not_read(request: HttpRequest, session_id: uuid.UUID, learner: str = rea
 
 def _members(ws: str) -> dict[int, object]:
     """The people (never an agent's login, never a guest) who are members of `ws` or a workspace below it."""
-    from django.contrib.auth import get_user_model  # noqa: PLC0415 — as the other lazy model imports here
-
-    from apps.workspaces.models import WorkspaceMembership  # noqa: PLC0415 — as the other lazy model imports here
-
     ids = (WorkspaceMembership.objects.filter(workspace_id__in=_subtree(ws))
            .exclude(role=WorkspaceMembership.GUEST).values_list("user_id", flat=True))
     agents = set(Agent.objects.exclude(user_id=None).values_list("user_id", flat=True))
