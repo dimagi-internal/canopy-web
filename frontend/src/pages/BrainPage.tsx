@@ -452,7 +452,8 @@ function RunContext({ context }: { context: NonNullable<BrainRun['context']> }):
     ['class', context.purpose_class],
     ['target', t ? (t.kind === 'project' ? `${t.workspace}/${t.project}` : t.workspace) : context.scope || 'none'],
     ['accountable', context.accountable?.email ?? 'nobody'],
-    ['sessions due', String(context.sessions_due)],
+    ['sessions due', `${context.sessions_due}${context.lookback_days ? ` (active in the last ${context.lookback_days} days)` : ''}`],
+    ['open findings told', String(context.open_findings_total ?? 0)],
     ['budget', `${context.budget.max_sources_per_run} sessions, ${context.budget.max_outputs_per_run} outputs a run`],
     ['entry', context.entry || '-'],
     ['emits', (context.output_kinds ?? []).join(', ') || 'nothing'],
@@ -602,8 +603,9 @@ type TargetBudget = NonNullable<BrainTarget['budget']>
 /** A target's budget and what it spent today (UTC), in one line. */
 function budgetLine(b: TargetBudget): string {
   const tokens = b.max_tokens_per_day == null ? `${b.today.tokens} tokens` : `${b.today.tokens}/${b.max_tokens_per_day} tokens`
-  return `≤${b.max_sources_per_run} sessions, ≤${b.max_outputs_per_run} outputs a run · today ${b.today.runs}/${b.max_runs_per_day} runs, ` +
-    `${b.today.outputs}/${b.max_outputs_per_day} outputs, ${tokens}`
+  const window = b.lookback_days ? ` from the last ${b.lookback_days} days` : ''
+  return `≤${b.max_sources_per_run} sessions${window}, ≤${b.max_outputs_per_run} outputs a run · today ${b.today.runs}/${b.max_runs_per_day} runs, ` +
+    `${b.today.outputs}/${b.max_outputs_per_day} outputs, ${tokens} · findings fade after ${b.fade_days ?? 21} days unseen`
 }
 
 /** Change one target's budget. A run stops cleanly at a cap; a daily cap stops the next fire. */
@@ -615,12 +617,14 @@ function BudgetForm({ target, busy, onSave }: {
     max_sources_per_run: String(b.max_sources_per_run), max_outputs_per_run: String(b.max_outputs_per_run),
     max_runs_per_day: String(b.max_runs_per_day), max_outputs_per_day: String(b.max_outputs_per_day),
     max_tokens_per_day: b.max_tokens_per_day == null ? '' : String(b.max_tokens_per_day),
+    lookback_days: String(b.lookback_days ?? ''), fade_days: String(b.fade_days ?? 21),
   })
   const field = 'w-20 rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground'
   const labels: [keyof typeof v, string][] = [
     ['max_sources_per_run', 'sessions a run'], ['max_outputs_per_run', 'outputs a run'],
     ['max_runs_per_day', 'runs a day'], ['max_outputs_per_day', 'outputs a day'],
     ['max_tokens_per_day', 'tokens a day (empty: no cap)'],
+    ['lookback_days', 'days back a run reads'], ['fade_days', 'days before an unseen finding fades'],
   ]
   return (
     <form
@@ -633,6 +637,8 @@ function BudgetForm({ target, busy, onSave }: {
           max_sources_per_run: Number(v.max_sources_per_run), max_outputs_per_run: Number(v.max_outputs_per_run),
           max_runs_per_day: Number(v.max_runs_per_day), max_outputs_per_day: Number(v.max_outputs_per_day),
           ...(tokens ? { max_tokens_per_day: Number(tokens) } : {}), clear_tokens: !tokens,
+          ...(v.lookback_days.trim() ? { lookback_days: Number(v.lookback_days) } : {}),
+          ...(v.fade_days.trim() ? { fade_days: Number(v.fade_days) } : {}),
         })
       }}
     >
@@ -877,7 +883,7 @@ function Findings({ ws }: { ws: string }): JSX.Element {
   return (
     <Section
       title="Findings"
-      note="What learning produced that you may see, for the audience its class allows. A finding acts on nothing by itself: deciding what to do with it is yours."
+      note="What learning produced that you may see, for the audience its class allows. A finding acts on nothing by itself: deciding what to do with it is yours. One no run has seen again lately is faded and listed last; Keep holds it open."
     >
       {error && <p className="text-xs text-destructive">{error}</p>}
       {!rows ? (
@@ -887,12 +893,18 @@ function Findings({ ws }: { ws: string }): JSX.Element {
       ) : (
         <ul className="divide-y divide-border">
           {rows.map((o) => (
-            <li key={o.id} className="space-y-1 py-2 text-[13px]">
+            <li key={o.id} className={`space-y-1 py-2 text-[13px]${o.faded ? ' opacity-60' : ''}`}>
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="font-medium text-foreground">{o.title || o.kind}</span>
                 <StatusBadge tone="neutral">{o.kind}</StatusBadge>
                 <StatusBadge tone={STATUS_TONE[o.status ?? 'open'] ?? 'neutral'}>{o.status ?? 'open'}</StatusBadge>
+                {o.faded && <StatusBadge tone="neutral">faded</StatusBadge>}
                 {(o.seen ?? 1) > 1 && <span className="text-xs text-muted-foreground">seen {o.seen} times</span>}
+                {o.may_set_status && o.faded && (
+                  <Button size="sm" variant="ghost" disabled={busy === o.id}
+                          title="No run has seen it lately; keep it open anyway"
+                          onClick={() => void move(o.id, (o.status ?? 'open') as BrainOutputStatus)}>Keep</Button>
+                )}
                 {o.may_set_status && (NEXT[o.status ?? 'open'] ?? []).map(([to, label]) => (
                   <Button key={to} size="sm" variant="ghost" disabled={busy === o.id}
                           onClick={() => void move(o.id, to)}>{label}</Button>

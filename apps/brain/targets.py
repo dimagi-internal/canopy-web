@@ -101,8 +101,9 @@ def add(cap: BrainCapability, *, workspace: Workspace, project: AgentProject | N
 
 
 def set_budget(target: BrainTarget, **changes) -> BrainTarget:
-    """Change the target's budget (`budget.FIELDS`); `max_tokens_per_day` None removes the token cap."""
-    unknown = set(changes) - set(budget.FIELDS)
+    """Change the target's budget (`budget.FIELDS`) and window (`budget.WINDOW_FIELDS`); `max_tokens_per_day` None
+    removes the token cap."""
+    unknown = set(changes) - set(budget.FIELDS) - set(budget.WINDOW_FIELDS)
     if unknown:
         raise TargetRefusedError(f"no such budget: {', '.join(sorted(unknown))}")
     for field, value in changes.items():
@@ -178,12 +179,13 @@ def why_not(target: BrainTarget, *, accountable=None) -> str:
 
 
 def has_new(target: BrainTarget) -> bool:
-    """Is there an eligible source of this target no clean run of it read yet."""
+    """Is there a source of this target due to be read: eligible, active in its window, and not yet learned (or grown
+    since) — the same `reading.candidates` its run reads, so a target with only old unread sessions does not fire."""
     cap = target.capability
     subject, scope = subject_of(target)
     subject_type, subject_id = runs.subject_of(cap, subject, scope)
     probe = BrainRun(capability=cap, subject_type=subject_type, subject=subject_id, purpose=(cap.purposes or [""])[0],
-                     floor=0, scope=scope)
+                     scope=scope, target=target)
     return reading.candidates(probe).exists()
 
 

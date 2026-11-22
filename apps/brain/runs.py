@@ -106,7 +106,7 @@ def prompt(cap: BrainCapability, run: BrainRun, *, accountable=None) -> str:
 
 
 @transaction.atomic
-def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int = 0, scope: str = "",
+def start(cap: BrainCapability, *, subject=None, purpose: str = "", scope: str = "",
           accountable=None, target=None, slot=None) -> BrainRun:
     """Start one run of `cap` about `subject`, reading only `scope`'s subtree when given, answering to
     `accountable` (the person who started it) or else the feature's own admin (`registry.accountable`)."""
@@ -125,7 +125,7 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int =
     try:
         with transaction.atomic():
             run = BrainRun.objects.create(capability=cap, subject_type=subject_type, subject=subject_id,
-                                          purpose=purpose, floor=max(0, floor), scope=scope, target=target, slot=slot)
+                                          purpose=purpose, scope=scope, target=target, slot=slot)
     except IntegrityError as e:
         raise StartRefusedError(f"a run of {cap.slug} for this subject is already open") from e
     session = session_services.create_session(
