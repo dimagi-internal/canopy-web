@@ -336,9 +336,8 @@ def test_an_acp_turn_survives_its_daemon_and_is_finished_by_the_next(cr, tmp_pat
 
 
 def test_an_acp_turn_cut_off_before_its_prompt_is_reported_without_a_session(cr, tmp_path, monkeypatch):
-    # 2026-11-22, turn c1eac474 (investigation 40): the daemon restarted after the
-    # adapter opened its session but before `session/prompt`. Adoption reported the
-    # session, so canopy-web never re-ran a message that had reached nobody.
+    # The daemon went after the adapter opened its session but before `session/prompt`:
+    # the message reached nobody, so the turn is reported sessionless and runs again.
     _quiet_conclusion(cr, monkeypatch)
     core = cr._acp_core()
     assert core is not None

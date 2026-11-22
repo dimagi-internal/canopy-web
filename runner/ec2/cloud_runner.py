@@ -14407,9 +14407,8 @@ def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
         # no prompt in the log proves the agent never got the message. That is a turn
         # cut off during its setup, not a failed attempt: stop the adapter and report it
         # WITHOUT a session, so canopy-web runs it again (`finish_turn`'s sessionless
-        # requeue). Reporting the session the adapter had opened made a dropped message
-        # terminal. 2026-11-22, turn c1eac474 (ace chat on cloud-ec2-live, investigation
-        # 40): "runner error while adopting the turn: the adapter was never prompted".
+        # requeue). Reporting the session the adapter opened would make a message that
+        # reached nobody terminal.
         if not exited:
             try:
                 _stop_adopted_cli(RelayProc.attach(attempt))
