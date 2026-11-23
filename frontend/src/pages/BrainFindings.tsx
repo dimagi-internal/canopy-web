@@ -28,7 +28,7 @@ export function plain(key: string): string {
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '')
 
 const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 }
-const SEVERITY_DOT: Record<string, string> = { high: 'bg-destructive', medium: 'bg-amber-500', low: 'bg-muted-foreground' }
+const SEVERITY_DOT: Record<string, string> = { high: 'bg-destructive', medium: 'bg-warning', low: 'bg-muted-foreground' }
 /** A status in words: `accepted` is a finding someone asked to be fixed. */
 const STATUS_WORD: Record<string, string> = { open: 'Open', accepted: 'Fixing', done: 'Done', dismissed: 'Dismissed' }
 const STATUS_TONE: Record<string, StatusTone> = { open: 'info', accepted: 'special', done: 'success', dismissed: 'neutral' }
