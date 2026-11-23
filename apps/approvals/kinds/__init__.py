@@ -156,6 +156,6 @@ def _load() -> None:
     global _loaded
     if _loaded:
         return
-    from . import agent_admin, agent_turns, vault_attach, workspace_members  # noqa: F401, PLC0415 — registers the kinds
+    from . import agent_admin, agent_aws_role, agent_turns, vault_attach, workspace_members  # noqa: F401, PLC0415 — registers the kinds
 
     _loaded = True
