@@ -747,6 +747,10 @@ class HeartbeatIn(Schema):
     # 1 = this runner's code keeps nothing of an `isolated` turn (`ClaimedTurnOut.isolated`, a learning run's)
     # for later turns: Claude Code's auto memory is off for it. Absent (older code) means 0: never handed one.
     isolated: int = 0
+    # 1 = this runner's code makes a stored agent's checkout its emdash project, so a laptop
+    # runs that agent's confined turns (`clis.laptop_cannot_confine_stored`). Absent (older
+    # code) means 0: such a laptop is never handed one.
+    stored_projects: int = 0
     # Which agent CLIs this box has, signed in and confining (`clis.sanitize`):
     # {"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}.
     # A level like `profiles`: absent (older code) means the box is read as Claude

@@ -104,3 +104,7 @@ def test_confined_stored_agent_turn_not_on_a_laptop(ws):
     assert clis.choose(turn, _runner({"claude-code": CONFINING})) == "claude-code"
     turn.capability = ""
     assert clis.choose(turn, laptop) == "claude-code"
+    # A laptop whose runner makes the agent's checkout its emdash project confines it there.
+    turn.capability = "ask"
+    laptop.capabilities = {**laptop.capabilities, "stored_projects": 1}
+    assert clis.choose(turn, laptop) == "claude-code"

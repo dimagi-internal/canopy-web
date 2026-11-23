@@ -228,11 +228,18 @@ archive) and HEAD on `origin/main`, so everything downstream of a clone is uncha
   is cloned again from GitHub with the turn's identity (`cloud_runner._retire_stored_clone`). A server that
   says nothing about the source leaves a canopy clone as it is.
 - **Laptop:** the checkout is `~/.canopy/agents/<slug>`, brought to the live revision before a new session
-  is cut from it (`runner/canopy_runner/canopy_runner/stored_agents.py::ensure_checkout`). emdash has no
-  project for it, so routing never refuses a laptop for lacking one (`routing.cannot_serve`) and a new thread
-  on an emdash box runs headless (`desktop.maybe_execute`). A caller's confined turn runs only through emdash
-  on a laptop, so it cannot run there: route it to a cloud runner. Once exported, the agent is a repo agent
-  and runs in its emdash project like any other.
+  is cut from it (`runner/canopy_runner/canopy_runner/stored_agents.py::ensure_checkout`). Where emdash is
+  on the box, that checkout is also the agent's emdash project, named after its slug: the runner adds it
+  through emdash's Add Project dialog the first time a turn needs it and checks emdash's DB for it after
+  (`stored_agents.py::ensure_emdash_project`; a project of that name at another folder is refused, never
+  driven). emdash then drives the agent's new and confined turns exactly as it drives a repo agent's, with
+  the same caller pointer, profile and native permission rules. Only an emdash-runtime box without emdash
+  runs a stored agent's new thread headless (`desktop.maybe_execute`), and a caller's confined turn never
+  runs headless. Routing never refuses a laptop for lacking the project (`routing.cannot_serve`). A laptop
+  whose runner predates this does not report `stored_projects` on its heartbeat and is never handed a
+  stored agent's confined turn (`apps/harness/clis.py::laptop_cannot_confine_stored`); it waits for a
+  runner that can take it. Once exported, the agent is a repo agent and runs in its emdash project like
+  any other.
 
 ## An agent's state document
 

@@ -168,8 +168,8 @@ def observe(me: dict | None) -> None:
         if engine == CLAUDE_CLI:
             _kick_adapter(force=True)
     if engine == EMDASH:
-        # An emdash box needs the adapter too: a stored agent's new thread runs
-        # headless here (maybe_execute). Installed once, on the first heartbeat.
+        # An emdash box needs the adapter too: without emdash on it, a stored agent's new
+        # thread runs headless here (maybe_execute). Installed once, on the first heartbeat.
         _kick_adapter()
 
 
@@ -181,8 +181,8 @@ def _kick_adapter(force: bool = False) -> None:
     """Install the ACP adapter in the background (an npm install can take a minute; the
     heartbeat and the claim loop must not wait on it).
 
-    Every runtime needs it, emdash included: a stored agent has no emdash project, so its
-    new threads run headless on any box, and without the adapter they cannot run at all."""
+    Every runtime needs it, emdash included: on a box without emdash a stored agent's new
+    threads run headless, and without the adapter they cannot run at all."""
     global _adapter_kicked
     if _adapter_kicked and not force:
         return
@@ -1201,11 +1201,13 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
     which turns are which)."""
     if caller.confined_profile(turn) is not None:
         return None
-    # A stored agent has no emdash project (no repo to make one of): on an emdash box
-    # a new thread of it runs here, headless, in a worktree of ~/.canopy/agents/<slug>.
+    # A stored agent's checkout (~/.canopy/agents/<slug>) is its emdash project wherever
+    # emdash is (`stored_agents.ensure_emdash_project`), so emdash drives it like a repo
+    # agent. On an emdash-runtime box WITHOUT emdash, a new thread of it runs here,
+    # headless, in a worktree of that checkout.
     stored = stored_agents.is_stored(turn) and bool(turn.get("agent_slug"))
-    headless_stored = stored and _current == EMDASH
-    if _current == EMDASH and not stored and not _index(cfg):
+    headless_stored = stored and _current == EMDASH and not stored_agents.emdash_present(cfg)
+    if _current == EMDASH and not headless_stored and not _index(cfg):
         return None  # an emdash-only box: no extra round trip, no behaviour change
     plan = client.resolve_session(runner_id, turn.get("agent_slug") or "", thread_key,
                                   project=turn.get("project") or "",
@@ -1277,7 +1279,8 @@ class TurnRun:
                  plan: dict, reuse: str, cli: bool = False):
         self.cfg, self.client, self.rid = cfg, client, runner_id
         self.turn, self.thread_key, self.plan, self.reuse = turn, thread_key, plan, reuse
-        # Headless whatever the box's runtime (a stored agent's new thread on emdash).
+        # Headless whatever the box's runtime (a stored agent's new thread on an emdash-runtime
+        # box without emdash).
         self.cli = cli
         self.id = str(turn["id"])
         self.chat = bool((turn.get("origin_ref") or {}).get("chat_session_id"))

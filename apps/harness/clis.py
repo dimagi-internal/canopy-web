@@ -254,15 +254,17 @@ def confines(report: CliReport) -> bool:
 
 
 def laptop_cannot_confine_stored(turn, runner) -> bool:
-    """Whether `runner` is a laptop and `turn` is a caller's turn of a stored agent. A
-    laptop confines a caller's turn only on the emdash path (profile files and native
-    deny rules), and a stored agent has no emdash project to run it in, so the laptop
-    runner fails such a turn at create (`execute._stored_on_emdash`). Its confined
-    turns run on a cloud runner."""
+    """Whether `runner` is a laptop whose code cannot run `turn`, a caller's turn of a
+    stored agent. A laptop confines a caller's turn only on the emdash path (profile
+    files and native deny rules). A laptop that reports `stored_projects` makes the
+    agent's checkout its emdash project and runs the turn there
+    (`stored_agents.ensure_emdash_project` on the runner); an older one has no emdash
+    project for it and fails the turn at create, so it is never handed one."""
     from apps.harness import stored_agents  # noqa: PLC0415 — models import this module
     from apps.harness.models import Runner  # noqa: PLC0415 — models import this module
 
-    return runner.kind == Runner.EMDASH and stored_agents.is_stored(turn.acting_agent)
+    return (runner.kind == Runner.EMDASH and stored_agents.is_stored(turn.acting_agent)
+            and not int((runner.capabilities or {}).get("stored_projects") or 0))
 
 
 def choose(turn, runner, *, reports: dict[str, CliReport] | None = None,
@@ -314,8 +316,9 @@ def blocker(turn, runners) -> str:
                 f"{_or(wants)}")
     reports = [reported(r) for r in runners]
     if turn.capability and runners and all(laptop_cannot_confine_stored(turn, r) for r in runners):
-        return (f"it is a caller's turn of {who}, a stored agent, which only a cloud runner can "
-                f"confine — add a cloud runner to {who}'s runner order")
+        return (f"it is a caller's turn of {who}, a stored agent, and the laptops that would take it "
+                f"run an older runner that cannot confine one — update the runner on one of them, "
+                f"or add a cloud runner to {who}'s runner order")
     if turn.capability:
         has = [c for c in wants if any(c in rep for rep in reports)]
         if has:
