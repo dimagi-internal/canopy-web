@@ -253,6 +253,18 @@ def confines(report: CliReport) -> bool:
     return report.profiles >= PROFILES_VERSION and report.envelope >= ENVELOPE_VERSION
 
 
+def laptop_cannot_confine_stored(turn, runner) -> bool:
+    """Whether `runner` is a laptop and `turn` is a caller's turn of a stored agent. A
+    laptop confines a caller's turn only on the emdash path (profile files and native
+    deny rules), and a stored agent has no emdash project to run it in, so the laptop
+    runner fails such a turn at create (`execute._stored_on_emdash`). Its confined
+    turns run on a cloud runner."""
+    from apps.harness import stored_agents  # noqa: PLC0415 — models import this module
+    from apps.harness.models import Runner  # noqa: PLC0415 — models import this module
+
+    return runner.kind == Runner.EMDASH and stored_agents.is_stored(turn.acting_agent)
+
+
 def choose(turn, runner, *, reports: dict[str, CliReport] | None = None,
            ignore_signed_in: bool = False, ignore_requirements: bool = False) -> str | None:
     """The CLI `runner` runs `turn` on, or None when it may not take it at all.
@@ -265,6 +277,8 @@ def choose(turn, runner, *, reports: dict[str, CliReport] | None = None,
     tell a runner-requirement block from any other. Never bypassed by a pin: it is
     a security property for a confined turn, and a turn on a CLI a box lacks cannot
     run at all."""
+    if turn.capability and laptop_cannot_confine_stored(turn, runner):
+        return None
     have = reports if reports is not None else reported(runner)
     sensitive = not ignore_requirements and rr.SENSITIVE_DATA in rr.requirements_of(turn)
     for cli in allowed(turn):
@@ -299,6 +313,9 @@ def blocker(turn, runners) -> str:
         return (f"it holds sensitive data, which runs on {ok} only, and it may run only on "
                 f"{_or(wants)}")
     reports = [reported(r) for r in runners]
+    if turn.capability and runners and all(laptop_cannot_confine_stored(turn, r) for r in runners):
+        return (f"it is a caller's turn of {who}, a stored agent, which only a cloud runner can "
+                f"confine — add a cloud runner to {who}'s runner order")
     if turn.capability:
         has = [c for c in wants if any(c in rep for rep in reports)]
         if has:

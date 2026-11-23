@@ -90,3 +90,17 @@ def test_ignore_signed_in_counterfactual(ws):
     runner = _runner({"claude-code": {"signed_in": False}, "codex": {"signed_in": False}})
     assert clis.choose(turn, runner) is None
     assert clis.choose(turn, runner, ignore_signed_in=True) == "codex"
+
+
+def test_confined_stored_agent_turn_not_on_a_laptop(ws):
+    agent = Agent.objects.create(slug="s", name="S", workspace=ws, source="stored")
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER,
+                               idempotency_key="k", capability="ask")
+    laptop = Runner.objects.create(name="l", kind=Runner.EMDASH, status=Runner.ONLINE,
+                                   last_heartbeat_at=timezone.now(),
+                                   capabilities={"clis": {"claude-code": CONFINING}})
+    assert clis.choose(turn, laptop) is None
+    assert "cloud runner" in clis.blocker(turn, [laptop])
+    assert clis.choose(turn, _runner({"claude-code": CONFINING})) == "claude-code"
+    turn.capability = ""
+    assert clis.choose(turn, laptop) == "claude-code"
