@@ -60,13 +60,16 @@ host's tool names twice over.
 """
 from __future__ import annotations
 
+import asyncio
 import fnmatch
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from asgiref.sync import sync_to_async
 from canopy_sdk import consumer, contract
 from canopy_sdk import resources as resource_links
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
@@ -107,9 +110,9 @@ def page_grant_unconfirmed(agent_name: str) -> str:
 #: agent, which can wait and retry: the person may be confirming right now.
 def page_grant_asked(agent_name: str) -> str:
     return (f"I have asked the person to confirm with their passkey, in the panel, that "
-            f"{agent_name} may act as them on this page. Wait about 20 seconds and try this "
-            "call again; if it is still not confirmed after a few tries, tell them what you "
-            "need it for and carry on without it.")
+            f"{agent_name} may act as them on this page, and they have not yet. Call this "
+            "again now to keep waiting for them; if they do not approve in time, the call "
+            "says so.")
 
 
 def no_grant_message(site: str, reason: str, agent_name: str = "the agent") -> str:
@@ -128,10 +131,13 @@ def no_grant_message(site: str, reason: str, agent_name: str = "the agent") -> s
 class GatewayRefusal(Exception):
     """Why this call will not go through. The message is safe to show the agent."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, waiting: bool = False):
         super().__init__(message)
         self.code = code
         self.message = message
+        # The page's permission is there and waits for the person's passkey, and the
+        # panel has asked them: the call can wait for it (`resolve_waiting`).
+        self.waiting = waiting
 
 
 @dataclass
@@ -211,12 +217,13 @@ def tool_allowed(tool: str, *, ceiling: list[str]) -> bool:
 # --- resolution ----------------------------------------------------------------
 
 
-def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
+def resolve(turn_id: str, *, reason: str = "", ask_person: bool = True) -> SiteContext:
     """The site, grant and effective tools for this turn — or a refusal.
 
     `reason` is what the agent says it needs the person's permission for; when the
     page's permission still waits for their passkey it is put in front of them in the
-    panel's prompt (`host_grants.ask`, pushed by `_push_ask`)."""
+    panel's prompt (`host_grants.ask`, pushed by `_push_ask`). `ask_person=False` is a
+    waiter checking again (`resolve_waiting`): the panel has asked already."""
     from apps.harness.models import Turn
 
     from apps.tokens.models import AppCredential
@@ -294,9 +301,11 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
     if grant is None and found.waiting is not None:
         # The page holds a permission the person has not confirmed: the panel asks
         # for their passkey only now, when this turn actually needs it.
-        ask(found.waiting, reason)
-        _push_ask(session, found.waiting)
-        raise GatewayRefusal("unconfirmed", page_grant_asked(agent.name or agent.slug))
+        if ask_person:
+            ask(found.waiting, reason)
+            _push_ask(session, found.waiting)
+        raise GatewayRefusal("unconfirmed", page_grant_asked(agent.name or agent.slug),
+                             waiting=True)
     if grant is None:
         code = {EXPIRED: "expired", REVOKED: "revoked",
                 UNCONFIRMED: "unconfirmed"}.get(found.reason, "no_grant")
@@ -394,6 +403,102 @@ def _push_ask(session, grant) -> None:
 
     publish(session_group(session.id),
             {"type": "host_grant.requested", "grant_id": grant.pk, "user_id": grant.user_id})
+
+
+#: How long a turn waits, in all, for the person to confirm a page's permission that
+#: waits for their passkey (the panel has asked them) before it carries on without it.
+#: One clock per turn (`grant_wait_left`), however many calls wait on it: the runner's
+#: hold before a lean turn's model starts and a tool call's own wait share it.
+GRANT_WAIT_SECONDS = 120
+#: How often a waiter looks again.
+GRANT_POLL_SECONDS = 2
+#: The longest ONE tool call holds its request open waiting (under the load balancer's
+#: idle timeout); past it the call says to call again, and the turn's clock goes on.
+CALL_WAIT_SECONDS = 45
+#: The panel's note while a turn waits (a `chat.live_text` of its own, past any reply
+#: the agent writes; dropped once the turn settles).
+WAIT_NOTE_MESSAGE = 9_999
+WAIT_NOTE = "Waiting for your approval… confirm with your passkey in the panel."
+WAIT_NOTE_CONFIRMED = "Approved — working on it…"
+WAIT_NOTE_NOT_GIVEN = "Approval wasn't given."
+
+
+def page_grant_not_given() -> str:
+    return ("The person did not confirm with their passkey in time, so their approval "
+            "was not given and I cannot act as them on this page. Tell them so plainly, "
+            "and ask them to approve in the panel and then ask again.")
+
+
+def _wait_key(turn_id: str) -> str:
+    return f"host_grant_wait:{turn_id}"
+
+
+def grant_wait_left(turn_id: str) -> float:
+    """Seconds this turn may still wait for the person's passkey. The first call starts
+    the turn's clock and puts the waiting note in the panel."""
+    now = time.time()
+    if cache.add(_wait_key(turn_id), now, GRANT_WAIT_SECONDS + 600):
+        say_wait(turn_id, WAIT_NOTE)
+    started = float(cache.get(_wait_key(turn_id)) or now)
+    return max(0.0, started + GRANT_WAIT_SECONDS - now)
+
+
+def waited(turn_id: str) -> bool:
+    return cache.get(_wait_key(turn_id)) is not None
+
+
+def say_wait(turn_id: str, text: str) -> None:
+    """The waiting note, in the panel of the turn's conversation. It carries no words of
+    the conversation, only canopy's own."""
+    from apps.harness.models import Turn  # noqa: PLC0415 — harness imports this module
+    from apps.realtime.groups import publish, session_group  # noqa: PLC0415 — as _push_ask: loads with a call
+
+    session_id = (Turn.objects.filter(pk=turn_id).values_list("chat_session_id", flat=True)
+                  .first())
+    if session_id:
+        publish(session_group(session_id), {"type": "chat.live_text", "turn_id": str(turn_id),
+                                            "message": WAIT_NOTE_MESSAGE, "text": text})
+
+
+def waited_out(turn_id: str) -> GatewayRefusal:
+    """The refusal once the turn's wait is over, the note in the panel saying so."""
+    say_wait(turn_id, WAIT_NOTE_NOT_GIVEN)
+    return GatewayRefusal("unconfirmed", page_grant_not_given())
+
+
+async def resolve_waiting(turn_id: str, *, reason: str = "", sleep=None,
+                          call_wait: float | None = None) -> SiteContext:
+    """`resolve`, but when the page's permission waits for the person's passkey (the panel
+    has just asked them), wait for them — up to the turn's `GRANT_WAIT_SECONDS` — and go on
+    the moment they confirm. Any other refusal, and the end of the wait, refuse as before;
+    a refused, expired or stopped permission never waits."""
+    sleep = sleep or asyncio.sleep
+    call_wait = CALL_WAIT_SECONDS if call_wait is None else call_wait
+    call = sync_to_async(resolve, thread_sensitive=True)
+    try:
+        return await call(turn_id, reason=reason)
+    except GatewayRefusal as exc:
+        if not exc.waiting:
+            raise
+        asked = exc
+    held = 0.0
+    while True:
+        left = await sync_to_async(grant_wait_left, thread_sensitive=True)(turn_id)
+        if left <= 0:
+            raise await sync_to_async(waited_out, thread_sensitive=True)(turn_id)
+        if held >= call_wait:
+            raise asked  # "I have asked the person…: call this again now"
+        step = min(GRANT_POLL_SECONDS, left)
+        await sleep(step)
+        held += step
+        try:
+            ctx = await call(turn_id, reason=reason, ask_person=False)
+        except GatewayRefusal as exc:
+            if not exc.waiting:
+                raise
+            continue
+        await sync_to_async(say_wait, thread_sensitive=True)(turn_id, WAIT_NOTE_CONFIRMED)
+        return ctx
 
 
 def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str],

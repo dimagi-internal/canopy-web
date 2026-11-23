@@ -47474,6 +47474,16 @@ export interface components {
              * @default
              */
             readonly refused: string;
+            /**
+             * Waiting
+             * @default false
+             */
+            readonly waiting: boolean;
+            /**
+             * Wait Left
+             * @default 0
+             */
+            readonly wait_left: number;
         };
         /** LiveTextOut */
         readonly LiveTextOut: {
@@ -76740,7 +76750,9 @@ export interface operations {
     };
     readonly get_turn_page_brief: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly poll?: boolean;
+            };
             readonly header?: never;
             readonly path: {
                 readonly turn_id: string;

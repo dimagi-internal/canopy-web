@@ -376,3 +376,147 @@ def test_the_settings_write_and_clear_page_guidance(w):
     w["agent"].refresh_from_db()
     row = next(r for r in profile_settings.host_sites_of(w["agent"]) if r["site"] == "connect-labs")
     assert row["page_guidance"] == ""
+
+
+# --- a page permission that waits for the person's passkey is waited for -------------------
+
+
+@pytest.fixture()
+def waiting(w):
+    """The owner's page permission, there and still waiting for their passkey."""
+    from django.core.cache import cache
+
+    cache.clear()
+    grant = sg.grant(w, subject=f"sub-{w['owner'].pk}", contact=None, user=w["owner"],
+                     confirmed_at=None)
+    yield grant
+    cache.clear()
+
+
+def _two_tools():
+    async def list_tools(ctx):
+        return [{"name": "marketplace_orgs_get", "description": "List orgs.",
+                 "input_schema": {"type": "object", "properties": {}}}]
+    return list_tools
+
+
+def test_the_brief_waits_while_the_person_is_asked_then_lists_once_they_confirm(w, waiting):
+    from apps.host_grants import host_gateway, host_grants
+
+    turn = Turn.objects.get(pk=w["owner_turn"].pk)
+    with mock.patch("apps.realtime.groups.publish") as publish, \
+            mock.patch.object(host_gateway, "list_tools", _two_tools()):
+        first = page_brief.build(turn)
+        # Waiting, not refused: no text yet, the panel asked, and the note is up.
+        assert first["waiting"] is True and first["text"] == "" and first["wait_left"] > 100
+        waiting.refresh_from_db()
+        assert waiting.requested_at is not None
+        frames = [c.args[1] for c in publish.call_args_list]
+        assert {"type": "host_grant.requested", "grant_id": waiting.pk,
+                "user_id": waiting.user_id} in frames
+        assert any(f.get("type") == "chat.live_text" and f["text"] == host_gateway.WAIT_NOTE
+                   for f in frames)
+        # Asking again never asks the person twice.
+        publish.reset_mock()
+        assert page_brief.build(turn, poll=True)["waiting"] is True
+        assert not [c for c in publish.call_args_list if c.args[1]["type"] == "host_grant.requested"]
+        # They confirm: the next look lists the tools.
+        host_grants.confirm(waiting)
+        out = page_brief.build(turn, poll=True)
+    assert out["waiting"] is False and out["refused"] == "" and out["tools"] == 1
+    assert "marketplace_orgs_get" in out["text"]
+    assert publish.call_args_list[-1].args[1]["text"] == host_gateway.WAIT_NOTE_CONFIRMED
+
+
+def test_once_the_wait_is_over_the_brief_says_approval_was_not_given(w, waiting):
+    from apps.host_grants import host_gateway
+
+    turn = Turn.objects.get(pk=w["owner_turn"].pk)
+    with mock.patch("apps.realtime.groups.publish"):
+        assert page_brief.build(turn)["waiting"] is True
+        with mock.patch.object(host_gateway, "GRANT_WAIT_SECONDS", 0):
+            out = page_brief.build(turn, poll=True)
+    assert out["waiting"] is False and out["tools"] == 0
+    assert out["refused"] == host_gateway.page_grant_not_given()
+    assert "approval was not given" in out["text"] and "ask again" in out["text"]
+
+
+def test_a_stopped_or_expired_permission_is_never_waited_for(w):
+    from django.utils import timezone
+
+    sg.grant(w, subject=f"sub-{w['owner'].pk}", contact=None, user=w["owner"],
+             revoked_at=timezone.now())
+    out = page_brief.build(Turn.objects.get(pk=w["owner_turn"].pk))
+    assert not out.get("waiting") and out["refused"] and "could not be listed" in out["text"]
+
+
+def test_the_brief_route_hands_back_waiting_and_logs_only_the_outcome(w, client):
+    from django.utils import timezone
+
+    runner = Runner.objects.create(name="cloud", owner=w["owner"], kind=Runner.CLOUD)
+    Turn.objects.filter(pk=w["owner_turn"].pk).update(status=Turn.RUNNING, claimed_by=runner,
+                                                      claimed_at=timezone.now())
+    raw, _ = PersonalToken.create_for_user(user=w["owner"], label="runner")
+    url = f"/api/harness/turns/{w['owner_turn'].pk}/page-brief"
+    with mock.patch.object(page_brief, "build", return_value={
+            "text": "", "site": "connect-labs", "tools": 0, "refused": "unconfirmed",
+            "waiting": True, "wait_left": 118.0}) as build:
+        r = client.get(url + "?poll=true", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 200 and r.json()["waiting"] is True and r.json()["wait_left"] == 118.0
+    assert build.call_args.kwargs == {"poll": True}
+    assert not Turn.objects.get(pk=w["owner_turn"].pk).events.exists()
+
+
+def _resolve_waiting(turn_id, **kw):
+    from apps.host_grants import host_gateway
+
+    async def no_sleep(_s):
+        return None
+    return async_to_sync(host_gateway.resolve_waiting)(turn_id, sleep=no_sleep, **kw)
+
+
+def test_a_tool_call_waits_for_the_passkey_and_goes_on_once_confirmed(w, waiting):
+    """The same wait for a turn that is not lean: its `site_tools` / `site_call` hold
+    while the person is asked, and go through the moment they confirm."""
+    from apps.host_grants import host_gateway, host_grants
+
+    turn_id = str(w["owner_turn"].pk)
+    looks = []
+    real = host_gateway.resolve
+
+    def resolve(tid, **kw):
+        looks.append(kw.get("ask_person", True))
+        if len(looks) == 3:
+            host_grants.confirm(waiting)
+        return real(tid, **kw)
+
+    with mock.patch("apps.realtime.groups.publish"), \
+            mock.patch.object(host_gateway, "resolve", resolve):
+        ctx = _resolve_waiting(turn_id, call_wait=60)
+    assert ctx.scope == waiting.scope
+    # Asked once, then looked again without asking.
+    assert looks == [True, False, False]
+
+
+def test_a_tool_calls_wait_is_bounded_and_then_says_approval_was_not_given(w, waiting):
+    from apps.host_grants import host_gateway
+
+    turn_id = str(w["owner_turn"].pk)
+    with mock.patch("apps.realtime.groups.publish"):
+        # One call holds its request open only so long, then says to call again.
+        with pytest.raises(host_gateway.GatewayRefusal) as held:
+            _resolve_waiting(turn_id, call_wait=4)
+        assert held.value.waiting and "Call this again now" in held.value.message
+        # The turn's clock runs out: approval was not given.
+        with mock.patch.object(host_gateway, "GRANT_WAIT_SECONDS", 0), \
+                pytest.raises(host_gateway.GatewayRefusal) as out:
+            _resolve_waiting(turn_id, call_wait=60)
+    assert not out.value.waiting and out.value.message == host_gateway.page_grant_not_given()
+
+
+def test_a_refusal_that_is_not_waiting_is_never_held(w):
+    from apps.host_grants import host_gateway
+
+    with pytest.raises(host_gateway.GatewayRefusal) as out:
+        _resolve_waiting(str(w["owner_turn"].pk))
+    assert not out.value.waiting and out.value.code == "no_grant"

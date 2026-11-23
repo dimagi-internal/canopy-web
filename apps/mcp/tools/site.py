@@ -82,7 +82,9 @@ async def _context(tool: str, reason: str = ""):
 
     turn_id = await sync_to_async(_current_turn_id, thread_sensitive=True)()
     try:
-        return await sync_to_async(host_gateway.resolve, thread_sensitive=True)(turn_id, reason=reason)
+        # A permission that waits for the person's passkey is waited for (they are
+        # being asked in the panel right now), up to the turn's own bound.
+        return await host_gateway.resolve_waiting(turn_id, reason=reason)
     except host_gateway.GatewayRefusal as exc:
         await write_audit(user_id=current_user_id(), tool=tool,
                           args_summary=f"turn={turn_id}", ok=False, error=exc.code)

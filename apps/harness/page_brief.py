@@ -114,9 +114,13 @@ SCOPE_RULE = (
     "at an answer.")
 
 
-def build(turn) -> dict:
-    """The brief for `turn`: `{"text", "site", "tools", "refused"}`. `refused` is the
-    gateway's refusal ("" when the tools were listed), said to the agent in the text."""
+def build(turn, *, poll: bool = False) -> dict:
+    """The brief for `turn`: `{"text", "site", "tools", "refused", "waiting", "wait_left"}`.
+    `refused` is the gateway's refusal ("" when the tools were listed), said to the agent
+    in the text. `waiting` is a page permission that waits for the person's passkey, the
+    panel asking them: no text yet, and the runner asks again (`poll=True`, which never
+    asks the person twice) until they confirm or the turn's wait is over
+    (`host_gateway.GRANT_WAIT_SECONDS`) — then the text says their approval was not given."""
     from apps.agents import published_profiles  # noqa: PLC0415 — the interface reads models, loaded with a call
     from apps.host_grants import host_gateway  # noqa: PLC0415 — the gateway loads with a call
 
@@ -128,12 +132,22 @@ def build(turn) -> dict:
     refused = ""
     tools: list[dict] = []
     scope = ""
+    turn_id = str(turn.pk)
     try:
-        ctx = host_gateway.resolve(str(turn.pk), reason="see what it can do for you on this page")
+        ctx = host_gateway.resolve(turn_id, reason="see what it can do for you on this page",
+                                   ask_person=not poll)
         tools = async_to_sync(host_gateway.list_tools)(ctx)
         scope = ctx.scope
+        if host_gateway.waited(turn_id):
+            host_gateway.say_wait(turn_id, host_gateway.WAIT_NOTE_CONFIRMED)
     except host_gateway.GatewayRefusal as exc:
         refused = exc.message
+        if exc.waiting:
+            left = host_gateway.grant_wait_left(turn_id)
+            if left > 0:
+                return {"text": "", "site": site, "tools": 0, "refused": exc.code,
+                        "waiting": True, "wait_left": left}
+            refused = host_gateway.waited_out(turn_id).message
     from apps.agents import published_profiles as pp  # noqa: PLC0415 — as above
 
     guidance = pp.page_guidance_of(turn.acting_agent, site)
@@ -161,4 +175,5 @@ def build(turn) -> dict:
                   + (f" (scope: {scope})" if scope else "") + ":"]
         parts += tools_text(tools, backing=str(state.get("backing_tool") or ""))
     parts.append("</page_context>")
-    return {"text": "\n".join(parts), "site": site, "tools": len(tools), "refused": refused}
+    return {"text": "\n".join(parts), "site": site, "tools": len(tools), "refused": refused,
+            "waiting": False, "wait_left": 0.0}

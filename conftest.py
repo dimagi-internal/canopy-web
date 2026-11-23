@@ -187,6 +187,19 @@ def _no_live_canopy_release(monkeypatch):
     cache.delete(canopy_release.CACHE_KEY)
 
 
+@pytest.fixture(autouse=True)
+def _site_calls_do_not_wait_for_a_passkey(monkeypatch):
+    """A `site_tools` / `site_call` whose page permission waits for the person's passkey
+    holds its request open while they are asked (`host_gateway.resolve_waiting`). No test
+    holds one open in real time: here one call waits not at all and says it asked. The
+    wait's own tests pass `call_wait=` themselves."""
+    try:
+        from apps.host_grants import host_gateway
+    except Exception:
+        return
+    monkeypatch.setattr(host_gateway, "CALL_WAIT_SECONDS", 0)
+
+
 @pytest.fixture()
 def agent_memory_on():
     """Every Person created while this is active starts with BOTH agent-memory

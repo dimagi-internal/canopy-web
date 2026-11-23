@@ -296,3 +296,30 @@ def test_run_acp_starts_a_lean_session_and_streams_the_reply(cloud_runner, monke
     assert made and made[0]["systemPrompt"] == {"append": "<page_context/>"}
     assert made[0]["claudeCode"]["options"]["settingSources"] == ["user"]
     assert heard == [(0, "EHA "), (0, "EHA is furthest"), (0, "EHA is furthest behind.")]
+
+
+def test_a_brief_waiting_for_the_passkey_is_asked_again_and_the_turn_waits(cloud_runner, monkeypatch):
+    """The page's permission waits for the person's passkey: the brief asks again (without
+    asking the person twice) and the model waits past the usual few seconds for it."""
+    calls = []
+
+    def fake_api(method, path, body=None, **kw):
+        calls.append(path)
+        if len(calls) < 4:
+            return 200, {"waiting": True, "wait_left": 100.0, "text": ""}
+        return 200, {"waiting": False, "text": "<page_context>tools</page_context>"}
+
+    monkeypatch.setattr(cloud_runner, "_api", fake_api)
+    brief = cloud_runner._PageBrief("t" * 36, poll_every=0.3)
+    # Longer than the usual wait: the turn holds for the person.
+    assert brief.wait(0.2) == "<page_context>tools</page_context>"
+    assert brief.waiting is True
+    tid = "t" * 36
+    assert calls == [f"/turns/{tid}/page-brief"] + [f"/turns/{tid}/page-brief?poll=true"] * 3
+
+
+def test_a_brief_still_waiting_at_the_backstop_leaves_the_prompt_alone(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "PAGE_GRANT_WAIT_SECONDS", 0.5)
+    monkeypatch.setattr(cloud_runner, "_api",
+                        lambda *a, **k: (200, {"waiting": True, "text": ""}))
+    assert cloud_runner._PageBrief("t" * 36, poll_every=0.1).wait(0.1) == ""

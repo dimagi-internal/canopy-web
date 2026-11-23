@@ -268,7 +268,7 @@ def _running_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
 @router.get("/turns/{turn_id}/page-brief", response=PageBriefOut)
 @gate("runner")
-def get_turn_page_brief(request: HttpRequest, turn_id: uuid.UUID):
+def get_turn_page_brief(request: HttpRequest, turn_id: uuid.UUID, poll: bool = False):
     """A LEAN page turn's opening context, for the runner to add to its session's system prompt:
     the conversation's page and the site's tools, exactly as `current_page` and
     `site_tools` would answer this turn — through the gateway, as the person who sent,
@@ -280,9 +280,14 @@ def get_turn_page_brief(request: HttpRequest, turn_id: uuid.UUID):
     turn = _running_turn_or_404(request, turn_id)
     if not published_profiles.lean_page_turn(turn):
         return {"refused": "not_a_lean_page_turn"}
-    out = page_brief.build(turn)
+    out = page_brief.build(turn, poll=poll)
+    if out.get("waiting"):
+        # The person is being asked for their passkey: the runner asks again (`poll`)
+        # until they confirm or the turn's wait is over. Only the outcome is logged.
+        return out
     # On the turn's own ledger: which site and how many tools, never what came back.
     ledger.append_events(turn, [{"kind": "lifecycle", "payload": {
+        **({"waited": True} if poll else {}),
         "event": "page_brief", "site": out["site"], "tools": out["tools"],
         **({"refused": out["refused"][:200]} if out["refused"] else {})}}])
     return out

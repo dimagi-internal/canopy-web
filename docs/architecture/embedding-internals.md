@@ -182,8 +182,13 @@ page within their own access. The lifecycle is the docstring of
   something needs the grant — a send never waits for it.** When the agent's turn
   calls the site and `lookup` says `UNCONFIRMED`, the gateway marks the page's
   waiting rows `requested_at` / `requested_reason` (`host_grants.ask`, carried across
-  re-mints by `_inherit`), tells the agent to retry shortly
-  (`host_gateway.page_grant_asked`) and **pushes** `host_grant.requested` (the grant id
+  re-mints by `_inherit`), and the call **waits for the person**
+  (`host_gateway.resolve_waiting`: looks again every 2 s without asking twice, goes on
+  the moment they confirm, at most `GRANT_WAIT_SECONDS` = 120 s a turn and
+  `CALL_WAIT_SECONDS` = 45 s a request; then `page_grant_not_given` tells the agent to
+  say approval was not given and to ask them to approve and ask again; a refused,
+  expired or stopped grant never waits), shows "Waiting for your approval…" in the
+  panel (a `chat.live_text` note of its own, `WAIT_NOTE_MESSAGE`), and **pushes** `host_grant.requested` (the grant id
   only) down the conversation's socket (`_push_ask` →
   `SessionConsumer.host_grant_requested`, which passes it only to the grant's own
   person); the panel opens `PageGrantConfirm` (`EmbedApp.tsx`). **Confirm with
