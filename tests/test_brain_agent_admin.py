@@ -228,7 +228,7 @@ def test_a_held_laptop_session_manages_between_the_persons_messages(w):
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
     r = Client().get("/api/w/connect/brain/outputs/", **bearer_headers(token))
     assert [o["title"] for o in r.json()] == ["connect finding"]
-    assert [o["may_ask_fix"] for o in r.json()] == [False]                  # asking for a fix is the person's own
+    assert [o["may_request_fix"] for o in r.json()] == [False]                  # asking for a fix is the person's own
     assert _call(w, "set_learning_reads", token).status_code == 200
     RunnerBinding.objects.filter(session=conv).update(runner=None)
     assert Client().get("/api/w/connect/brain/outputs/", **bearer_headers(token)).json() == []

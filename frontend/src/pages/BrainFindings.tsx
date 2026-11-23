@@ -303,7 +303,7 @@ function Decide({ ws, o, onChange, onError }: {
   const [busy, setBusy] = useState(false)
   const may = Boolean(o.may_set_status)
   const fixer = o.fixer?.name ?? ''
-  const mayAsk = Boolean(o.may_ask_fix)
+  const mayAsk = Boolean(o.may_request_fix)
   useEffect(() => {
     if (!mayAsk || status !== 'open') return
     let live = true

@@ -270,7 +270,7 @@ def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
              "fixer": ({"slug": o.capability.operator.slug, "name": o.capability.operator.name or
                         o.capability.operator.slug} if o.capability.operator_id else None),
              "fix_session": fixing.get(o.pk),
-             "may_ask_fix": as_person and acting is None and o.capability.operator_id is not None and may_set(o),
+             "may_request_fix": as_person and acting is None and o.capability.operator_id is not None and may_set(o),
              "sessions": [named[s] for s in cited.get(str(o.pk), []) if s in named],
              "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named),
              "source_sessions": [{"source": src, **named[s]} for src, s in by_source.get(str(o.pk), []) if s in named]}

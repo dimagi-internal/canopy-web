@@ -211,7 +211,7 @@ describe('BrainPage', () => {
   })
 
   it('asks the operator to fix a finding, saying first exactly what that starts and the message it sends', async () => {
-    listBrainOutputs.mockResolvedValueOnce([{ ...OUTPUTS[0], fixer: { slug: 'ada', name: 'Ada' }, may_ask_fix: true },
+    listBrainOutputs.mockResolvedValueOnce([{ ...OUTPUTS[0], fixer: { slug: 'ada', name: 'Ada' }, may_request_fix: true },
       ...OUTPUTS.slice(1)])
     getFixPlan.mockResolvedValue({ agent: { slug: 'ada', name: 'Ada' }, label: 'Ask Ada to fix this', continues: false,
       what_happens: 'Starts a conversation between you and Ada, with this finding as the brief.',
