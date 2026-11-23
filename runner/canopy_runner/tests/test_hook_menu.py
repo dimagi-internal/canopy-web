@@ -887,3 +887,19 @@ def test_cancel_is_still_esc_on_a_permission_menu(monkeypatch):
     outcome, _ = hooks.answer_menu_with(cdp, KEY[1], None, project=KEY[0])
     assert outcome == hooks.ANSWERED
     assert cdp.sent is not None and "1" not in cdp.sent
+
+
+def test_the_ask_s_own_permission_request_keeps_the_question_menu():
+    """Claude Code also fires `PermissionRequest` for `AskUserQuestion` (seen on
+    2.1.330). Its dialog is the question itself, so a Yes-only "Allow this
+    AskUserQuestion call?" card in its place is unanswerable: the question menu
+    `PreToolUse` built stays."""
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload(ASK)
+    hl.handle_payload({**ASK, "hook_event_name": "PermissionRequest",
+                       "permission_mode": "bypassPermissions"})
+    menu = hl.pending_menu(*KEY)
+    assert menu["question"] == "How far do you want to take this?"
+    assert [o["label"] for o in menu["options"]][:2] == [
+        "Both, bulk_create first", "Fast only"]
