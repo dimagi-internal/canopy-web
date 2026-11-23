@@ -152,6 +152,16 @@ Parameters:
     AllowedPattern: "^([A-Za-z0-9][A-Za-z0-9._+-]{0,63}(,[A-Za-z0-9][A-Za-z0-9._+-]{0,63})*)?$"
     ConstraintDescription: empty, or comma-separated command names (letters, digits, . _ + -).
     Default: ""
+  Platform:
+    Type: String
+    Description: >
+      ephemeral only: the image's OS, which picks the exec document's one step —
+      aws:runShellScript (linux, the default, unchanged) or aws:runPowerShellScript
+      (windows). One step either way, so the broker reads results with no
+      PluginName. The image contract (docs/architecture/capabilities.md) is the
+      same on both; only how the argv is decoded and run differs.
+    AllowedValues: [linux, windows]
+    Default: linux
   MaxInstanceLifetimeSeconds:
     Type: Number
     Description: >
@@ -239,6 +249,7 @@ Conditions:
   HasUserData: !Not [!Equals [!Ref UserData, ""]]
   IsEphemeral: !Equals [!Ref Mode, ephemeral]
   IsPersistent: !Not [!Equals [!Ref Mode, ephemeral]]
+  IsWindows: !Equals [!Ref Platform, windows]
   # Root-volume performance: each is set only when given (empty or 0 = unset).
   HasRootVolumeIops: !Not [!Or [!Equals [!Ref RootVolumeIops, ""], !Equals [!Ref RootVolumeIops, "0"]]]
   HasRootVolumeThroughput: !Not [!Or [!Equals [!Ref RootVolumeThroughput, ""], !Equals [!Ref RootVolumeThroughput, "0"]]]
@@ -826,42 +837,105 @@ Resources:
             default: "3600"
             allowedPattern: "^[0-9]{1,6}$"
         mainSteps:
-          - action: aws:runShellScript
-            name: exec
-            inputs:
-              timeoutSeconds: "{{ ExecutionTimeout }}"
-              # The agent runs this with /bin/sh; the body needs bash (read -d ''),
-              # so it is handed to bash whole. No ${...} in it: CloudFormation's
-              # Sub would take it. {{ }} is SSM's own substitution, of values the
-              # allowedPatterns above have already restricted.
-              runCommand:
-                - !Sub
-                  - |
-                    canopy_exec=$(cat <<'CANOPY_EXEC'
-                    set -eu
-                    allow="${Allow}"
-                    argv_file=$(mktemp)
-                    trap 'rm -f "$argv_file"' EXIT
-                    printf '%s' '{{ Argv }}' | base64 -d > "$argv_file"
-                    set --
-                    while IFS= read -r -d '' arg; do set -- "$@" "$arg"; done < "$argv_file"
-                    rm -f "$argv_file"
-                    trap - EXIT
-                    if [ "$#" -lt 1 ]; then echo "canopy exec: empty argv" >&2; exit 126; fi
-                    ok=""
-                    for name in $allow; do if [ "$name" = "$1" ]; then ok=1; fi; done
-                    if [ -z "$ok" ]; then
-                      echo "canopy exec: '$1' is not on this capability's exec allow list ($allow)" >&2
-                      exit 126
-                    fi
-                    export CANOPY_LEASE_ID='{{ LeaseId }}'
-                    export CANOPY_LEASE_IN='{{ LeaseIn }}'
-                    export CANOPY_LEASE_OUT='{{ LeaseOut }}'
-                    exec "$@"
-                    CANOPY_EXEC
-                    )
-                    exec /bin/bash -c "$canopy_exec"
-                  - Allow: !Join [" ", !Split [",", !Ref ExecAllow]]
+          # ONE step, chosen by Platform: the broker reads an invocation with no
+          # PluginName, which SSM refuses for a document with more than one step.
+          # A linux stack renders exactly the step it always had.
+          - !If
+            - IsWindows
+            - action: aws:runPowerShellScript
+              name: exec
+              inputs:
+                timeoutSeconds: "{{ ExecutionTimeout }}"
+                # Windows PowerShell 5.1 (what SSM runs). The same contract as the
+                # bash step: decode the NUL-terminated argv, refuse an argv[0] off
+                # ExecAllow (exit 126), export the lease's three paths, run the argv
+                # VERBATIM. `& $exe @args` would not: 5.1 drops empty arguments and
+                # mangles embedded quotes, so each argument is quoted by the
+                # CommandLineToArgvW rules and started through .NET. No ${...} in
+                # it (Sub), and no doubled brace but SSM's own parameters.
+                runCommand:
+                  - !Sub
+                    - |
+                      $ErrorActionPreference = 'Stop'
+                      $allow = @('${Allow}' -split ' ' | Where-Object { $_ })
+                      $text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{ Argv }}'))
+                      if ($text.Length -eq 0 -or $text[-1] -ne [char]0) { [Console]::Error.WriteLine('canopy exec: empty argv'); exit 126 }
+                      $argv = $text.Substring(0, $text.Length - 1).Split([char]0)
+                      if (-not ($allow -ccontains $argv[0])) {
+                        [Console]::Error.WriteLine("canopy exec: '" + $argv[0] + "' is not on this capability's exec allow list (" + ($allow -join ' ') + ")")
+                        exit 126
+                      }
+                      $env:CANOPY_LEASE_ID = '{{ LeaseId }}'
+                      $env:CANOPY_LEASE_IN = '{{ LeaseIn }}'
+                      $env:CANOPY_LEASE_OUT = '{{ LeaseOut }}'
+                      function Quote-Arg([string]$a) {
+                        if ($a.Length -gt 0 -and $a -notmatch '[\s"]') { return $a }
+                        $sb = New-Object Text.StringBuilder
+                        [void]$sb.Append('"')
+                        $bs = 0
+                        foreach ($c in $a.ToCharArray()) {
+                          if ($c -eq [char]'\') { $bs++; continue }
+                          if ($c -eq [char]'"') { [void]$sb.Append([char]'\', 2 * $bs + 1) }
+                          elseif ($bs -gt 0) { [void]$sb.Append([char]'\', $bs) }
+                          [void]$sb.Append($c)
+                          $bs = 0
+                        }
+                        if ($bs -gt 0) { [void]$sb.Append([char]'\', 2 * $bs) }
+                        [void]$sb.Append('"')
+                        return $sb.ToString()
+                      }
+                      $exe = (Get-Command -Name $argv[0] -CommandType Application | Select-Object -First 1).Source
+                      $psi = New-Object Diagnostics.ProcessStartInfo
+                      $psi.FileName = $exe
+                      $psi.Arguments = (@($argv | Select-Object -Skip 1) | ForEach-Object { Quote-Arg $_ }) -join ' '
+                      $psi.UseShellExecute = $false
+                      $psi.RedirectStandardOutput = $true
+                      $psi.RedirectStandardError = $true
+                      $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
+                      $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
+                      $p = [Diagnostics.Process]::Start($psi)
+                      $err = $p.StandardError.ReadToEndAsync()
+                      [Console]::Out.Write($p.StandardOutput.ReadToEnd())
+                      $p.WaitForExit()
+                      [Console]::Error.Write($err.Result)
+                      exit $p.ExitCode
+                    - Allow: !Join [" ", !Split [",", !Ref ExecAllow]]
+            - action: aws:runShellScript
+              name: exec
+              inputs:
+                timeoutSeconds: "{{ ExecutionTimeout }}"
+                # The agent runs this with /bin/sh; the body needs bash (read -d ''),
+                # so it is handed to bash whole. No ${...} in it: CloudFormation's
+                # Sub would take it. {{ }} is SSM's own substitution, of values the
+                # allowedPatterns above have already restricted.
+                runCommand:
+                  - !Sub
+                    - |
+                      canopy_exec=$(cat <<'CANOPY_EXEC'
+                      set -eu
+                      allow="${Allow}"
+                      argv_file=$(mktemp)
+                      trap 'rm -f "$argv_file"' EXIT
+                      printf '%s' '{{ Argv }}' | base64 -d > "$argv_file"
+                      set --
+                      while IFS= read -r -d '' arg; do set -- "$@" "$arg"; done < "$argv_file"
+                      rm -f "$argv_file"
+                      trap - EXIT
+                      if [ "$#" -lt 1 ]; then echo "canopy exec: empty argv" >&2; exit 126; fi
+                      ok=""
+                      for name in $allow; do if [ "$name" = "$1" ]; then ok=1; fi; done
+                      if [ -z "$ok" ]; then
+                        echo "canopy exec: '$1' is not on this capability's exec allow list ($allow)" >&2
+                        exit 126
+                      fi
+                      export CANOPY_LEASE_ID='{{ LeaseId }}'
+                      export CANOPY_LEASE_IN='{{ LeaseIn }}'
+                      export CANOPY_LEASE_OUT='{{ LeaseOut }}'
+                      exec "$@"
+                      CANOPY_EXEC
+                      )
+                      exec /bin/bash -c "$canopy_exec"
+                    - Allow: !Join [" ", !Split [",", !Ref ExecAllow]]
       Tags:
         - { Key: owner, Value: !Ref OwnerTag }
         - { Key: capability, Value: !Ref Capability }

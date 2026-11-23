@@ -2,6 +2,19 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.40.0 — 2026-11-23
+
+**An ephemeral capability can run Windows machines.**
+
+- `ondemand-capability.cfn.yaml` takes `Platform` (`linux`, the default, or `windows`). On
+  `windows` the exec document's one step is `aws:runPowerShellScript` with the bash step's
+  contract: decode the NUL-terminated argv, refuse an `argv[0]` off `ExecAllow` (exit 126),
+  export `CANOPY_LEASE_ID`/`_IN`/`_OUT`, and run the argv verbatim (each argument quoted by the
+  CommandLineToArgvW rules and started through .NET, since Windows PowerShell 5.1's `&` drops
+  empty arguments and mangles quotes). Still ONE step, because the broker reads an invocation
+  with no `PluginName`. A linux stack renders exactly the document it had, so updating it makes
+  no new document version.
+
 ## 0.39.0 — 2026-11-23
 
 **The site agents response has its own size cap.**
