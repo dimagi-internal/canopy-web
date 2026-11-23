@@ -90,8 +90,8 @@ export function VaultRow({ entry: e, lastUsed, revealed, canEdit, busy, detailsO
                   variant="ghost"
                   onClick={onDelete}
                   disabled={busy}
-                  aria-label={`Delete the stored value for ${e.name}`}
-                  title={`Delete the stored value for "${e.name}" (cannot be undone)`}
+                  aria-label={e.set ? `Delete the stored value for ${e.name}` : `Remove ${e.name}`}
+                  title={e.set ? `Delete the stored value for "${e.name}" (cannot be undone)` : `Remove "${e.name}" from this vault`}
                   className="text-muted-foreground hover:text-destructive"
                 >
                   ✕
