@@ -31,8 +31,9 @@ agent's own SENSITIVE conversations, which are sealed to their people's vault ke
   the login, no contact), unexpired, still unconfirmed, and for the login's own agent, for
   no agent in particular, or for a sibling agent: another agent in the same workspace
   whose own test key is also on (the login lends only its own identity to that page,
-  `_may_lend_to`). It lasts the usual window, 30 minutes at most (`host_grants.confirm`). It confirms no person's grant and acts as no person: the
-  permission is to act as the agent's own login on that page.
+  `_may_lend_to`). It lasts the usual window, 30 minutes at most (`host_grants.confirm`).
+  It confirms no person's grant and acts as no person: the permission is to act as the
+  agent's own login on that page.
 * **It never** registers a passkey or steps up: the login has none, and both refuse it
   (`passkeys.stepup.require_a_person`).
 * **Turning it off** deletes the key and every conversation-key copy wrapped to it, and
