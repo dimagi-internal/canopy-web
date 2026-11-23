@@ -72,7 +72,9 @@ def turn_of_request(request):
     if cred.get("turn_id"):
         return Turn.objects.select_related("chat_session").filter(pk=cred["turn_id"]).first()
     user = getattr(request, "user", None)
-    return turn_asker.serving_turn(user) if getattr(user, "is_authenticated", False) else None
+    if not getattr(user, "is_authenticated", False):
+        return None
+    return turn_asker.serving_turn(user, session_login_live=True)
 
 
 def run_of_turn(turn) -> BrainRun | None:

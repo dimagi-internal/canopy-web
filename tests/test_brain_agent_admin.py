@@ -212,6 +212,28 @@ def test_an_agent_with_no_person_behind_its_turn_manages_nothing(w):
     assert b"No person answers for this turn" in r.content     # told what to change, never who
 
 
+def test_a_held_laptop_session_manages_between_the_persons_messages(w):
+    """The person's message finished but their laptop session is still held: the agent still answers to them,
+    sees what they see and manages; released, it does neither."""
+    from apps.canopy_sessions.models import RunnerBinding
+
+    laptop = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=w["connect_admin"],
+                                   workspace=w["connect"], last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    RunnerAssignment.objects.create(agent=w["cee"], runner=laptop, rank=0)
+    conv = Session.objects.create(workspace=w["connect"], agent=w["cee"], origin=Session.ORIGIN_WEB,
+                                  status=Session.ACTIVE)
+    RunnerBinding.objects.create(session=conv, runner=laptop, session_key="cee-chat")
+    turn = _turn(w, None, w["connect_admin"], chat_session=conv)
+    token = turn_agent_tokens.issue_for_session(turn, laptop, conv)["token"]
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    r = Client().get("/api/w/connect/brain/outputs/", **bearer_headers(token))
+    assert [o["title"] for o in r.json()] == ["connect finding"]
+    assert _call(w, "set_learning_reads", token).status_code == 200
+    RunnerBinding.objects.filter(session=conv).update(runner=None)
+    assert Client().get("/api/w/connect/brain/outputs/", **bearer_headers(token)).json() == []
+    assert _call(w, "set_learning_reads", token).status_code == 403
+
+
 def test_a_scheduled_turn_answers_to_its_schedules_creator(w):
     ok = _login(w, kind="system", via="schedule", assurance="internal")
     assert _call(w, "set_learning_reads", ok).status_code == 200

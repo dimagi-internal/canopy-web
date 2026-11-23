@@ -6,7 +6,8 @@ inherited from above) or a canopy admin's, and is open to two kinds of caller:
 
 * the PERSON, as themselves (`person.refusal`: their browser session or a PAT they minted by hand, never over MCP);
 * an ADMIN AGENT: the agent's own canopy login, inside its own running turn (the per-turn login canopy issued for it,
-  `turn_asker.serving_turn`; never a stored token), where the agent's login AND the person the turn answers to
+  or on a laptop the session-scoped login while its session is held, `turn_asker.serving_turn`; never a stored token),
+  where the agent's login AND the person the turn answers to
   (`turn_asker.accountable_person`: its verified asker, the person it was started for, or the schedule's creator) may
   each manage that workspace. An agent with no accountable person behind its turn manages nothing.
 
@@ -139,7 +140,7 @@ def _agent(request) -> tuple[Actor | None, str]:
     # client, a delegated or act-as token and a caller token speak for a person or a turn's asker, never the agent.
     if kinds.of_request(request) is not kinds.KINDS[kinds.PAT]:
         return None, "credential"
-    turn = turn_asker.serving_turn(user)
+    turn = turn_asker.serving_turn(user, session_login_live=True)
     agent = turn_asker.turn_agent(turn) if turn is not None else None
     if agent is None or not agent.is_own_login(user):
         return None, "not_in_its_turn"

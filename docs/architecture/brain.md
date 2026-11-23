@@ -95,7 +95,8 @@ made it, and the act is a `SettingChange`.
 and scope (and becoming accountable for a learner nobody answers for, which makes the PERSON accountable, never the
 agent), targets (add, take away, budget), Run now, a `system` or `project` finding's status, acknowledging a flag, and
 the brain page's reads and why-not lookup. The caller is the person as themselves (`person.refusal`), or an agent's
-own login inside its own running turn (the per-turn login, `turn_asker.serving_turn`; never a stored token) whose
+own login inside its own running turn (the per-turn login, or a laptop's session login while held:
+`turn_asker.serving_turn`; never a stored token) whose
 turn answers to a person (`turn_asker.accountable_person`: its verified asker, the person it was started for, or its
 schedule's creator); `Actor.may_manage` asks that the login AND that person each own or administer the workspace
 (`perms.BRAIN_MANAGE`, inherited roles count) or be a canopy admin. A project target, and a `project` finding, are also
