@@ -341,6 +341,10 @@ def install_adapter(out: Path, plat: str, native: bool, cache: Path, versions: d
     if not m or m.group(1) != spec["package"]:
         raise SystemExit(f"versions.json pins {spec['package']} but canopy_acp.client.ADAPTER_PACKAGE "
                          f"is {m and m.group(1)} — update versions.json")
+    v = re.search(r'^ADAPTER_VERSION = "([^"]+)"', client, re.M)
+    if not v or v.group(1) != spec["version"]:
+        raise SystemExit(f"versions.json pins {spec['version']} but canopy_acp.client.ADAPTER_VERSION "
+                         f"is {v and v.group(1)} — keep the two the same")
     log(f"installing the ACP adapter {spec['package']}@{spec['version']}")
     run([*npm_cmd(out, plat, native), "install", "-g", "--prefix", out / "acp", "--omit=dev",
          *target_os_cpu(plat), f"{spec['package']}@{spec['version']}"], env=npm_env(out, plat, native, cache))

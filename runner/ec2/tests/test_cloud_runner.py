@@ -1832,7 +1832,7 @@ def test_an_adapter_already_on_path_is_left_alone(cloud_runner, monkeypatch):
     assert runs == [], "reinstalled an adapter that was already installed"
     assert not any("fall back" in m for m in logs), (
         f"claimed a fallback that did not happen: {logs}")
-    assert any("already on PATH" in m for m in logs), logs
+    assert any("already present" in m for m in logs), logs
 
 
 def test_the_install_targets_a_prefix_the_service_user_can_write(cloud_runner, monkeypatch):
@@ -1842,7 +1842,7 @@ def test_the_install_targets_a_prefix_the_service_user_can_write(cloud_runner, m
     cmd = runs[0]
     assert "--prefix" in cmd, f"bare global install cannot work as this user: {cmd}"
     assert cmd[cmd.index("--prefix") + 1].endswith("/.local"), cmd
-    assert cmd[-1] == cloud_runner.ACP_ADAPTER_PACKAGE, cmd
+    assert cmd[-1].startswith(cloud_runner.ACP_ADAPTER_PACKAGE + "@"), f"unpinned install: {cmd}"
 
 
 def test_nothing_is_installed_when_the_executor_is_not_acp(cloud_runner, monkeypatch):
