@@ -112,3 +112,21 @@ class VaultClientReportIn(StrictModel):
     #: Whether this browser already remembered a Secret Key (the key itself is never sent).
     secret_key_remembered: bool | None = None
     page: str = Field(default="", max_length=100)
+
+
+class OwnTestKeyIn(StrictModel):
+    """An agent's own login turns its own test vault key on or off."""
+
+    enabled: bool
+
+
+class OwnTestKeyOut(StrictModel):
+    """The agent login's own test vault key: the switch, and the key if one was made.
+    `conversations` counts the sensitive conversations it holds a copy of the key to."""
+
+    agent: str = Field(description="The slug of the agent whose login this is.")
+    enabled: bool
+    has_key: bool = False
+    key_jkt: str = ""
+    key_made_at: dt.datetime | None = None
+    conversations: int = 0

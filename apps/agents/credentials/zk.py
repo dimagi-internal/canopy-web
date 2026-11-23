@@ -462,12 +462,13 @@ def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
     (those agents then list the person as pending).
 
     A login that is not a person writes one only as an agent's TEST vault key
-    (`login_test_key.check_keyset_write`): first key only, passphrase seals only."""
+    (`login_test_key.check_keyset_write`): passphrase seals only, and a second one only
+    as a `replace`, which drops everything the old key held (`login_test_key.drop_held`)."""
     from . import login_test_key  # cycle: login_test_key -> zk (disable)  # noqa: PLC0415
 
     def _test_key_check(exists: bool) -> None:
         try:
-            login_test_key.check_keyset_write(user, seals=seals or [], exists=exists)
+            login_test_key.check_keyset_write(user, seals=seals or [], exists=exists, replace=replace)
         except login_test_key.NotAPerson as exc:
             raise ZkError(exc.status, exc.code, str(exc)) from exc
 
@@ -507,6 +508,9 @@ def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
                               "you already have a vault key; send replace: true to start a new one "
                               "(every agent must then grant you again)")
             forget_member_wraps(user)
+            if not login_test_key.is_person(user):
+                # A test key's new key starts with nothing the old one was given.
+                login_test_key.drop_held(user)
         if ks is None:
             ks = UserVaultKeyset.objects.create(user=user, public_jwk=jwk, seals=checked)
         else:

@@ -6532,10 +6532,11 @@ export interface paths {
          *     login), so a headless harness signed in as the agent can take part in its own
          *     sensitive conversations. That key receives only copies of the keys of
          *     conversations the login is itself in — never a copy of any vault's key, never
-         *     an endorsement, never a device approval. Turning it on needs an owner or admin
-         *     of the agent at a browser with a fresh passkey step-up; 409 `no_agent_login`
-         *     when the agent has no login of its own. Turning it off deletes the key and every
-         *     conversation-key copy wrapped to it.
+         *     an endorsement, never a device approval. Here an owner or admin of the agent turns
+         *     it on at a browser with a fresh passkey step-up; the agent's own login may also turn
+         *     its own on or off with no passkey (`PUT /api/vault/test-key`). 409 `no_agent_login`
+         *     when the agent has no login of its own. Turning it off deletes the key and
+         *     everything it held; an admin's off is the kill switch.
          */
         readonly put: operations["set_test_vault_key"];
         readonly post?: never;
@@ -9791,12 +9792,43 @@ export interface paths {
          *     stored one is 409 `zk_keyset_exists` unless `replace` is true, which also
          *     drops every agent's member wrap to the old key.
          *
-         *     An agent's own login, while an admin has turned its test vault key on, makes
-         *     its FIRST key here with passphrase seals only, and with no passkey step-up (it
-         *     has no passkey, and may hold none); anything else from such a login is refused
-         *     (403 `not_a_person`, 409 `test_key_exists`, 422 `test_key_passphrase_only`).
+         *     An agent's own login, while its test vault key is on (`PUT /api/vault/test-key`),
+         *     makes its key here with passphrase seals only, and with no passkey step-up (it
+         *     has no passkey, and may hold none). A second key must send `replace: true`, which
+         *     drops everything the old one held: its conversation copies, page permissions and
+         *     connections. Anything else from such a login is refused (403 `not_a_person`,
+         *     409 `test_key_exists`, 422 `test_key_passphrase_only`).
          */
         readonly put: operations["put_vault_keyset"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vault/test-key": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * My agent test vault key (an agent's own login)
+         * @description For an agent's own login only: whether its test vault key is on, and the key if
+         *     one was made. 403 for a person or any credential that is not the login's own.
+         */
+        readonly get: operations["get_own_test_key"];
+        /**
+         * Turn my agent test vault key on or off (agent login)
+         * @description `{enabled}`. An agent's own login turns its own test vault key on or off, with no
+         *     passkey: the key only ever receives copies of conversations the agent is already in,
+         *     and its own connections are for logins its harness already holds (docs/architecture/
+         *     vault.md § An agent login's test vault key). Turning it off deletes the key and
+         *     everything it held. An admin of the agent can do the same from the agent page.
+         */
+        readonly put: operations["put_own_test_key"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -32639,8 +32671,9 @@ export interface components {
         };
         /**
          * TestVaultKeyIn
-         * @description Turn an agent login's TEST vault key on or off. Its own endpoint, never on the
-         *     agent-repo upsert: an agent must not be able to give its own login a key.
+         * @description Turn an agent login's TEST vault key on or off, as an admin of the agent. Its own
+         *     endpoint, never on the agent-repo upsert. The agent's own login turns its own on or
+         *     off at `PUT /api/vault/test-key`.
          */
         readonly TestVaultKeyIn: {
             /** Enabled */
@@ -39257,6 +39290,45 @@ export interface components {
              * @default false
              */
             readonly replace: boolean;
+        };
+        /**
+         * OwnTestKeyOut
+         * @description The agent login's own test vault key: the switch, and the key if one was made.
+         *     `conversations` counts the sensitive conversations it holds a copy of the key to.
+         */
+        readonly OwnTestKeyOut: {
+            /**
+             * Agent
+             * @description The slug of the agent whose login this is.
+             */
+            readonly agent: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /**
+             * Has Key
+             * @default false
+             */
+            readonly has_key: boolean;
+            /**
+             * Key Jkt
+             * @default
+             */
+            readonly key_jkt: string;
+            /** Key Made At */
+            readonly key_made_at?: string | null;
+            /**
+             * Conversations
+             * @default 0
+             */
+            readonly conversations: number;
+        };
+        /**
+         * OwnTestKeyIn
+         * @description An agent's own login turns its own test vault key on or off.
+         */
+        readonly OwnTestKeyIn: {
+            /** Enabled */
+            readonly enabled: boolean;
         };
         /**
          * VaultClientReportIn
@@ -69589,6 +69661,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["VaultKeysetOut"];
+                };
+            };
+        };
+    };
+    readonly get_own_test_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OwnTestKeyOut"];
+                };
+            };
+        };
+    };
+    readonly put_own_test_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OwnTestKeyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OwnTestKeyOut"];
                 };
             };
         };

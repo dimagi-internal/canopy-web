@@ -246,8 +246,9 @@ class SlackEnabledIn(StrictModel):
 
 
 class TestVaultKeyIn(StrictModel):
-    """Turn an agent login's TEST vault key on or off. Its own endpoint, never on the
-    agent-repo upsert: an agent must not be able to give its own login a key."""
+    """Turn an agent login's TEST vault key on or off, as an admin of the agent. Its own
+    endpoint, never on the agent-repo upsert. The agent's own login turns its own on or
+    off at `PUT /api/vault/test-key`."""
 
     enabled: bool
 

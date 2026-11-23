@@ -997,10 +997,11 @@ def set_test_vault_key(request: HttpRequest, slug: str, payload: TestVaultKeyIn)
     login), so a headless harness signed in as the agent can take part in its own
     sensitive conversations. That key receives only copies of the keys of
     conversations the login is itself in — never a copy of any vault's key, never
-    an endorsement, never a device approval. Turning it on needs an owner or admin
-    of the agent at a browser with a fresh passkey step-up; 409 `no_agent_login`
-    when the agent has no login of its own. Turning it off deletes the key and every
-    conversation-key copy wrapped to it."""
+    an endorsement, never a device approval. Here an owner or admin of the agent turns
+    it on at a browser with a fresh passkey step-up; the agent's own login may also turn
+    its own on or off with no passkey (`PUT /api/vault/test-key`). 409 `no_agent_login`
+    when the agent has no login of its own. Turning it off deletes the key and
+    everything it held; an admin's off is the kill switch."""
     agent = agent_for_admin(request, slug)
     before = login_test_key.state(agent)
     if payload.enabled:
