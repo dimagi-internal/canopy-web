@@ -152,13 +152,20 @@ def _agent(request) -> tuple[Actor | None, str]:
 
 
 def of(request) -> Actor:
-    """The actor behind `request`, else a 403. A learning run's own turn is told so; anyone else is told nothing."""
+    """The actor behind `request`, else a 403. A learning run's own turn is told so, and so is an agent in its own turn
+    that no person answers for (it can only be told what to change, never who); anyone else is told nothing."""
     actor, why = resolve(request)
     if actor is None:
         if why == "brain_run":
             raise ProblemError(403, "A learning run may not manage learning", type_=TYPE_FORBIDDEN,
                                detail="a learning run's own turn cannot change what it reads, its budget, its targets "
                                       "or its findings, or run itself")
+        if why == "no_accountable_person":
+            raise ProblemError(403, "No person answers for this turn, so it may not manage learning",
+                               type_=TYPE_FORBIDDEN,
+                               detail="an agent manages learning only in a turn a person answers for: one a workspace "
+                                      "owner or admin asked for, or a schedule they set up. A turn the agent started "
+                                      "itself answers to no one; ask that person to start it")
         raise ProblemError(403, "Only a person as themselves, or an admin agent in its own turn, may do this",
                            type_=TYPE_FORBIDDEN)
     return actor

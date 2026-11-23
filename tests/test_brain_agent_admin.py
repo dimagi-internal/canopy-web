@@ -182,6 +182,7 @@ def test_an_agent_with_no_person_behind_its_turn_manages_nothing(w):
     token = _login(w, kind="agent", via="dispatch", assurance="internal")
     r = _call(w, "set_learning_reads", token)
     assert r.status_code == 403
+    assert b"No person answers for this turn" in r.content     # told what to change, never who
 
 
 def test_a_scheduled_turn_answers_to_its_schedules_creator(w):
