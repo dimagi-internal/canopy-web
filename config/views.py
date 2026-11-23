@@ -5,6 +5,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.http import FileResponse, HttpResponse, JsonResponse
+from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET
 
@@ -67,8 +68,17 @@ def flat_artifact_gone(request, *args, **kwargs):
 @require_GET
 @ensure_csrf_cookie
 def csrf_view(request):
-    """Force the CSRF cookie to be set. The SPA hits this once at boot."""
-    return JsonResponse({"ok": True})
+    """Force the CSRF cookie to be set, and say the token. The SPA hits this at boot.
+
+    The token is in the body too because a page that cannot read its own cookies from
+    script still has to send it: canopy framed inside the browser extension's side panel
+    (`/ext/panel/`) gets its cookies on every request, but Chrome hides them from
+    `document.cookie` there, so the cookie alone left every write refused (403 CSRF).
+    Only a same-origin page can read this body, and the value is the one a form's
+    `{% csrf_token %}` carries. Never cached: it changes at sign-in."""
+    resp = JsonResponse({"ok": True, "token": get_token(request)})
+    resp["Cache-Control"] = "no-store"
+    return resp
 
 
 def spa_view(request):

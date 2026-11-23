@@ -67,6 +67,12 @@ build, open the panel on a Gmail tab signed out, sign in from the button, click 
 panel: it must show your apps without a reload. If it stays signed out, the cookie is not
 being sent to the framed page, and the fix is a decision about cookies, not a code change here.
 
+The cookies go with requests, but Chrome hides them from `document.cookie` in the framed page, so
+script there can't read the CSRF cookie. `/api/csrf/` therefore also says the token in its body;
+the SPA keeps it (`api/csrf.ts`) and sends it when the cookie reads empty (`api/base.ts::getCsrfToken`).
+The panel asks again each time it checks the session, since a sign-in changes the token. Without
+it every write from the panel, including each Salesforce call an app page makes, is refused 403.
+
 An agent may use the panel as itself (signed in to Google as the agent, e.g. a live end-to-end
 run): it signs in as the agent's login with its normal permissions, nothing to switch on
 ([access.md](access.md) § Browser sign-in for an agent).
