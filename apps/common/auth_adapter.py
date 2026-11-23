@@ -1,7 +1,6 @@
 """Allauth adapters: close local signup, and gate social login on the
 email-domain allowlist (or a pending workspace invite)."""
 import logging
-from collections.abc import Callable
 
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.core.exceptions import ImmediateHttpResponse
@@ -15,22 +14,6 @@ from .auth_domains import allowed_email_domains, email_in_allowlist
 from .log_redact import path_template
 
 logger = logging.getLogger(__name__)
-
-#: The one way an agent's login signs in at a browser: an admin's grant
-#: (`apps/agents/browser_sign_in.py`). `agents` registers the lookup
-#: from its `ready()` (this kit layer never imports it); with none registered, every
-#: agent sign-in is refused. It answers the grant in force for an agent login's user
-#: id, or None.
-_browser_sign_in_grant: Callable[[int], object | None] | None = None
-#: Where a sign-in let through under a grant leaves it on the request, for the
-#: `user_logged_in` receiver that marks the session (`browser_sign_in.mark_session`).
-AGENT_BROWSER_SIGN_IN_ATTR = "_canopy_agent_browser_sign_in"
-
-
-def register_agent_browser_sign_in(lookup: Callable[[int], object | None]) -> None:
-    global _browser_sign_in_grant
-    _browser_sign_in_grant = lookup
-
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     def on_authentication_error(
@@ -148,14 +131,10 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
 
         agent_login = self._agent_login_landed_on(sociallogin, email)
         if agent_login is not None:
-            # An agent's login reaches canopy with tokens; its browser sign-in is
-            # refused unless a person who administers the agent has switched it on
-            # (`apps/agents/browser_sign_in.py`). The session it opens has exactly
-            # the permissions the agent's tokens already have.
-            grant = _browser_sign_in_grant(agent_login) if _browser_sign_in_grant else None
-            if grant is None:
-                self._refuse(request, sociallogin, email, reason=self.AGENT_LOGIN)
-            setattr(request, AGENT_BROWSER_SIGN_IN_ATTR, grant)
+            # An agent's own Google account signs in as the agent's login, like any
+            # account: the session has exactly the permissions the agent's tokens
+            # already have, and every step-up-gated act stays refused to it
+            # (`apps/passkeys/stepup.py::require_a_person`).
             if not sociallogin.is_existing:
                 # The one user `_agent_login_landed_on` matched on this provider-verified
                 # address; the JIT merge never connects onto an agent's login itself.
@@ -200,7 +179,6 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     #: Why a sign-in was refused, for the page (`templates/auth/domain_rejected.html`).
     NOT_ALLOWED = "not_allowed"
     NOT_WORKSPACE = "not_workspace"
-    AGENT_LOGIN = "agent_login"
 
     @staticmethod
     def _refuse(request, sociallogin, email, *, reason=NOT_ALLOWED):

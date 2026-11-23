@@ -266,28 +266,6 @@ class TestVaultKeyOut(StrictModel):
     conversations: int = 0
 
 
-class BrowserSignInIn(StrictModel):
-    """Switch on browser sign-in: until switched off, or for `days` (1 to 30)."""
-
-    days: int | None = Field(default=None, ge=1, le=30)
-    #: What it is for, shown beside the switch and kept on the grant.
-    reason: str = Field(default="", max_length=500)
-
-
-class BrowserSignInOut(StrictModel):
-    """Whether the agent's own Google account may sign in to canopy-web at a browser now,
-    and, while it may, who switched it on, when, and when it ends (`expires_at` null:
-    until switched off)."""
-
-    enabled: bool
-    login_email: str = ""
-    granted_by_email: str = ""
-    granted_at: dt.datetime | None = None
-    expires_at: dt.datetime | None = None
-    reason: str = ""
-    max_days: int
-
-
 class SlackEnabledOut(StrictModel):
     """The switch's new state, and what happened to the agent's `/<slug>` command.
 

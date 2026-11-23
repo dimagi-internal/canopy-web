@@ -4,7 +4,6 @@ import uuid
 
 from django.conf import settings
 from django.db import models
-from django.utils import timezone
 
 from .agent import Agent
 from .members import NamedMember
@@ -739,39 +738,6 @@ class AgentLoginRequest(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"login-request:{self.agent_id}->{self.user_id}:{self.status}"
-
-
-class AgentBrowserSignIn(models.Model):
-    """An admin's permission for the agent's OWN Google account to sign in to canopy-web
-    in a browser (`apps/agents/browser_sign_in.py`).
-
-    By default an agent's login does not open a browser session
-    (`apps/common/auth_adapter.py`); this row allows it, given by a person who
-    administers the agent, until `revoked_at`, or until `expires_at` when an end was
-    set (null: none). At most one is open (unrevoked) per agent. A session
-    made under it is the agent's login with its normal permissions, and ends when the
-    grant does (`browser_sign_in.SessionMiddleware`)."""
-
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="browser_sign_ins")
-    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
-                                   blank=True, related_name="+")
-    granted_at = models.DateTimeField(default=timezone.now)
-    expires_at = models.DateTimeField(null=True, blank=True)
-    revoked_at = models.DateTimeField(null=True, blank=True)
-    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
-                                   blank=True, related_name="+")
-    reason = models.CharField(max_length=500, blank=True, default="")
-
-    class Meta:
-        ordering = ["-granted_at"]
-        constraints = [
-            models.UniqueConstraint(fields=["agent"], condition=models.Q(revoked_at__isnull=True),
-                                    name="one_open_browser_sign_in_per_agent"),
-        ]
-
-    def __str__(self) -> str:  # pragma: no cover
-        end = f"{self.expires_at:%Y-%m-%d %H:%M}" if self.expires_at else "switched off"
-        return f"browser-sign-in:{self.agent_id}:until {end}"
 
 
 class RepoIdentity(models.Model):

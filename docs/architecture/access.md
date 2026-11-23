@@ -99,27 +99,11 @@ one turn really gets is `TurnContext.credentials`). Code asks `stance`; it never
 
 ### Browser sign-in for an agent
 
-**An agent's own Google account opens a browser session only when an admin of the agent has switched it on.** By
-default the adapter refuses it (`templates/auth/domain_rejected.html`, reason `agent_login`): an agent reaches canopy
-with tokens. Work that needs a browser session as the agent (the extension's side panel,
-[browser-extension.md](browser-extension.md), and a live end-to-end test of it) uses an `AgentBrowserSignIn`
-(`apps/agents/models/vault.py::AgentBrowserSignIn`, the rules in `apps/agents/browser_sign_in.py`). It is not gated
-harder than that because the session it opens can do nothing the agent's tokens cannot.
-
-- **Who.** An admin of the agent (`Agent.is_admin`: its owner, a workspace owner, an `AgentAdmin`; a workspace
-  admin is not one) switches it on or off on the agent's Settings → Security tab
-  (`PUT`/`DELETE /api/agents/{slug}/browser-sign-in`, an ordinary setting, so audited). The agent's own login can
-  neither read nor change it, whatever it holds (`apps/agents/api_browser_sign_in.py::_agent`), and an act-as-you
-  grant reaches none of it (`apps/harness/act_as.py::EXCLUDED_PATTERNS`).
-- **How long.** Until switched off, or for 1 to 30 days when an end is set (`expires_at`, null for none). One grant
-  is open at a time; switching on again replaces it.
-- **What it opens.** While it is in force, the adapter signs the agent's Google account in as the agent's login
-  instead of refusing it (`apps/common/auth_adapter.py::register_agent_browser_sign_in`, the lookup `agents`
-  registers). The session is the agent's login with exactly its normal permissions; every step-up-gated act stays
-  refused to it (`apps/passkeys/stepup.py::require_a_person`). Without a grant nothing changes.
-- **How it ends.** The session is marked and its cookie expires no later than the grant's end, if it has one
-  (`apps/agents/browser_sign_in.py::mark_session`); `apps/agents/browser_sign_in.py::SessionMiddleware` signs it out
-  on its first request after the grant expires or is switched off. → `tests/test_agent_browser_sign_in.py`
+**An agent's own Google account signs in at a browser like any account**, as the agent's login
+(`apps/common/auth_adapter.py::pre_social_login`). There is no switch: the session has exactly the permissions the
+agent's tokens already have, and every step-up-gated act stays refused to it
+(`apps/passkeys/stepup.py::require_a_person`). The extension's side panel ([browser-extension.md](browser-extension.md))
+and a live end-to-end test of it use this. → `tests/test_agent_browser_sign_in.py`
 
 ## Workspace roles
 
