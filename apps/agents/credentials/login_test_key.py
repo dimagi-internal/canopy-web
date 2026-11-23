@@ -230,7 +230,7 @@ def may_share_own_connection(request, conn, statement) -> None:
         raise NotAPerson(404, "not_found", "no such connection")
     st = statement if isinstance(statement, dict) else {}
     if st.get("agents") or st.get("my_computers") or st.get("endorsers"):
-        raise NotAPerson(403, "test_key_share_too_broad",
+        raise NotAPerson(403, "share_too_broad",
                          "an agent's test login shares its own connection with nobody: no agent, no "
                          "computer, no endorser; it may only turn on \"canopy-web can use this\"")
 

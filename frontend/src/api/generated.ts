@@ -627,7 +627,7 @@ export interface paths {
          *     own login, while its agent test key is on, shares only its own connection, lent to
          *     nobody (it may name canopy-web), and with no passkey, from anywhere
          *     (`login_test_key.may_share_own_connection`; 403 `not_a_person` /
-         *     `test_key_share_too_broad` otherwise).
+         *     `share_too_broad` otherwise).
          */
         readonly put: operations["share_connection"];
         readonly post?: never;

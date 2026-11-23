@@ -106,7 +106,7 @@ def test_lending_it_to_anyone_is_refused(w, key, broader):
     body = _body(w, conn, canopy_web=server_key.thumbprint())
     body["statement"][broader] = [str(w.eva.pk)] if broader == "agents" else ["A" * 43]
     r = _put(_browser(w.login), conn, body)
-    assert r.status_code == 403 and r.json()["error"] == "test_key_share_too_broad"
+    assert r.status_code == 403 and r.json()["error"] == "share_too_broad"
     conn.refresh_from_db()
     assert conn.state == Connection.UNSHARED
 
