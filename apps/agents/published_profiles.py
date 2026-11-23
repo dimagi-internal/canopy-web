@@ -239,7 +239,7 @@ def parse(doc) -> dict:
             continue
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
                           "write_paths", "input", "sites", "ceiling", "own_login", "data",
-                          "contact_scoped", "surface"}
+                          "contact_scoped", "surface", "page_lean", "page_model"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         entry = cap.get("entry")
@@ -359,6 +359,7 @@ def _sites(cap: dict, name: str) -> dict:
                                  f"{name}.surface")
         # Written only when set, as `contact_scoped`.
         out["surface"] = surface
+    out.update(_page_turn_settings(cap, name, sites))
     own = _own_login(cap.get("own_login"), name, sites)
     if own:
         # Written only when present, so every interface published before the key
@@ -368,6 +369,35 @@ def _sites(cap: dict, name: str) -> dict:
 
 
 _CREDENTIAL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
+#: A model name as an agent CLI's `--model` takes one (`haiku`, `claude-sonnet-5-5`,
+#: `opus[1m]`); the runner applies the same shape before it passes one on.
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}$")
+
+
+def _page_turn_settings(cap: dict, name: str, sites: list[str]) -> dict:
+    """`page_lean:` and `page_model:` — how a turn held on one of the entry's sites' pages
+    runs, for everyone there (the owner included): `page_lean` starts it with only what a
+    page needs (canopy's plugin, the page and gateway tools, the page's context in its
+    opening message: `page_turn`), and `page_model` is the model it starts on
+    (`claim_payload.conversation_model`). Both only change how fast and how big a page
+    turn is; neither widens what it may do. Written only when set, so an interface
+    published before the keys existed parses to exactly what it did."""
+    out: dict = {}
+    lean = cap.get("page_lean", False)
+    if not isinstance(lean, bool):
+        raise InterfaceError(f"{name}.page_lean must be true or false", f"{name}.page_lean")
+    model = cap.get("page_model") or ""
+    if not isinstance(model, str) or (model and not _MODEL_NAME.match(model)):
+        raise InterfaceError(f"{name}.page_model must be a model name (e.g. `sonnet`, "
+                             "`claude-haiku-5-5`)", f"{name}.page_model")
+    if (lean or model) and not sites:
+        raise InterfaceError(f"{name}.page_lean / page_model need `sites:` — they say how a turn on "
+                             "those sites' pages runs", f"{name}.page_lean")
+    if lean:
+        out["page_lean"] = True
+    if model:
+        out["page_model"] = model
+    return out
 
 
 def _own_login(value, name: str, sites: list[str]) -> dict[str, list[str]]:
@@ -511,16 +541,38 @@ def own_login_of(agent, site: str) -> list[str]:
     return sorted(set((_cap_for_site(agent, site).get("own_login") or {}).get(site) or []))
 
 
+def page_lean_of(agent, site: str) -> bool:
+    """Whether the agent's owner asked for turns on `site`'s pages to start lean
+    (`page_lean:` of the entry that lists it)."""
+    return bool(site) and _cap_for_site(agent, site).get("page_lean") is True
+
+
+def page_model_of(agent, site: str) -> str:
+    """The model turns on `site`'s pages start on (`page_model:`), or "" for the agent's own."""
+    return str(_cap_for_site(agent, site).get("page_model") or "") if site else ""
+
+
 def page_turn(turn, agent=None) -> dict | None:
     """What a turn held on a site's page is told, and what its runner withholds:
-    `{"site", "withheld"}` — the site, and the agent's own credential names for it
-    (`own_login_of`) — or None for any other turn. The claim carries it to the
-    runner (`ClaimedTurnOut.page_site`) and the caller envelope to the agent."""
+    `{"site", "withheld"}` — the site and the agent's own credential names for it
+    (`own_login_of`), plus `"lean": True` when the turn starts lean (`page_lean_of`) — or None for
+    any other turn. The claim carries it to the runner (`ClaimedTurnOut.page_site`)
+    and the caller envelope to the agent."""
     agent = agent if agent is not None else getattr(turn, "acting_agent", None)
     site = page_site_of(turn, agent)
     if not site:
         return None
-    return {"site": site, "withheld": own_login_of(agent, site)}
+    block = {"site": site, "withheld": own_login_of(agent, site)}
+    if page_lean_of(agent, site):
+        # Only when set, so every other page turn is answered exactly as before.
+        block["lean"] = True
+    return block
+
+
+def lean_page_turn(turn) -> bool:
+    """Is `turn` a page turn whose agent asked for lean page turns (`page_turn`)?"""
+    block = page_turn(turn) if turn is not None else None
+    return bool(block and block.get("lean"))
 
 
 def published(iface: dict) -> bool:

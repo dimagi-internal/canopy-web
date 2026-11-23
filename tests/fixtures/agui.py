@@ -85,6 +85,9 @@ ROUND_TRIP_FRAMES = [
                             "requested_by_name": "Ada", "status": "pending", "decided_by": "",
                             "decided_at": None, "created_at": "2026-10-23T12:00:00+00:00"}]}},
     {"event": "session.stop", "data": {"state": "failed"}},
+    # The reply being written, whole so far (`chat.live_text`, never stored).
+    {"event": "chat.live_text", "data": {"message_id": "live:t1:0", "turn_id": "t1",
+                                         "text": "EHA is furthest behind"}},
     {"event": "session.activity", "data": {"state": "working"}},
     {"event": "session.subagents", "data": {"subagents": [{
         "agent_id": "a1", "tool_use_id": "toolu_1", "parent_agent_id": "",

@@ -658,6 +658,9 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     )
     audit(event=EmbedAuditLog.MINT, request=request, app=app,
           detail=f"contact={contact.identity} started session {session.id} with {agent.slug}")
+    from apps.harness import prepare  # noqa: PLC0415 — harness loads with a call
+
+    prepare.ring(session)
     return _session_out(session)
 
 

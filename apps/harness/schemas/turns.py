@@ -304,6 +304,11 @@ class ClaimPageSiteOut(Schema):
     # (`own_login:` in its interface). The runner leaves them out of this turn's
     # environment: on a page the agent reaches the site only as the person who sent.
     withheld: list[str] = []
+    # The agent's owner asked for turns on this site's pages to start lean
+    # (`page_lean:`): the runner loads canopy's plugin only, and opens the turn with the
+    # page's own context (`GET /turns/{id}/page-brief`). A runner that does not know the
+    # field runs the turn as before.
+    lean: bool = False
 
 
 class InvocationOut(Schema):
@@ -453,6 +458,33 @@ class TurnEventsOut(Schema):
 
 class TurnEventCountOut(Schema):
     count: int
+
+
+class PageBriefOut(Schema):
+    """A lean page turn's opening context (`harness.page_brief`)."""
+
+    # The block the runner puts at the top of the turn's prompt; "" when there is none.
+    text: str = ""
+    site: str = ""
+    # How many of the site's tools it lists.
+    tools: int = 0
+    # Why the site's tools could not be listed for the person ("" when they were).
+    refused: str = ""
+
+
+class LiveTextIn(Schema):
+    """The reply an agent is writing right now, for the people watching its chat."""
+
+    # Which reply of the turn (0 for the first; the next after a tool call is 1, ...).
+    message: int = Field(ge=0, le=10_000)
+    # Everything it has written of that reply so far — whole, never a fragment, so a
+    # watcher that missed one still shows all of it.
+    text: str = Field(max_length=200_000)
+
+
+class LiveTextOut(Schema):
+    # False when nobody hears it (a sensitive conversation's words never stream).
+    sent: bool
 
 
 class TurnStartIn(Schema):

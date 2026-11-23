@@ -74,6 +74,7 @@ import glob
 import hashlib
 import hmac
 import http.client
+import inspect
 import io
 import json
 import os
@@ -5626,6 +5627,10 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             _TURN_ENV.relay_turn = ""
         position, on_flushed = _acp_progress_hooks(turn_id) if relay_spawn else (None, None)
         extra = {k: v for k, v in (("ask_human", ask_human), ("spawn", relay_spawn)) if v is not None}
+        if getattr(_TURN_ENV, "lean", False) and _takes_kwarg(core.AcpAgent, "session_meta"):
+            extra["session_meta"] = _lean_session_meta()
+        live = getattr(_TURN_ENV, "live_text", None)
+        live_kw = {"on_text": live} if live is not None and _takes_kwarg(drive_turn, "on_text") else {}
         make_agent = core.AcpAgent
         if extra:
             def make_agent(**kwargs):
@@ -5642,6 +5647,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             mode=ACP_PERMISSION_MODE,
             session_start_timeout=ACP_SESSION_START_TIMEOUT_SECONDS,
             flush_seconds=TRANSCRIPT_FLUSH_SECONDS, clock=time.time, log=_log,
+            **live_kw,
             **({"position": position, "on_flushed": on_flushed} if position else {}))
     except TurnError as exc:
         _log(f"turn {turn_id[:8]}: ACP executor failed: {exc.detail}")
@@ -8554,7 +8560,16 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     if session_id:
         path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
         clone = pathlib.Path(AGENT_ROOT) / slug if slug else None
-        if clone is not None and (clone / ".git").exists():
+        if clone is not None and (clone / ".git").exists() and getattr(_TURN_ENV, "lean", False):
+            # A lean page turn loads no agent plugin (nothing to refresh), and trusts a
+            # clone fetched lately — by a `prepare` (`_prepare_session`) or another turn.
+            with _session_prep_lock(session_id):
+                fetch_env = _clone_refresh_env(slug, env)
+                if not path.exists() and _clone_age(clone, time.time()) > LEAN_FETCH_FRESH_SECONDS:
+                    _fetch_clone(clone, fetch_env, pull=True)
+                if not path.exists():
+                    _ensure_session_worktree(clone, path, env=fetch_env)
+        elif clone is not None and (clone / ".git").exists():
             # Fetched with the runner's own refresh identity when the turn has none (a
             # caller's confined turn): the session is cut from origin/main, so a fetch that
             # fails leaves it on the agent's old skills. Never put in the turn's env.
@@ -13554,6 +13569,193 @@ def _turn_model(turn: dict) -> str:
     return model if _MODEL_NAME.fullmatch(model) else ""
 
 
+# ── lean page turns ─────────────────────────────────────────────────────────
+#
+# A turn held on a host site's page whose agent's owner asked for it (canopy-web
+# `page_site.lean`, the entry's `page_lean:`) starts with only what a page needs, so
+# a question asked in the panel is answered in seconds rather than a minute:
+#
+# * no plugin but canopy's (every other agent plugin on this box loads its skills,
+#   hooks and MCP servers into every session otherwise), and none of the worktree's
+#   project settings or CLAUDE.md (`_lean_session_meta`);
+# * canopy-web lists only the page and gateway tools for it (`turn_scope.lean_listing`);
+# * the page's state and its site's tools are fetched while the CLI starts and open
+#   the prompt (`_PageBrief`), so the first model call can go straight to `site_call`;
+# * no plugin refresh, connection staging or clone fetch that a prepared conversation
+#   (`_prepare_session`) or a recent fetch already covers.
+#
+# What it may do is unchanged: the turn's profile, its credentials, the withheld
+# own-login names and every rail are the same as any page turn's.
+
+#: A lean turn trusts a clone fetched this recently and does not fetch it again.
+LEAN_FETCH_FRESH_SECONDS = float(os.environ.get("LEAN_FETCH_FRESH_SECONDS", "600"))
+#: How long a lean turn waits for its page brief once the CLI is up.
+PAGE_BRIEF_WAIT_SECONDS = float(os.environ.get("PAGE_BRIEF_WAIT_SECONDS", "8"))
+#: The plugin a lean page turn keeps: canopy's (its hooks say who is asking and hold the
+#: rails; its canopy-web server is the page's tools).
+LEAN_KEEP_PLUGINS = frozenset({"canopy@canopy"})
+#: How often a page turn's reply being written is sent to the people watching it.
+LIVE_TEXT_EVERY_SECONDS = float(os.environ.get("LIVE_TEXT_EVERY_SECONDS", "0.4"))
+
+
+def _takes_kwarg(fn, name: str) -> bool:
+    """Does `fn` take keyword `name`? canopy_acp is imported off the runner's clone, which
+    can lag this file by a start, so a newer keyword is passed only when it is there."""
+    try:
+        return name in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _lean_page(turn: dict) -> bool:
+    """Does canopy-web ask for this turn to start lean (`page_site.lean`)?"""
+    block = turn.get("page_site")
+    return isinstance(block, dict) and block.get("lean") is True
+
+
+def _installed_plugins(home: pathlib.Path | None = None) -> list[str]:
+    try:
+        d = json.loads(((home or pathlib.Path.home()) / ".claude" / "plugins" /
+                        "installed_plugins.json").read_text())
+        return sorted(str(k) for k in (d.get("plugins") or {}))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+
+
+def _lean_session_meta(home: pathlib.Path | None = None) -> dict:
+    """`session/new` `_meta` for a lean page turn (claude-agent-acp passes
+    `claudeCode.options` to the Agent SDK): user settings only (so no project
+    CLAUDE.md or settings of the agent's worktree) and every installed plugin but
+    canopy's switched off for this session (flag settings outrank the user's)."""
+    off = {p: False for p in _installed_plugins(home) if p not in LEAN_KEEP_PLUGINS}
+    return {"claudeCode": {"options": {"settingSources": ["user"],
+                                       "settings": {"enabledPlugins": off}}}}
+
+
+class _PageBrief:
+    """A lean turn's page brief (`GET /turns/{id}/page-brief`), fetched on its own
+    thread while the turn's working copy and CLI get ready."""
+
+    def __init__(self, turn_id: str):
+        self.turn_id = turn_id
+        self.text = ""
+        self._done = threading.Event()
+        threading.Thread(target=self._fetch, daemon=True, name=f"brief-{turn_id[:8]}").start()
+
+    def _fetch(self) -> None:
+        started = time.time()
+        try:
+            status, body = _api("GET", f"/turns/{self.turn_id}/page-brief")
+            if status == 200 and isinstance(body, dict):
+                self.text = str(body.get("text") or "")
+            _log(f"turn {self.turn_id[:8]}: page brief {len(self.text)} chars in "
+                 f"{time.time() - started:.1f}s (http {status})")
+        except Exception as exc:  # noqa: BLE001 — the turn runs without it
+            _log(f"warn: turn {self.turn_id[:8]}: no page brief ({exc})")
+        finally:
+            self._done.set()
+
+    def wait(self, timeout: float = PAGE_BRIEF_WAIT_SECONDS) -> str:
+        self._done.wait(timeout)
+        return self.text
+
+
+def _with_page_brief(prompt: str, brief: str) -> str:
+    """The prompt with the page brief above it. A prompt that opens with a plugin command
+    keeps it first (the CLI reads a slash command only at the very start)."""
+    if not brief:
+        return prompt
+    if prompt.startswith("/"):
+        first, sep, rest = prompt.partition("\n")
+        return f"{first}\n\n{brief}\n\n{rest}" if sep else f"{first}\n\n{brief}"
+    return f"{brief}\n\n{prompt}"
+
+
+class _LiveText:
+    """`on_text` for a page turn's ACP stream: the reply being written, whole so far,
+    to `POST /turns/{id}/live-text` at most every LIVE_TEXT_EVERY_SECONDS, from a thread
+    of its own so the stream never waits on the network."""
+
+    def __init__(self, turn_id: str, clock=time.monotonic, post=None):
+        self.turn_id = turn_id
+        self._clock = clock
+        self._post = post or (lambda body: _api("POST", f"/turns/{turn_id}/live-text", body))
+        self._pending: tuple[int, str] | None = None
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._stopped = False
+        self._off = False
+        threading.Thread(target=self._loop, daemon=True, name=f"live-{turn_id[:8]}").start()
+
+    def __call__(self, index: int, text: str) -> None:
+        if self._off:
+            return
+        with self._lock:
+            self._pending = (index, text)
+        self._wake.set()
+
+    def _loop(self) -> None:
+        while not self._stopped:
+            self._wake.wait(1.0)
+            self._wake.clear()
+            with self._lock:
+                pending, self._pending = self._pending, None
+            if pending is None:
+                continue
+            try:
+                status, body = self._post({"message": pending[0], "text": pending[1][:200_000]})
+                if status in (404, 405, 409) or (status == 200 and not (body or {}).get("sent", True)):
+                    self._off = True  # an older server, an ended turn, or nobody hears it
+            except Exception:  # noqa: BLE001 — a live view never costs the turn
+                pass
+            time.sleep(LIVE_TEXT_EVERY_SECONDS)
+
+    def stop(self) -> None:
+        self._stopped = True
+        self._wake.set()
+
+
+#: Conversations whose working copy is being made, so a `prepare` frame and the turn
+#: that follows it never cut the same worktree at once.
+_SESSION_PREP_LOCKS: dict[str, threading.Lock] = {}
+_SESSION_PREP_LOCKS_LOCK = threading.Lock()
+
+
+def _session_prep_lock(session_id: str) -> threading.Lock:
+    with _SESSION_PREP_LOCKS_LOCK:
+        return _SESSION_PREP_LOCKS.setdefault(session_id, threading.Lock())
+
+
+def _prepare_session(slug: str, session_id: str) -> bool:
+    """canopy-web's `prepare` frame (`harness.prepare`): a conversation on a site's page
+    was opened with `slug`. Make its working copy now — fetch the agent's clone and cut
+    the conversation's worktree — so its first turn does not. Only for an agent this box
+    already has a clone of; nothing of any turn (no prompt, no credential) is involved,
+    and the fetch uses the runner's own refresh identity, as a confined turn's does."""
+    if not slug or not session_id or not _CHAT_ID.match(session_id):
+        return False
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if not (clone / ".git").exists():
+        return False
+    path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
+    started = time.time()
+    with _session_prep_lock(session_id):
+        env = _clone_refresh_env(slug, None)
+        _fetch_clone(clone, env, pull=True)
+        _ensure_session_worktree(clone, path, env=env)
+    _log(f"prepared {slug} session {session_id[:8]} in {time.time() - started:.1f}s")
+    return True
+
+
+def _prepare_in_background(slug: str, session_id: str) -> None:
+    def run():
+        try:
+            _prepare_session(slug, session_id)
+        except Exception as exc:  # noqa: BLE001
+            _log(f"warn: could not prepare {slug} session {session_id[:8]}: {exc}")
+    threading.Thread(target=run, daemon=True, name=f"prepare-{session_id[:8]}").start()
+
+
 def _model_env(env: dict) -> dict:
     """`env` with the turn's model (`_turn_model`) as `ANTHROPIC_MODEL`, which Claude
     Code reads before its settings — how a turn the CLI is not spawned for directly
@@ -14731,6 +14933,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     _TURN_ENV.fresh_start = None
     _TURN_ENV.model = _turn_model(turn)
     _TURN_ENV.relay_turn = turn_id if adoptable_turn(turn) else ""
+    # A lean page turn (`_lean_page`): never a confined one, which has its own profile.
+    _TURN_ENV.lean = False
+    _TURN_ENV.live_text = None
+    brief = None
     # A plain job: no model, no CLI, no session, no agent checkout. It branches at each of
     # those below and takes `execute_prompt`'s place (`_run_job`).
     job = bool(turn.get("job"))
@@ -14759,6 +14965,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # turn's env is an allowlist (`_confined_env`), so nothing below — the
         # cwd's own git pull included — can hand it a credential.
         _TURN_ENV.confined = _confined_profile(turn) if confined else None
+        _TURN_ENV.lean = _lean_page(turn) and not confined and not job and not SENSITIVE_DATA_MODE
+        if _TURN_ENV.lean and not (turn.get("_resume_id") or ""):
+            # Fetched while the working copy and the CLI get ready; joined just before the prompt.
+            brief = _PageBrief(str(turn_id))
+        if turn.get("page_site") and not confined and not job and _chat_session_id(turn):
+            _TURN_ENV.live_text = _LiveText(str(turn_id))
         if SENSITIVE_DATA_MODE and not confined:
             # A sensitive-data box runs only confined turns (a profile that handles
             # sensitive data is confined for everyone). canopy-web decides that; this is the box refusing to trust it
@@ -14832,7 +15044,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             off_disk_env = True
         try:
+            prep_started = time.time()
             cwd = None if job else _turn_cwd(turn, turn_id, env=_agent_env(slug))
+            if _TURN_ENV.lean:
+                _lifecycle(turn_id, "prepared", lean=True, secs=round(time.time() - prep_started, 2))
         except StoredAgentError as exc:
             # Never run a stored agent from no clone, or from one this box cannot move.
             _post_finish(turn_id, {"status": "failed", "result_note": f"[runner] {exc}"})
@@ -14989,7 +15204,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # exit leaves a file behind.
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
-            if not confined:
+            if not confined and not _TURN_ENV.lean:
+                # A lean page turn loads no agent plugin to use them: nothing to stage.
                 _stage_connections(runner_id, turn_id, slug or "")
                 if _relay_turn_id() == turn_id:
                     # Provider names only (never a token): what an adopting daemon keeps.
@@ -15001,6 +15217,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                     ok, text = _run_job(runner_id, turn, emit)
                     cli_session_id = ""
                 else:
+                    if brief is not None:
+                        prompt = _with_page_brief(prompt, brief.wait())
                     ok, text, cli_session_id = execute_prompt(
                         prompt, turn_id, emit, cwd=cwd,
                         agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
@@ -15148,6 +15366,11 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.model = None
         _TURN_ENV.read_settings = None
         _TURN_ENV.read_sessions = None
+        _TURN_ENV.lean = False
+        live = getattr(_TURN_ENV, "live_text", None)
+        if live is not None:
+            live.stop()
+        _TURN_ENV.live_text = None
         _kept_busy(conversation, -1)
         # The turn's secrets end with it — done, failed, raised, stopped or timed out.
         remove_turn_env(str(turn_id))
@@ -15280,6 +15503,81 @@ def run_over_rest(runner_id: str) -> None:
 
 
 # ── WebSocket control channel (RC2) ─────────────────────────────────────────
+class _WsChores:
+    """The WS loop's periodic work, on a thread of its own: the poll tick's chores every
+    POLL_SECONDS (interrupts, session views with backfills, mints, credentials, the job
+    cap, the inbox) and the live stream sync on its own clock (`_stream_interval`), rung
+    early by a `stream` frame. All of it is REST and disk, never the socket, so the socket's
+    thread is left to heartbeat and claim the moment a wake arrives."""
+
+    def __init__(self, runner_id: str, clock=time.monotonic):
+        self.runner_id = runner_id
+        self._clock = clock
+        self._stopped = threading.Event()
+        self._stream_now = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="ws-chores")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        self._stream_now.set()
+
+    def ring_stream(self) -> None:
+        self._stream_now.set()
+
+    @contextlib.contextmanager
+    def _chore(self, name: str):
+        """One chore: an error is logged and never stops the others; a slow one is named."""
+        started = self._clock()
+        try:
+            yield
+        except Exception as exc:  # noqa: BLE001
+            _log(f"chore {name} error: {exc}")
+        took = self._clock() - started
+        if took > 5:
+            _log(f"slow chore: {name} took {took:.1f}s")
+
+    def _poll_tick(self) -> None:
+        rid = self.runner_id
+        with self._chore("session interrupts"):
+            _drain_session_interrupts(rid)
+        with self._chore("session views"):
+            _sync_session_views(rid)          # incl. backfills
+        with self._chore("mints"):
+            _drain_mint(rid)
+        with self._chore("credentials"):
+            _maybe_reread_credentials()
+            _credential_tick()
+        with self._chore("job cap"):
+            _job_cap_tick()
+        with self._chore("inbox"):
+            _drain_inbox(rid)
+
+    def _loop(self) -> None:
+        last_poll = self._clock()
+        last_stream = 0.0
+        while not self._stopped.is_set() and not _stop:
+            now = self._clock()
+            if now - last_poll >= POLL_SECONDS:
+                self._poll_tick()
+                last_poll = last_stream = self._clock()
+                continue
+            rung = self._stream_now.is_set()
+            if rung or now - last_stream >= _stream_interval(now):
+                self._stream_now.clear()
+                try:
+                    # A `stream` frame syncs everything at once, backfills included, as it
+                    # did on the socket's thread; the clock syncs the live tail only.
+                    _sync_session_views(self.runner_id, with_backfills=rung)
+                except Exception as exc:  # noqa: BLE001
+                    _log(f"session view sync error: {exc}")
+                last_stream = self._clock()
+                continue
+            self._stream_now.wait(0.5)
+
+
 def _ws_url(runner_id: str) -> str:
     base = BASE_URL.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
     return f"{base.replace('/api', '')}/ws/runner/{runner_id}/"
@@ -15426,12 +15724,13 @@ def run_over_ws(runner_id: str) -> bool:
             maybe_keep_vaults()
             maybe_sweep_kept(runner_id)
 
+        chores = _WsChores(runner_id)
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
             last_beat = time.monotonic()
             _drain(ws, runner_id)  # anything already queued gets no wake
             last_poll = time.monotonic()
-            last_stream = 0.0
+            chores.start()
             while not _stop:
                 try:
                     raw = ws.recv()
@@ -15465,12 +15764,17 @@ def run_over_ws(runner_id: str) -> bool:
                             core[1].ring(str(msg.get("mailbox") or ""))
                             _log(f"doorbell: {msg.get('mailbox')} marked due")
                     elif mtype == "stream":
-                        # Latency optimization only — /streams is polled below
-                        # regardless, so a dropped frame costs one tick, never
+                        # Latency optimization only — /streams is polled by the chores
+                        # thread regardless, so a dropped frame costs one tick, never
                         # a permanently unattached viewer.
-                        _sync_session_views(runner_id)
+                        chores.ring_stream()
                     elif mtype == "update_available":
                         _nudge_updater(str(msg.get("expected_sha") or ""))
+                    elif mtype == "prepare":
+                        # A conversation on a site's page was opened: make its working copy
+                        # now, on a thread of its own (git must never block this socket).
+                        _prepare_in_background(str(msg.get("agent") or ""),
+                                               str(msg.get("session_id") or ""))
                 elif raw == "":
                     break  # server closed the socket
                 if time.monotonic() - last_beat >= HEARTBEAT_SECONDS:
@@ -15485,23 +15789,18 @@ def run_over_ws(runner_id: str) -> bool:
                 # reconnect drained one turn; a stable connection exposed it.
                 # The REST path (run_over_rest) has always polled — this brings
                 # the WS path to parity.
+                # Everything else this loop used to do on the poll tick (transcript
+                # streams, backfills, the usage report, mints, credentials, the inbox)
+                # runs on the chores thread (`_WsChores`): any of it can take seconds,
+                # and while it ran here a wake waited in the socket — a page turn sat
+                # queued ~10s before this box even asked for it.
                 if time.monotonic() - last_poll >= POLL_SECONDS:
                     _drain(ws, runner_id)
-                    _drain_session_interrupts(runner_id)
-                    _sync_session_views(runner_id)          # incl. backfills
-                    _drain_mint(runner_id)
-                    _maybe_reread_credentials()
-                    _credential_tick()
-                    _job_cap_tick()
-                    _drain_inbox(runner_id)
                     last_poll = time.monotonic()
-                    last_stream = time.monotonic()
-                elif time.monotonic() - last_stream >= _stream_interval(time.monotonic()):
-                    _sync_session_views(runner_id, with_backfills=False)
-                    last_stream = time.monotonic()
         except Exception as exc:
             _log(f"ws loop error: {exc}")
         finally:
+            chores.stop()
             try:
                 ws.close()
             except Exception:

@@ -470,6 +470,9 @@ export type WsEvent =
   // placeholder for the same send.
   | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string; author?: MessageAuthor | null; client_id?: string; record?: Record<string, unknown>; automatic?: boolean } }
   | { event: "chat.delta"; data: { message_id: string; text: string } }
+  // The reply the agent is writing right now, WHOLE so far (never a fragment), under
+  // its own `live:` id; the stored reply takes its place when it arrives.
+  | { event: "chat.live_text"; data: { message_id: string; turn_id: string; text: string } }
   // `turn_index` is the row's transcript ordinal — the same key the persisted
   // Message carries, so a live tool row sorts into exactly the position it will
   // occupy after a reload. Optional: an older server omits it.

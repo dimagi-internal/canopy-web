@@ -790,6 +790,11 @@ class AgentHostSiteOut(AnsweringProfile):
     contact_scoped: bool = False
     # The part of the site this entry serves (a surface its site.json declares); "" for the site itself.
     surface: str = ""
+    # Turns held on this site's pages start lean: canopy's plugin and the page's tools only,
+    # with the page's context in the opening message.
+    page_lean: bool = False
+    # The model turns held on this site's pages start on; "" is the agent's own.
+    page_model: str = ""
 
 
 class NewSiteDefaults(AnsweringProfile):
@@ -798,6 +803,8 @@ class NewSiteDefaults(AnsweringProfile):
     sensitive: bool = False
     contact_scoped: bool = False
     surface: str = ""
+    page_lean: bool = False
+    page_model: str = ""
 
 
 class AgentHostSitesOut(StrictModel):
@@ -817,6 +824,10 @@ class AgentHostSiteIn(ReadModeIn):
     # The surface of the site this entry serves, one its site.json declares (`workers`); "" for the
     # site itself. A contact's conversation is held on it, and its tool calls go to its MCP resource.
     surface: str | None = None
+    # Start every turn held on this site's pages lean (canopy's plugin, the page's tools and
+    # its context in the opening message), on `page_model` when set ("" = the agent's own model).
+    page_lean: bool | None = None
+    page_model: Annotated[str, Field(max_length=64)] | None = None
 
 
 class AgentAppEntryOut(StrictModel):

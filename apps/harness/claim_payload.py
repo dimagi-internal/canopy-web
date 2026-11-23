@@ -61,17 +61,31 @@ def start_model(agent, cli: str | None) -> str:
     return str(named or (settings.DEFAULT_CLI_MODELS or {}).get(cli) or "")[:64]
 
 
+def page_model(turn, agent) -> str:
+    """The model a turn held on a host site's page starts on when the agent's entry for
+    that site names one (`page_model:`), else "". Claude Code's model names only: a
+    turn on another CLI keeps that CLI's own."""
+    if agent is None or (turn.cli or "claude-code") != "claude-code":
+        return ""
+    from apps.agents import published_profiles  # noqa: PLC0415 — the interface reads models, loaded with a call
+
+    site = published_profiles.page_site_of(turn, agent)
+    return published_profiles.page_model_of(agent, site)[:64] if site else ""
+
+
 def conversation_model(turn, agent) -> str:
     """The model this turn starts on. A chat's turn takes the one its conversation
     already holds (`Session.cli_model`); the conversation's first claim picks it
     (`start_model`) and holds it, first write wins. So changing an agent's model or
     the server default moves new conversations, never one mid-history. Every turn
     still SENDS it: a runner starts a fresh CLI process per turn, which would
-    otherwise start on its box's own default. A turn with no chat is not held."""
+    otherwise start on its box's own default. A turn with no chat is not held.
+    A conversation held on a site's page whose agent names a `page_model` for that
+    site starts on it (`page_model`); every other turn keeps the agent's own."""
     session = turn.chat_session if turn.chat_session_id else None
     if session is not None and session.cli_model:
         return session.cli_model
-    model = start_model(agent, turn.cli)
+    model = page_model(turn, agent) or start_model(agent, turn.cli)
     if session is not None and model:
         from apps.canopy_sessions.models import Session  # noqa: PLC0415 — sessions import harness
 

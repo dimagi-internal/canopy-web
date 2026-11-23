@@ -171,6 +171,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         project=payload.project, title=payload.title, metadata=metadata,
         parent=payload.parent, conversation_key=offered, cli=payload.cli or "",
     )
+    _ring_prepare(session)
     return session_out(session)
 
 
@@ -543,3 +544,12 @@ def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id, write=True)
     route = control.stop_session(session, by=control.person_name(request.user))
     return {"cancelled": route == "turns", "interrupted": route == "session", "route": route}
+
+
+def _ring_prepare(session) -> None:
+    """A conversation opened on a site's page: its runner may get ready now (`harness.prepare`)."""
+    from django.db import transaction  # noqa: PLC0415 — one caller
+
+    from apps.harness import prepare  # noqa: PLC0415 — harness imports this app
+
+    transaction.on_commit(lambda: prepare.ring(session))

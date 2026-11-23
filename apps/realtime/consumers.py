@@ -178,6 +178,14 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # runnable.{ws} group_send type="runner.wake" dispatches here.
         await self.send_json({"type": "wake"})
 
+    async def runner_prepare(self, message):
+        # runner.{id} group_send type="runner.prepare" (`harness.prepare.ring`): a
+        # conversation on a site's page was opened with an agent this box may hold, so it
+        # can make the conversation's working copy before the turn arrives. Names the agent
+        # and the conversation only; the turn is claimed as always.
+        await self.send_json({"type": "prepare", "agent": message.get("agent") or "",
+                              "session_id": message.get("session_id") or ""})
+
     async def runner_cancel(self, message):
         # runner.{id} group_send type="runner.cancel" — the user asked to stop a turn
         # this runner is executing. Forwarded down the socket; the executor checks its

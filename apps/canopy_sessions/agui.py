@@ -546,6 +546,13 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     if event == "session.join_requests":
         return [_custom(event, data)]
 
+    # The reply the agent is writing, whole so far (`chat.live_text`). Not AG-UI's text
+    # message stream: that is append-only deltas under one id, and this is a snapshot a
+    # watcher can join late and that the stored reply replaces. So it rides CUSTOM; dropped
+    # here, the panel would show a reply only once it is finished.
+    if event == "chat.live_text":
+        return [_custom(event, data)]
+
     # Multiplayer and placement: canopy's, not AG-UI's. One user and one agent
     # is the protocol's model, so a co-edited draft, a presence roster and which
     # box a session is bound to have no native spelling. They are not dropped —

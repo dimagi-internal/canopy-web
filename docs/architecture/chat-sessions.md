@@ -321,6 +321,14 @@ read and never written, when no runner has reported it within `SESSION_LIVE_WIND
   (`transcript_ingest.ORDINAL_SCHEME`); a stale session is reset automatically on its next write.
 - The runner reports sessions change-driven; `harness.signals.sessions_reported` fans the
   owner's sessions out as `supervisor.sessions` frames.
+- **A page turn's reply streams while it is written.** A stored assistant row arrives only
+  when the reply is finished, so the cloud runner also posts the reply being written, whole
+  so far, to `POST /api/harness/turns/{id}/live-text` (`cloud_runner._LiveText`, from ACP's
+  `agent_message_chunk`s via `canopy_acp.turn.drive_turn`'s `on_text`). canopy-web fans it out
+  as `chat.live_text` under a `live:<turn>:<n>` id and never stores it (a sensitive
+  conversation's words are not streamed at all); on AG-UI it rides `CUSTOM`. The client
+  (`sessionReducer.withoutFinishedLive`) drops a live reply once a stored reply after the last
+  human line starts with its text, so a reply is never shown twice.
 
 ## The transcript row contract
 
