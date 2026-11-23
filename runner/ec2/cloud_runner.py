@@ -5628,7 +5628,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         position, on_flushed = _acp_progress_hooks(turn_id) if relay_spawn else (None, None)
         extra = {k: v for k, v in (("ask_human", ask_human), ("spawn", relay_spawn)) if v is not None}
         if getattr(_TURN_ENV, "lean", False) and _takes_kwarg(core.AcpAgent, "session_meta"):
-            extra["session_meta"] = _lean_session_meta()
+            extra["session_meta"] = _lean_session_meta(brief=getattr(_TURN_ENV, "page_brief", "") or "")
         live = getattr(_TURN_ENV, "live_text", None)
         live_kw = {"on_text": live} if live is not None and _takes_kwarg(drive_turn, "on_text") else {}
         make_agent = core.AcpAgent
@@ -13579,8 +13579,9 @@ def _turn_model(turn: dict) -> str:
 #   hooks and MCP servers into every session otherwise), and none of the worktree's
 #   project settings or CLAUDE.md (`_lean_session_meta`);
 # * canopy-web lists only the page and gateway tools for it (`turn_scope.lean_listing`);
-# * the page's state and its site's tools are fetched while the CLI starts and open
-#   the prompt (`_PageBrief`), so the first model call can go straight to `site_call`;
+# * the page's state and its site's tools are fetched while the CLI starts and go into
+#   its system prompt (`_PageBrief`), so the first model call can go straight to `site_call`;
+# * only a few built-in tools and no skills;
 # * no plugin refresh, connection staging or clone fetch that a prepared conversation
 #   (`_prepare_session`) or a recent fetch already covers.
 #
@@ -13622,14 +13623,63 @@ def _installed_plugins(home: pathlib.Path | None = None) -> list[str]:
         return []
 
 
-def _lean_session_meta(home: pathlib.Path | None = None) -> dict:
+#: The built-in tools a lean page turn keeps: reading what a site tool saved to a file, and
+#: loading a deferred tool. The rest (the shell, edits, subagents, the web) is tens of
+#: thousands of tokens of tool definitions a page answer never uses.
+LEAN_BUILTIN_TOOLS = ("Read", "Grep", "Glob", "ToolSearch")
+#: MCP tools are deferred behind ToolSearch only when they would fill more than this
+#: share of the context: a lean turn's page tools never are, a full catalogue still is.
+LEAN_TOOL_SEARCH = "auto:5"
+
+
+def _canopy_web_server(root: pathlib.Path | None) -> dict | None:
+    """The canopy plugin's own canopy-web MCP server entry (its URL and headers helper,
+    with the plugin root filled in), or None when it cannot be read."""
+    if root is None:
+        return None
+    try:
+        manifest = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+        server = dict((manifest.get("mcpServers") or {})["canopy-web"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not str(server.get("url") or "").startswith(("https://", "http://")):
+        return None
+    helper = str(server.get("headersHelper") or "").replace("${CLAUDE_PLUGIN_ROOT}", str(root))
+    out = {"type": "http", "url": server["url"]}
+    if helper:
+        out["headersHelper"] = helper
+    return out
+
+
+def _lean_session_meta(home: pathlib.Path | None = None, *, brief: str = "",
+                       plugin_root: pathlib.Path | None = None) -> dict:
     """`session/new` `_meta` for a lean page turn (claude-agent-acp passes
-    `claudeCode.options` to the Agent SDK): user settings only (so no project
-    CLAUDE.md or settings of the agent's worktree) and every installed plugin but
-    canopy's switched off for this session (flag settings outrank the user's)."""
+    `claudeCode.options` to the Agent SDK):
+
+    * user settings only, so no project CLAUDE.md or settings of the agent's worktree;
+    * every installed plugin but canopy's switched off (flag settings outrank the user's);
+    * no skills or slash commands, and only `LEAN_BUILTIN_TOOLS` of the built-in tools;
+    * canopy-web's MCP and nothing else (`strictMcpConfig`, the plugin's own server entry
+      under the name the plugin's tools carry, so every tool name reads the same);
+    * the page brief appended to the system prompt, not the message, so the person's line
+      in the conversation is what they typed.
+
+    Measured with Claude Code 2.1.330 and adapter 0.109.1 on a laptop: about 10k tokens
+    before the first message, against 60-85k for the same session with everything loaded."""
     off = {p: False for p in _installed_plugins(home) if p not in LEAN_KEEP_PLUGINS}
-    return {"claudeCode": {"options": {"settingSources": ["user"],
-                                       "settings": {"enabledPlugins": off}}}}
+    options = {"settingSources": ["user"], "settings": {"enabledPlugins": off},
+               "tools": list(LEAN_BUILTIN_TOOLS), "extraArgs": {"disable-slash-commands": None},
+               "env": {"ENABLE_TOOL_SEARCH": LEAN_TOOL_SEARCH, "ENABLE_CLAUDEAI_MCP_SERVERS": "false"}}
+    root = plugin_root if plugin_root is not None else _canopy_plugin_root()
+    server = _canopy_web_server(root)
+    if server is not None:
+        options["strictMcpConfig"] = True
+        options["mcpServers"] = {SENSITIVE_DATA_MCP_SERVER: server}
+        options["env"]["CLAUDE_PLUGIN_ROOT"] = str(root)
+    meta: dict = {"claudeCode": {"options": options}}
+    if brief:
+        meta["systemPrompt"] = {"append": brief}
+    return meta
 
 
 class _PageBrief:
@@ -13658,17 +13708,6 @@ class _PageBrief:
     def wait(self, timeout: float = PAGE_BRIEF_WAIT_SECONDS) -> str:
         self._done.wait(timeout)
         return self.text
-
-
-def _with_page_brief(prompt: str, brief: str) -> str:
-    """The prompt with the page brief above it. A prompt that opens with a plugin command
-    keeps it first (the CLI reads a slash command only at the very start)."""
-    if not brief:
-        return prompt
-    if prompt.startswith("/"):
-        first, sep, rest = prompt.partition("\n")
-        return f"{first}\n\n{brief}\n\n{rest}" if sep else f"{first}\n\n{brief}"
-    return f"{brief}\n\n{prompt}"
 
 
 class _LiveText:
@@ -14936,6 +14975,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     # A lean page turn (`_lean_page`): never a confined one, which has its own profile.
     _TURN_ENV.lean = False
     _TURN_ENV.live_text = None
+    _TURN_ENV.page_brief = ""
     brief = None
     # A plain job: no model, no CLI, no session, no agent checkout. It branches at each of
     # those below and takes `execute_prompt`'s place (`_run_job`).
@@ -15218,7 +15258,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                     cli_session_id = ""
                 else:
                     if brief is not None:
-                        prompt = _with_page_brief(prompt, brief.wait())
+                        # Into the session's system prompt (`_lean_session_meta`), never the
+                        # person's message.
+                        _TURN_ENV.page_brief = brief.wait()
                     ok, text, cli_session_id = execute_prompt(
                         prompt, turn_id, emit, cwd=cwd,
                         agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
@@ -15367,6 +15409,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.read_settings = None
         _TURN_ENV.read_sessions = None
         _TURN_ENV.lean = False
+        _TURN_ENV.page_brief = ""
         live = getattr(_TURN_ENV, "live_text", None)
         if live is not None:
             live.stop()

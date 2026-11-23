@@ -269,7 +269,7 @@ def _running_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 @router.get("/turns/{turn_id}/page-brief", response=PageBriefOut)
 @gate("runner")
 def get_turn_page_brief(request: HttpRequest, turn_id: uuid.UUID):
-    """A LEAN page turn's opening context, for the runner to put at the top of its prompt:
+    """A LEAN page turn's opening context, for the runner to add to its session's system prompt:
     the conversation's page and the site's tools, exactly as `current_page` and
     `site_tools` would answer this turn — through the gateway, as the person who sent,
     under their own act-as-you permission. Only for the box running the turn, only while it

@@ -15906,7 +15906,7 @@ export interface paths {
         };
         /**
          * Get Turn Page Brief
-         * @description A LEAN page turn's opening context, for the runner to put at the top of its prompt:
+         * @description A LEAN page turn's opening context, for the runner to add to its session's system prompt:
          *     the conversation's page and the site's tools, exactly as `current_page` and
          *     `site_tools` would answer this turn — through the gateway, as the person who sent,
          *     under their own act-as-you permission. Only for the box running the turn, only while it

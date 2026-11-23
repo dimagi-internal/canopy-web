@@ -1,8 +1,8 @@
 """Lean page turns: a question asked in a host site's panel starts with only what a page needs.
 
 canopy-web marks such a turn `page_site.lean` (the agent entry's `page_lean:`). The runner then
-opens its ACP session with user settings only and every plugin but canopy's switched off, puts
-the page brief at the top of the prompt, streams the reply being written to the panel, and does
+opens its ACP session with user settings only, canopy's plugin and MCP only and few built-in tools,
+puts the page brief in the system prompt, streams the reply being written to the panel, and does
 not refresh the agent's plugin, stage its connections or fetch a fresh clone again. A `prepare`
 frame makes the conversation's working copy before its first turn arrives.
 """
@@ -23,29 +23,46 @@ def test_lean_is_what_canopy_web_says(cloud_runner):
     assert not cloud_runner._lean_page({})
 
 
-def test_the_lean_session_keeps_only_canopys_plugin(cloud_runner, tmp_path):
+def _plugin_home(tmp_path):
     plugins = tmp_path / ".claude" / "plugins"
     plugins.mkdir(parents=True)
     (plugins / "installed_plugins.json").write_text(json.dumps({"plugins": {
         "canopy@canopy": [{}], "ace@ace": [{}], "chrome-sales@chrome-sales": [{}]}}))
-    meta = cloud_runner._lean_session_meta(tmp_path)
+    root = tmp_path / "canopy-plugin"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"mcpServers": {
+        "canopy-web": {"type": "http", "url": "https://canopy.test/api/mcp/",
+                       "headersHelper": "node ${CLAUDE_PLUGIN_ROOT}/scripts/canopy-web-mcp-headers.js"},
+        "projects": {"type": "http", "url": "https://canopy.test/api/mcp/projects/"}}}))
+    return root
+
+
+def test_the_lean_session_loads_canopy_and_the_page_only(cloud_runner, tmp_path):
+    root = _plugin_home(tmp_path)
+    meta = cloud_runner._lean_session_meta(tmp_path, brief="<page_context/>", plugin_root=root)
     options = meta["claudeCode"]["options"]
     # No project settings: the worktree's CLAUDE.md and .claude/ settings stay out.
     assert options["settingSources"] == ["user"]
     assert options["settings"]["enabledPlugins"] == {"ace@ace": False, "chrome-sales@chrome-sales": False}
+    # canopy-web alone, as the plugin declares it, under the name its tools carry.
+    assert options["strictMcpConfig"] is True
+    assert options["mcpServers"] == {"plugin_canopy_canopy-web": {
+        "type": "http", "url": "https://canopy.test/api/mcp/",
+        "headersHelper": f"node {root}/scripts/canopy-web-mcp-headers.js"}}
+    assert options["env"]["CLAUDE_PLUGIN_ROOT"] == str(root)
+    # Few built-in tools, no skills, and a small tool list is never deferred.
+    assert options["tools"] == ["Read", "Grep", "Glob", "ToolSearch"]
+    assert options["extraArgs"] == {"disable-slash-commands": None}
+    assert options["env"]["ENABLE_TOOL_SEARCH"] == "auto:5"
+    # The brief rides the system prompt, never the person's message.
+    assert meta["systemPrompt"] == {"append": "<page_context/>"}
 
 
-def test_no_plugin_list_switches_nothing_off(cloud_runner, tmp_path):
-    meta = cloud_runner._lean_session_meta(tmp_path)
-    assert meta["claudeCode"]["options"]["settings"]["enabledPlugins"] == {}
-
-
-def test_the_page_brief_opens_the_prompt(cloud_runner):
-    assert cloud_runner._with_page_brief("Which partner?", "<page_context/>") == "<page_context/>\n\nWhich partner?"
-    assert cloud_runner._with_page_brief("Which partner?", "") == "Which partner?"
-    # A plugin command must stay first: the CLI reads one only at the very start.
-    assert cloud_runner._with_page_brief("/ace:ask\nWhich?", "B") == "/ace:ask\n\nB\n\nWhich?"
-    assert cloud_runner._with_page_brief("/ace:ask", "B") == "/ace:ask\n\nB"
+def test_without_the_plugins_server_entry_the_session_keeps_its_own_mcp(cloud_runner, tmp_path):
+    meta = cloud_runner._lean_session_meta(tmp_path, plugin_root=tmp_path / "nowhere")
+    options = meta["claudeCode"]["options"]
+    assert "strictMcpConfig" not in options and "mcpServers" not in options
+    assert options["settings"]["enabledPlugins"] == {} and "systemPrompt" not in meta
 
 
 def test_the_brief_is_fetched_off_the_turns_thread(cloud_runner, monkeypatch):
