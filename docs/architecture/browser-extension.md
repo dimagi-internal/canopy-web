@@ -67,6 +67,6 @@ build, open the panel on a Gmail tab signed out, sign in from the button, click 
 panel: it must show your apps without a reload. If it stays signed out, the cookie is not
 being sent to the framed page, and the fix is a decision about cookies, not a code change here.
 
-An agent testing the panel as itself (a live end-to-end run signed in to Google as the agent) is
-refused at that sign-in unless its owner has switched on **Browser sign-in for testing** on the
-agent's Settings → Security tab ([access.md](access.md) § Browser sign-in for testing).
+An agent using the panel as itself (signed in to Google as the agent, e.g. a live end-to-end
+run) is refused at that sign-in unless an admin of the agent has switched on **Browser sign-in**
+on the agent's Settings → Security tab ([access.md](access.md) § Browser sign-in for an agent).

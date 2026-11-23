@@ -16,8 +16,8 @@ from .log_redact import path_template
 
 logger = logging.getLogger(__name__)
 
-#: The one exception to "an agent's login never signs in at a browser": an owner's
-#: grant for testing (`apps/agents/browser_sign_in.py`). `agents` registers the lookup
+#: The one way an agent's login signs in at a browser: an admin's grant
+#: (`apps/agents/browser_sign_in.py`). `agents` registers the lookup
 #: from its `ready()` (this kit layer never imports it); with none registered, every
 #: agent sign-in is refused. It answers the grant in force for an agent login's user
 #: id, or None.
@@ -148,11 +148,10 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
 
         agent_login = self._agent_login_landed_on(sociallogin, email)
         if agent_login is not None:
-            # An agent's login is a machine's: it reaches canopy with tokens, never
-            # with a browser session. Its Google account's credentials live on
-            # runners, so letting them open the browser as the agent would turn a
-            # runner compromise into an interactive session — unless a person who
-            # administers the agent opened a time-limited grant for testing.
+            # An agent's login reaches canopy with tokens; its browser sign-in is
+            # refused unless a person who administers the agent has switched it on
+            # (`apps/agents/browser_sign_in.py`). The session it opens has exactly
+            # the permissions the agent's tokens already have.
             grant = _browser_sign_in_grant(agent_login) if _browser_sign_in_grant else None
             if grant is None:
                 self._refuse(request, sociallogin, email, reason=self.AGENT_LOGIN)

@@ -8110,21 +8110,21 @@ export interface paths {
          */
         readonly get: operations["get_browser_sign_in"];
         /**
-         * Switch on browser sign-in for testing, for 1 to 30 days
-         * @description FOR TESTING: while on, the agent's own Google account may sign in to canopy-web
-         *     at a browser (e.g. a live end-to-end test of the browser extension's side panel)
-         *     instead of being refused. The session is the agent's login, with exactly its
-         *     normal permissions, and is signed out when this ends or is switched off. `days`
-         *     (1 to 30, default 7) sets the end; switching on again replaces it. The agent's
-         *     owner or an admin, at a browser, with a fresh passkey step-up; 409
-         *     `no_agent_login` when the agent has no login of its own.
+         * Switch on browser sign-in, until switched off or for 1 to 30 days
+         * @description While on, the agent's own Google account may sign in to canopy-web at a browser
+         *     (e.g. the browser extension's side panel, or a live end-to-end test of it) instead
+         *     of being refused. The session is the agent's login, with exactly its normal
+         *     permissions, and is signed out when this ends or is switched off. It lasts until
+         *     switched off, or for `days` (1 to 30) when given; switching on again replaces it.
+         *     The agent's owner or an admin, never the agent's own login; 409 `no_agent_login`
+         *     when the agent has no login of its own.
          */
         readonly put: operations["switch_on_browser_sign_in"];
         readonly post?: never;
         /**
          * Switch off browser sign-in; its sessions end on their next request
          * @description Ends the grant now; a browser session made under it is signed out on its next
-         *     request. The agent's owner or an admin, from anywhere; never its own login.
+         *     request. The agent's owner or an admin; never its own login.
          */
         readonly delete: operations["switch_off_browser_sign_in"];
         readonly options?: never;
@@ -36115,7 +36115,8 @@ export interface components {
         /**
          * BrowserSignInOut
          * @description Whether the agent's own Google account may sign in to canopy-web at a browser now,
-         *     and, while it may, who switched it on, when, and when it ends.
+         *     and, while it may, who switched it on, when, and when it ends (`expires_at` null:
+         *     until switched off).
          */
         readonly BrowserSignInOut: {
             /** Enabled */
@@ -36141,19 +36142,14 @@ export interface components {
             readonly reason: string;
             /** Max Days */
             readonly max_days: number;
-            /** Default Days */
-            readonly default_days: number;
         };
         /**
          * BrowserSignInIn
-         * @description Switch on browser sign-in for testing, for `days` (1 to 30; default 7).
+         * @description Switch on browser sign-in: until switched off, or for `days` (1 to 30).
          */
         readonly BrowserSignInIn: {
-            /**
-             * Days
-             * @default 7
-             */
-            readonly days: number;
+            /** Days */
+            readonly days?: number | null;
             /**
              * Reason
              * @default
