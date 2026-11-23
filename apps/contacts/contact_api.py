@@ -24,7 +24,7 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
-from apps.agents.published_profiles import contact_scoped, page_sites
+from apps.agents.published_profiles import contact_scoped, page_sites, surface_of
 from apps.api.route_gates import gate
 from apps.canopy_sessions.conversation_keys import CannotHold
 from apps.canopy_sessions.models import Session
@@ -38,6 +38,7 @@ from apps.canopy_sessions.schemas import (
     PageStateOut,
 )
 from apps.canopy_sessions.services import note_request_grant
+from apps.harness.runner_requirements import SENSITIVE_DATA
 from apps.embedding import assertions
 from apps.embedding import defaults as agent_defaults
 from apps.embedding.audit import client_ip
@@ -439,7 +440,7 @@ def contact_me(request: HttpRequest) -> ContactMeOut:
         Agent.objects.filter(embedding_apps__app=app, workspace_id=contact.workspace_id)
         .order_by("slug")
         .distinct()
-    ), "pk"))
+    ), "pk"), request)
     chosen = agent_defaults.resolve([a.pk for a in rows], app=app,
                                     bound_agent_id=getattr(request, "bound_agent_id", None))
     return ContactMeOut(
@@ -524,7 +525,7 @@ def _tenant_for(app, agent_slug: str):
     return app.workspace
 
 
-def _for_contacts(app, agents) -> list:
+def _for_contacts(app, agents, request=None) -> list:
     """The agents of `agents` a contact may talk to on `app`'s pages: never one that
     serves the site on pages (`published_profiles.page_sites`) — on a page such an agent
     reaches the site only as the person, under an act-as-you permission confirmed with a
@@ -533,8 +534,17 @@ def _for_contacts(app, agents) -> list:
     (`published_profiles.contact_scoped`). Then a contact's turn reaches the site's tools
     bound to that one contact, the site authorizing every call against them
     (`host_gateway.resolve`'s subject mode). A site offering only agents of the first kind
-    shows a contact no panel."""
-    return [a for a in agents if app.name not in page_sites(a) or contact_scoped(a, app.name)]
+    shows a contact no panel.
+
+    An agent whose entry serves a SURFACE of the site (`surface_of`) holds only conversations
+    that are not sensitive (`apps/host_grants/surfaces.py`), so an arrival the site signed as
+    requiring sensitive-data runners (its pages') is never offered it: the panel on a staff
+    page lists none of the site's worker agents. (Starting one is refused with the reason,
+    `start_session`'s `surface_mismatch`, so that path passes no request.)"""
+    sensitive = SENSITIVE_DATA in (getattr(request, "runner_requirements", None) or ())
+    return [a for a in agents
+            if (app.name not in page_sites(a) or contact_scoped(a, app.name))
+            and not (sensitive and surface_of(a, app.name))]
 
 
 def _bound(request: HttpRequest, rows, field: str = "agent_id"):
