@@ -42,7 +42,7 @@ const NEXT: Record<string, [BrainOutputStatus, string][]> = {
 const QUOTES_SHOWN = 3
 /** The body fields drawn on purpose; every other one is in the fallback list. */
 const KNOWN = new Set(['severity', 'type', 'signal', 'fix_belongs', 'what_happened', 'suggested_fix', 'evidence', 'proof',
-  'not_checked', 'success_measure'])
+  'not_checked', 'success_measure', 'merged_from'])
 
 const statusOf = (o: BrainOutput) => o.status || 'open'
 const severityOf = (o: BrainOutput) => str(o.body?.severity).toLowerCase()
@@ -241,6 +241,9 @@ function FindingCard({ o, busy, onMove }: { o: BrainOutput; busy: boolean; onMov
         </div>
       )}
       {str(body.success_measure) && <Field label="How to tell it is fixed">{str(body.success_measure)}</Field>}
+      {mergedTitles(body.merged_from).length > 0 && (
+        <Field label="Merged from">{mergedTitles(body.merged_from).join('\n')}</Field>
+      )}
       {rest.length > 0 && (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-xs">
           {rest.map(([k, v]) => (
@@ -298,7 +301,6 @@ function Evidence({ items, bySource, open, setOpen }: {
           }
           const q = e as Record<string, unknown>
           const s = typeof q.source === 'number' ? bySource.get(q.source) : undefined
-          const at = typeof q.index === 'number' ? ` at message ${q.index}` : ''
           return (
             <li key={i} className="border-l-2 border-border pl-2">
               <q className="whitespace-pre-wrap break-words text-foreground">{str(q.quote) || '(no quote)'}</q>
@@ -306,9 +308,8 @@ function Evidence({ items, bySource, open, setOpen }: {
                 {s ? (
                   <>
                     <Link className="underline" to={sessionHref(s.workspace, s.session_id)}>{s.title || 'untitled session'}</Link>
-                    {at}
                   </>
-                ) : `a session you do not read${at}`}
+                ) : 'a session you do not read'}
               </span>
             </li>
           )
@@ -323,23 +324,36 @@ function Evidence({ items, bySource, open, setOpen }: {
   )
 }
 
-/** The sessions it came from, and the learner that found it, in the footer. */
+/** The learner that found it and how many sessions it came from, in the footer; the sessions behind a disclosure. */
 function Sources({ o }: { o: BrainOutput }): JSX.Element {
   const sessions = o.sessions ?? []
   const hidden = o.hidden_sessions ?? 0
+  const total = sessions.length + hidden
+  const age = <>{' · first seen '}{relativeAge(o.created_at, undefined, { seconds: false })}</>
+  if (total === 0) return <p className="text-xs text-muted-foreground">Found by {o.learner}{age}</p>
   return (
-    <p className="text-xs text-muted-foreground">
-      Found by {o.learner}{sessions.length + hidden > 0 ? ' in ' : ''}
-      {sessions.map((s, i) => (
-        <Fragment key={s.session_id}>
-          {i > 0 && ', '}
-          <Link className="underline" to={sessionHref(s.workspace, s.session_id)}>{s.title || 'untitled'}</Link>
-        </Fragment>
-      ))}
-      {hidden > 0 && `${sessions.length > 0 ? ' and ' : ''}${hidden} session${hidden === 1 ? '' : 's'} you do not read`}
-      {' · first seen '}{relativeAge(o.created_at, undefined, { seconds: false })}
-    </p>
+    <details className="text-xs text-muted-foreground">
+      <summary className="cursor-pointer">
+        Found by {o.learner} in {total} session{total === 1 ? '' : 's'}{age}
+      </summary>
+      <p className="mt-1">
+        {sessions.map((s, i) => (
+          <Fragment key={s.session_id}>
+            {i > 0 && ', '}
+            <Link className="underline" to={sessionHref(s.workspace, s.session_id)}>{s.title || 'untitled'}</Link>
+          </Fragment>
+        ))}
+        {hidden > 0 && `${sessions.length > 0 ? ' and ' : ''}${hidden} session${hidden === 1 ? '' : 's'} you do not read`}
+      </p>
+    </details>
   )
+}
+
+/** The titles of the findings merged into this one (`merged_from`, notes the merge wrote), in words. */
+function mergedTitles(v: unknown): string[] {
+  const notes = Array.isArray(v) ? v : v && typeof v === 'object' ? [v] : []
+  return notes.map((n) => (n && typeof n === 'object' ? str((n as Record<string, unknown>).title) : str(n)))
+    .filter(Boolean)
 }
 
 /** Any body value in words: a list joined, an object as "key: value" pairs, never "[object Object]". */

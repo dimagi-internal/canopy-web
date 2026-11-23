@@ -109,6 +109,7 @@ const OUTPUTS = [
         { source: 41, index: 31, quote: 'fourth quote' },
       ],
       proof: 'proven', not_checked: 'whether it is fixed on main', nested: { x: 1 }, extra_note: ['a', 'b'],
+      merged_from: [{ id: 8, key: 'canopy:x', seen: 1, title: 'An earlier duplicate' }],
     },
     sessions: [{ session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }], hidden_sessions: 2,
     source_sessions: [{ source: 41, session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }],
@@ -274,12 +275,17 @@ describe('BrainPage', () => {
     expect(within(card).getByText('claim refused: no delegation')).toBeTruthy()
     const links = within(card).getAllByRole('link', { name: 'runner debugging' })
     expect(links[0].getAttribute('href')).toBe('/w/dimagi/sessions/s1')
-    expect(within(card).getByText(/a session you do not read at message 3/)).toBeTruthy()
+    expect(within(card).getByText('a session you do not read')).toBeTruthy()
+    expect(card.textContent).not.toMatch(/at message \d/)
     // Beyond three quotes, the rest are collapsed.
     expect(within(card).queryByText('fourth quote')).toBeNull()
     fireEvent.click(within(card).getByRole('button', { name: 'Show 1 more quote' }))
     expect(within(card).getByText('fourth quote')).toBeTruthy()
     expect(within(card).getByText('How sure: proven')).toBeTruthy()
+    // A merged finding is named by its title, never as a raw record; the sources are a count with the list behind it.
+    expect(within(card).getByText('An earlier duplicate')).toBeTruthy()
+    expect(card.textContent).not.toMatch(/Key: canopy:x|Id: 8/)
+    expect(within(card).getByText(/Found by system-learning in 3 sessions/)).toBeTruthy()
     expect(within(card).getByText('Not checked: whether it is fixed on main')).toBeTruthy()
     // Unknown fields fall back to plain words; an object reads as key: value.
     expect(within(card).getByText('Nested')).toBeTruthy()
