@@ -174,6 +174,13 @@ def owner_keyset(owner_kind: str, owner, by) -> UserVaultKeyset:
     return keyset
 
 
+def disconnect_owned_by(user) -> None:
+    """Disconnect every connection `user` owns (an agent login whose test key was turned off),
+    inside the caller's transaction, so canopy-web's own revoke waits for the sweep."""
+    for conn in Connection.objects.filter(user_id=user.pk).exclude(state=Connection.REVOKING).order_by("pk"):
+        disconnect(conn, by=None, revoke_now=False)
+
+
 def connections_for(owner: Owner) -> QuerySet[Connection]:
     """The owner's connections, as listed: never one being revoked (it left every
     list when it was disconnected)."""

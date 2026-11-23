@@ -48,7 +48,7 @@ agent's own SENSITIVE conversations, which are sealed to their people's vault ke
   (`passkeys.stepup.require_a_person`).
 * **Turning it off** deletes the key and every conversation-key copy wrapped to it,
   stops every unexpired host grant the login holds (`host_grants.revoke`) and
-  disconnects every connection the login owns (`connections.services.disconnect`), so
+  disconnects every connection the login owns (registered by `connections`, `on_disable`), so
   nothing lingers (`disable`). A login cannot confirm a grant any other way, so every confirmed
   grant it holds came through the test key.
 
@@ -56,6 +56,8 @@ Docs: `docs/architecture/vault.md` § An agent login's test vault key;
 `docs/architecture/access-confinement-and-act-as.md` § Acting as the person on a host site.
 """
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from django.db import transaction
 
@@ -171,8 +173,6 @@ def disable(agent: Agent) -> int:
     the sweep when canopy-web holds it), so nothing it was given outlives the switch.
     Returns the copies deleted. Also clears any member wrap or endorsement a key of this
     login could have reached, though none is ever written."""
-    from apps.connections import services as connections  # noqa: PLC0415 — connections imports agents
-    from apps.connections.models import Connection  # noqa: PLC0415 — beside the services import
     from apps.host_grants import host_grants  # noqa: PLC0415 — host_grants imports agents
     from apps.tokens.models import HostGrant  # noqa: PLC0415 — beside the host_grants import
 
@@ -188,11 +188,21 @@ def disable(agent: Agent) -> int:
             grants = host_grants.unexpired(HostGrant.objects.filter(user_id=agent.user_id))
             for grant in grants.order_by("pk"):
                 host_grants.revoke(grant)
-            owned = Connection.objects.filter(user_id=agent.user_id).exclude(state=Connection.REVOKING)
-            for conn in owned.order_by("pk"):
-                # In this transaction, so canopy-web's own revoke waits for the sweep.
-                connections.disconnect(conn, by=None, revoke_now=False)
+            for drop in _ON_DISABLE:
+                drop(agent.user)
     return n
+
+
+#: What else a login holds while its test key is on, each dropped by `disable` in its
+#: transaction: an app above this layer registers it (`on_disable`) from its `ready()`,
+#: as `connections` does to disconnect the login's own connections.
+_ON_DISABLE: list[Callable] = []
+
+
+def on_disable(drop: Callable) -> None:
+    """Register `drop(login)`, run by `disable` with the agent's login."""
+    if drop not in _ON_DISABLE:
+        _ON_DISABLE.append(drop)
 
 
 def may_share_own_connection(request, conn, statement) -> None:
