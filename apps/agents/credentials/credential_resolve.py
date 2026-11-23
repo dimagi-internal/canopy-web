@@ -299,11 +299,9 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     # `zks1` values (server-minted, sealed to each device) open with the
     # device's own key; only `zk1` values need its vault-key wrap.
     if zk_wrap is None and zk.needs_wrap(values):
-        if device_key is not None:
-            zk.device_wrap_missing(agent, request, device_key)
-        return Refusal(ZK_WRAP_MISSING,
-                       f"this device holds no vault-key wrap at kv {agent.zk_kv}; "
-                       "an admin must grant it",
+        detail = (zk.device_wrap_missing(agent, request, device_key) if device_key is not None
+                  else f"this device holds no vault-key wrap at kv {agent.zk_kv}; an admin must grant it")
+        return Refusal(ZK_WRAP_MISSING, detail,
                        kv=agent.zk_kv, device_key=str(device_key.pk) if device_key else "")
     placement = authority.placement_of(via)
 

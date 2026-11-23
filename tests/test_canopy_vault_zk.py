@@ -32,6 +32,7 @@ from apps.agents.models import (
     AgentCredentialRead,
     AgentLicense,
     AgentPatRotation,
+    AgentVaultEndorsement,
     AgentVaultWrap,
     Vault,
     VaultKeyWrap,
@@ -509,6 +510,57 @@ def test_a_device_without_a_wrap_gets_409_and_the_owner_an_alert(fleet):
     # Says whose machine, what is missing and that it was never given the key.
     assert alert.user.email in alert.detail and "never given" in alert.detail
     assert not AgentCredentialRead.objects.exists()
+
+
+# ---- who a wrap wait is told to (`zk.wrap_route`) ---------------------------------------------
+
+def _endorse(f, *, age=None):
+    AgentVaultEndorsement.objects.create(agent=f.agent, kind="device", target=f.device.ecdh_jkt,
+                                         key_jkt=f.device.ecdh_jkt, endorser=f.user,
+                                         endorser_jkt="x", sig="x")
+    if age is not None:
+        AgentVaultEndorsement.objects.update(created_at=timezone.now() - age)
+
+
+def test_a_wrap_wait_its_own_person_can_end_is_told_to_them_not_the_owner(fleet, mailoutbox):
+    """Its person holds a vault key, so only they act (Confirm access): the refusal tells
+    the session how, and the email names them as the reason, not ownership."""
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    res = _resolve(fleet)
+    assert res.status_code == 409 and "Confirm access" in res.json()["detail"]
+    alert = AgentCredentialAlert.objects.get()
+    assert alert.context["route"] == "person"
+    (msg,) = mailoutbox
+    assert msg.to == [fleet.user.email]
+    assert "Confirm access" in msg.body and "the machine is yours" in msg.body
+    assert "because you own" not in msg.body
+
+
+def test_an_endorsed_machine_waits_for_a_keeper_and_nobody_is_emailed(fleet, mailoutbox):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    _endorse(fleet)
+    res = _resolve(fleet)
+    assert res.status_code == 409 and "keeper" in res.json()["detail"]
+    assert not AgentCredentialAlert.objects.exists() and not mailoutbox
+
+
+def test_a_keeper_that_sits_on_an_endorsed_machine_reaches_the_owner(fleet, mailoutbox):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    _endorse(fleet, age=zk.KEEPER_GRACE * 2)
+    assert _resolve(fleet).status_code == 409
+    alert = AgentCredentialAlert.objects.get()
+    assert alert.context["route"] == "admin"
+    (msg,) = mailoutbox
+    assert "Give access" in msg.body and "because you own" in msg.body
+
+
+def test_a_machine_whose_person_has_no_vault_key_reaches_the_owner(fleet, mailoutbox):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    UserVaultKeyset.objects.filter(user=fleet.user).delete()
+    res = _resolve(fleet)
+    assert res.status_code == 409 and "an admin" in res.json()["detail"]
+    assert AgentCredentialAlert.objects.get().context["route"] == "admin"
+    assert len(mailoutbox) == 1
 
 
 # ---- values, grants ---------------------------------------------------------------------------

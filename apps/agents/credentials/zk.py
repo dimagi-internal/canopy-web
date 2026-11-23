@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime as dt
 import re
 
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -34,8 +35,9 @@ from apps.harness import device_keys
 from apps.harness.models import RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
 
-from ..models import Agent, AgentCredential, AgentVaultWrap, VaultKeyWrap
-from . import vault_alerts, vault_engine as engine, vault_members
+from ..models import Agent, AgentCredential, AgentVaultEndorsement, AgentVaultWrap, VaultKeyWrap
+from . import vault_alerts, vault_members
+from . import vault_engine as engine
 
 ZK_PREFIX = "zk1:"
 NONCE_LEN, TAG_LEN, KEY_LEN, SALT_LEN, POINT_LEN = 12, 16, 32, 16, 65
@@ -229,7 +231,7 @@ def _locked(agent):
     return Agent.objects.select_for_update().get(pk=agent.pk)
 
 
-def _store(agent) -> "engine.Store":
+def _store(agent) -> engine.Store:
     """The agent's vault, for the rules in `vault_engine`: its rows live on the agent."""
 
     def save_kv(kv: int) -> None:
@@ -373,23 +375,83 @@ def _who(request) -> str:
     return (getattr(user, "email", "") or "someone") if getattr(user, "is_authenticated", False) else "someone"
 
 
-def device_wrap_missing(agent, request, device_key) -> None:
-    """Tell the owner a box that should read this agent holds no wrap (409)."""
+#: How long a keeper has to pass the key on after a machine is endorsed before the
+#: agent's owner hears of it: keepers run every few minutes, so an hour of waiting means
+#: none of them will (offline, or it does not trust the endorser).
+KEEPER_GRACE = dt.timedelta(hours=1)
+
+
+def wrap_route(agent, device_key) -> str:
+    """Who can end a machine's wait for the vault key, i.e. who a refusal is for:
+
+    * ``keeper`` — its exact key is endorsed (recently): a keeper grants it within
+      minutes, with nobody asked. Nobody is told.
+    * ``person`` — the person it works for holds a vault key, so they can endorse it
+      themselves (Confirm access, passkey) and a keeper then grants it. Told: them.
+    * ``admin`` — only an admin's grant reaches it (no ECDH key, its person holds no
+      vault key, or an endorsement a keeper has sat on past `KEEPER_GRACE`). Told: the
+      owner, as before.
+    """
+    from . import zk_endorse  # noqa: PLC0415 - zk_endorse imports this module's helpers
+
+    if not device_key.ecdh_jkt:
+        return "admin"
+    if zk_endorse.endorsements_of_device([agent.pk], device_key.ecdh_jkt):
+        newest = (AgentVaultEndorsement.objects
+                  .filter(agent=agent, kind="device", target=device_key.ecdh_jkt, key_jkt=device_key.ecdh_jkt)
+                  .order_by("-created_at").values_list("created_at", flat=True).first())
+        if newest is not None and timezone.now() - newest < KEEPER_GRACE:
+            return "keeper"
+        return "admin"
+    person = vault_members.person_of_device(device_key)
+    if person and UserVaultKeyset.objects.filter(user_id=person).exists():
+        return "person"
+    return "admin"
+
+
+def device_wrap_missing(agent, request, device_key) -> str:
+    """A box that should read this agent holds no wrap (409). Tells whoever can end
+    the wait (`wrap_route`) — never the owner for a wait they cannot shorten — and
+    returns the refusal's detail, written for the person in the failing session."""
     import logging
 
+    machine = device_key.runner.name
     try:
-        vault_alerts.raise_alert(
-            agent, "zk-wrap-missing", user=request.user, runner=device_key.runner,
-            request=request,
-            turn_id=request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120],
-            detail=(f"{_who(request)}'s machine {device_key.runner.name} "
-                    f"({device_key.label or device_key.kind}) is approved, but it was never given "
-                    f"{agent.slug}'s vault key (kv {agent.zk_kv}), so it cannot read {agent.slug}'s "
-                    "secrets and that turn failed"
-                    + ("" if device_key.ecdh_jkt else "; it has no ECDH key, so it must be re-enrolled first")
-                    + ". An admin of the agent grants it from the link below.")[:500])
+        route = wrap_route(agent, device_key)
+    except Exception:  # noqa: BLE001 - routing must not turn a 409 into a 500
+        logging.getLogger(__name__).exception("zk wrap route failed for %s", agent.slug)
+        route = "admin"
+    turn_id = request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120]
+    try:
+        if route == "keeper":
+            vault_alerts.wrap_waiting_for_keeper(agent, request, device_key=device_key)
+        else:
+            to = None
+            if route == "person":
+                from django.contrib.auth import get_user_model  # noqa: PLC0415
+                to = list(get_user_model().objects.filter(
+                    pk=vault_members.person_of_device(device_key), is_active=True))
+            vault_alerts.raise_alert(
+                agent, "zk-wrap-missing", user=request.user, runner=device_key.runner,
+                request=request, turn_id=turn_id, route=route, recipients_override=to,
+                detail=(f"{_who(request)}'s machine {machine} "
+                        f"({device_key.label or device_key.kind}) is approved, but it was never given "
+                        f"{agent.slug}'s vault key (kv {agent.zk_kv}), so it cannot read {agent.slug}'s "
+                        "secrets and that turn failed"
+                        + ("" if device_key.ecdh_jkt else "; it has no ECDH key, so it must be re-enrolled first")
+                        + ".")[:500])
     except Exception:  # noqa: BLE001 - an alert hiccup must not turn a 409 into a 500
         logging.getLogger(__name__).exception("zk wrap-missing alert failed for %s", agent.slug)
+    if route == "keeper":
+        return (f"this machine ({machine}) is confirmed for {agent.slug} and a keeper passes it the "
+                f"vault key (kv {agent.zk_kv}) within minutes; nothing to do, try again shortly")
+    if route == "person":
+        return (f"this machine ({machine}) has not been given {agent.slug}'s vault key yet (kv "
+                f"{agent.zk_kv}). Its owner confirms it once: canopy-web Settings \u2192 Your runners "
+                f"\u2192 {machine} \u2192 Confirm access (passkey); a keeper then passes it the key "
+                "within minutes. Nobody else needs to act")
+    return (f"this device holds no vault-key wrap at kv {agent.zk_kv}; an admin of {agent.slug} "
+            "must grant it (its owner has been emailed)")
 
 
 # ---- the person's own keyset ------------------------------------------------------------
