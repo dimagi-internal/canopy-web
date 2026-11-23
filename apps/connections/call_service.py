@@ -71,6 +71,14 @@ OPERATION_SECONDS = 120
 #: ...and this long after its opening, however it is written to.
 OPERATION_HARD_LIMIT_SECONDS = 600
 OPERATION_MAX_WRITES = 500
+#: A screen whose only writes are Drive label changes on the viewer's own Google account gets a click as
+#: long as the hour of Google access the viewer granted for their own screens (`temporary=1&for_screens=1`):
+#: one click can clear a whole folder. Label changes are all such a screen can make, and only to files the
+#: viewer may already relabel; the hour still ends it, and nothing renews it.
+DRIVE_LABEL_WRITES = frozenset({("POST", "files/*/modifyLabels")})
+DRIVE_LABEL_OPERATION_SECONDS = 900
+DRIVE_LABEL_OPERATION_HARD_LIMIT_SECONDS = 3600
+DRIVE_LABEL_OPERATION_MAX_WRITES = 20000
 OPERATIONS_PER_MINUTE = 60
 _CHUNK_BYTES = 64 * 1024
 _REDACTED = b"[redacted]"
@@ -98,6 +106,30 @@ _LIMIT_INFO = re.compile(r"[A-Za-z0-9_\-=/,; ]{1,200}")
 MAX_RETRY_AFTER = 3600
 #: A provider status that says it is limiting calls or busy: it did not do what was asked.
 _LIMITED_STATUSES = frozenset({429, 503})
+
+
+@dataclass(frozen=True)
+class _Window:
+    """How far one click goes: ends `idle` seconds after its last write, `hard` after the click, at
+    `max_writes` writes."""
+    idle: int
+    hard: int
+    max_writes: int
+
+
+_CLICK = _Window(OPERATION_SECONDS, OPERATION_HARD_LIMIT_SECONDS, OPERATION_MAX_WRITES)
+_DRIVE_LABELS_CLICK = _Window(DRIVE_LABEL_OPERATION_SECONDS, DRIVE_LABEL_OPERATION_HARD_LIMIT_SECONDS,
+                              DRIVE_LABEL_OPERATION_MAX_WRITES)
+
+
+def _window(surface: declarations.Surface) -> _Window:
+    """The long click only when EVERY write the screen declares is a Drive label change on the viewer's
+    own Google account; anything else on the screen keeps the ordinary click."""
+    lines = surface.write_lines()
+    if lines and all(line.get("provider") == "google" and line.get("as") == "viewer"
+                     and (line.get("method"), line.get("path")) in DRIVE_LABEL_WRITES for line in lines):
+        return _DRIVE_LABELS_CLICK
+    return _CLICK
 
 
 @dataclass
@@ -213,11 +245,13 @@ def open_operation(request, surface_ref: dict) -> dict:
         raise services.ConnectionError("rate_limited", "Too many clicks in the last minute; wait a moment and try "
                                                        "again.")
     now = timezone.now()
+    window = _window(surface)
     row = ConnectionOperation.objects.create(
         user=request.user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
-        expires_at=now + timedelta(seconds=OPERATION_SECONDS),
-        hard_limit_at=now + timedelta(seconds=OPERATION_HARD_LIMIT_SECONDS))
-    return {"operation_id": row.pk, "expires_at": row.expires_at, "hard_limit_at": row.hard_limit_at, "writes": writes}
+        expires_at=now + timedelta(seconds=window.idle),
+        hard_limit_at=now + timedelta(seconds=window.hard))
+    return {"operation_id": row.pk, "expires_at": row.expires_at, "hard_limit_at": row.hard_limit_at, "writes": writes,
+            "max_writes": window.max_writes, "idle_seconds": window.idle, "hard_limit_seconds": window.hard}
 
 
 @contextmanager
@@ -442,13 +476,14 @@ def _spend_write(user, operation_id: str | None, surface: declarations.Surface, 
     lease = ConnectionOperation.objects.none() if pk is None else ConnectionOperation.objects.filter(
         pk=pk, user=user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
         expires_at__gt=now)
-    slid = Value(now + timedelta(seconds=OPERATION_SECONDS), output_field=DateTimeField())
-    if lease.filter(writes_used__lte=OPERATION_MAX_WRITES - writes).update(
+    window = _window(surface)
+    slid = Value(now + timedelta(seconds=window.idle), output_field=DateTimeField())
+    if lease.filter(writes_used__lte=window.max_writes - writes).update(
             writes_used=F("writes_used") + writes, expires_at=Least(F("hard_limit_at"), slid)):
         return
     if lease.exists():
         many = "changes" if writes == 1 else f"changes, and this call would make {writes}"
-        raise services.ConnectionError("needs_operation", f"One click can make at most {OPERATION_MAX_WRITES} "
+        raise services.ConnectionError("needs_operation", f"One click can make at most {window.max_writes} "
                                                           f"{many}; click again to make more.")
     raise services.ConnectionError("needs_operation", "Making a change from this screen needs a click on it first.")
 

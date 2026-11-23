@@ -485,7 +485,9 @@ export interface paths {
          *     that reaches this route with the person's session gets a lease too. What the lease does is limit how
          *     far that goes: only what this screen declared, at most 500 writes, for this person, this screen and
          *     this revision. It ends 120 seconds after its last write, or after it opened if there is none, and in
-         *     any case 10 minutes after it opened. Each write is still checked against the declaration, so on a page
+         *     any case 10 minutes after it opened. A screen whose only writes are Drive label changes on the
+         *     viewer's own Google account gets 20000 writes, 15 minutes idle and an hour (`max_writes`,
+         *     `idle_seconds`, `hard_limit_seconds` say which). Each write is still checked against the declaration, so on a page
          *     behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
          *
          *     Only a person signed in here: a personal access token or OAuth token is refused 403
@@ -22445,13 +22447,13 @@ export interface components {
             /**
              * Expires At
              * Format: date-time
-             * @description When it ends unless a write comes first: each write moves this to 120 seconds from then.
+             * @description When it ends unless a write comes first: each write moves this `idle_seconds` from then.
              */
             readonly expires_at: string;
             /**
              * Hard Limit At
              * Format: date-time
-             * @description When it ends whatever is written: 10 minutes from the click.
+             * @description When it ends whatever is written: 10 minutes from the click (an hour on a screen that only changes Drive labels).
              */
             readonly hard_limit_at: string;
             /**
@@ -22459,6 +22461,21 @@ export interface components {
              * @description What this screen may write. Each write is still checked.
              */
             readonly writes: readonly components["schemas"]["OperationWriteOut"][];
+            /**
+             * Max Writes
+             * @description How many writes this click covers: 500, or 20000 on a screen that only changes Drive labels.
+             */
+            readonly max_writes: number;
+            /**
+             * Idle Seconds
+             * @description How long after its last write it ends: 120, or 900 on a screen that only changes Drive labels.
+             */
+            readonly idle_seconds: number;
+            /**
+             * Hard Limit Seconds
+             * @description How long after the click it ends, whatever is written.
+             */
+            readonly hard_limit_seconds: number;
         };
         /** OperationWriteOut */
         readonly OperationWriteOut: {

@@ -192,7 +192,8 @@ SALESFORCE CALLS
   onClick handler, never on load or on a timer. The page checks for the click itself and rejects
   "This needs a click." otherwise. The click only counts for about 5 seconds, so the write must be
   the first thing the handler does: a write that comes after several seconds of awaits in the same
-  handler is refused. One click opens up to 10 minutes and 500 writes within what the screen declared;
+  handler is refused. One click opens up to 10 minutes and 500 writes within what the screen declared (a screen whose
+  only writes are Drive label changes gets an hour, 20000 writes, 15 minutes idle; begin() says which);
   later writes in that window need no new click. The window closes 120 seconds after the last write
   (reads don't count), so keep writing or click again. To read and dedup before the first write, call
   canopy.connection.begin() first thing in the onClick instead: it opens the window and resolves
