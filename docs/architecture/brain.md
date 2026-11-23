@@ -520,9 +520,29 @@ link judge, project learning, system learning): none has an operator or is enabl
 coaching keeps reading through its own leg until it moves. `tests/test_message_readers_are_registered.py` lists every server
 module that reads a session's transcript rows and why it may (the chat itself, ingest, plumbing, a person sharing their own
 session, a notification); a new reader fails it until it is placed (calling the core read
-`transcript_read.read` counts), and a learning read belongs in `brain.reading`, which is the one module marked as such. The agent-side readers (`ada:session-review`, `canopy-run-review`, `canopy:agent-review`, the
+`transcript_read.read` counts), and a learning read belongs in `brain.reading`, which is the one module marked as such. The agent-side readers (`ada:session-review`, `canopy:agent-review`, the
 stall classifier, `canopy analyze/improve`, the contributor pages and check-in runs) read through the API, not through a
-server module; moving them to runs of a registered learner is work in the canopy plugin and the agents' repos.
+server module; moving them to runs of a registered learner is work in the canopy plugin and the agents' repos. Ada's
+`canopy-run-review` (the sweep of the fleet's scheduled and event turns) is now the `system-learning` learner's
+workspace target: a second learner over the same sessions would only find the same things twice.
+
+## Adding a learner
+
+What is new decides where it goes. Never add a scheduler, a cursor, a read path or a dedupe of your own: a target's
+schedule, `brain_read`, the learned set and `brain_emit`'s fold by key are those, for every learner.
+
+- **New judgment for a lens that exists** (a signal to look for, a sharper "don't emit when", a report shape): edit the
+  lens paragraph in the canopy plugin's `brain-learn` skill, or, for one organisation's detail, a skill in its support
+  project (Dimagi: the `review-*` skills of `dimagi/canopy-support`, which the operator names in its own procedure). No
+  new learner, no code.
+- **The same lens somewhere new** (another workspace or a project): `POST /api/brain/targets` (`add_learning_target`),
+  with its own schedule and budget. Run now to check it.
+- **A new lens** (a new subject, purpose or output kind): a canopy admin registers a `BrainCapability` (`POST
+  /api/brain/capabilities/`, or a row in `registry.LEARNERS` for a built-in one; dark until enabled), its audience its
+  class's or narrower; then its lens row and paragraph in `brain-learn` (the kinds it emits, each body's shape, what not
+  to emit); then an operator and entry (`configure_learner`, or `registry.PRESETS` for a built-in), a target, and Run
+  now. The scorecard's precision is how it earns its keep.
+
 
 ## Not built yet
 
