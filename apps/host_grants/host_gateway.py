@@ -26,8 +26,10 @@ one of the site's own CONTACTS, on an entry its owner marked `contact_scoped`. I
 canopy-signed subject statement naming that contact (`Authorization: CanopySubject`,
 `sub` = their `external_id`, from the turn's initiator) beside a DPoP proof with no `ath`,
 and the HOST authorizes every call against that one person
-(docs/architecture/host-systems-of-record.md). A non-contact turn, an entry without
-`contact_scoped` and a site with no MCP resource never reach it.
+(docs/architecture/host-systems-of-record.md). It goes to the MCP resource of the surface the
+conversation is held on (`surfaces.subject_resource`), the site's own only on a site with no
+surfaces. A non-contact turn, an entry without `contact_scoped` and a site with no MCP resource
+never reach it.
 
 **There is no fallback.** An expired or missing grant is a refusal that asks for
 the visitor to be back on the page. It is never a call made with the agent's own
@@ -163,6 +165,9 @@ class SiteContext:
     #: turn, session, capability}`, `sub` the contact's `external_id` — signed afresh as
     #: `Authorization: CanopySubject` on every request. None for every other context.
     subject: dict | None = field(repr=False, default=None)
+    #: The surface of the site a subject-mode call goes to (`surfaces`), "" for the site
+    #: itself. A surface's tools are kept out of the site's MCP Apps index, which is its pages'.
+    surface: str = ""
 
     def allows(self, tool: str) -> bool:
         return tool_allowed(tool, ceiling=self.ceiling)
@@ -346,6 +351,15 @@ def _subject_context(turn, agent, session, site: str, app, cap: dict, reqs) -> S
 
     if app is None or not app.host_mcp_resource:
         raise GatewayRefusal("site_not_configured", f"{site} does not let me reach its tools for you")
+    from . import surfaces  # noqa: PLC0415 — as `client_identity`
+
+    # The surface the conversation is held on decides where the call goes: its own resource,
+    # never the site's pages' (`surfaces.subject_resource`).
+    try:
+        resource = surfaces.subject_resource(app, cap, session)
+    except surfaces.SurfaceRefused as exc:
+        raise GatewayRefusal(exc.code, f"{site} does not let me reach its tools for you here "
+                                       f"({exc.message})") from None
     contact = turn.initiator_contact
     if (contact is None or contact.app_id != app.pk or contact.source != Contact.SOURCE_EMBED
             or not contact.external_id or contact.is_blocked):
@@ -362,11 +376,12 @@ def _subject_context(turn, agent, session, site: str, app, cap: dict, reqs) -> S
         raise GatewayRefusal("no_client_key", "canopy cannot reach sites on anyone's behalf "
                              "right now") from None
     return SiteContext(
-        turn_id=str(turn.pk), agent_slug=agent.slug, site=app.name, resource=app.host_mcp_resource,
+        turn_id=str(turn.pk), agent_slug=agent.slug, site=app.name, resource=resource,
         scope="", expires_at=None, ceiling=list(cap.get("ceiling") or []), app_id=app.pk,
         execution=execution.facts_for(turn, agent, session, reqs, app=app), session_id=str(session.pk),
         subject={"sub": contact.external_id, "site": app.name, "agent": agent.slug, "turn": str(turn.pk),
                  "session": str(session.pk), "capability": turn.capability or ""},
+        surface=str((cap or {}).get("surface") or ""),
     )
 
 
@@ -716,7 +731,7 @@ async def _listing(ctx: SiteContext, client) -> list:
     from apps.mcp_apps_host import mcp_apps
 
     tools = await client.list_tools()
-    if ctx.app_id is not None:
+    if ctx.app_id is not None and not ctx.surface:
         try:
             await sync_to_async(mcp_apps.record_tools, thread_sensitive=True)(
                 ctx.app_id, [(t.name, getattr(t, "meta", None) or {}) for t in tools])
@@ -768,7 +783,7 @@ async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
     from apps.tokens.models import AppCredential
 
     app = (await sync_to_async(AppCredential.objects.filter(pk=ctx.app_id).first,
-                               thread_sensitive=True)()) if ctx.app_id else None
+                               thread_sensitive=True)()) if ctx.app_id and not ctx.surface else None
     age = mcp_apps.index_age(app) if app is not None else None
     if age is not None and age < INDEX_FRESH:
         entry = mcp_apps.indexed_tool(app, name)

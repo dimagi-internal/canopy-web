@@ -31865,6 +31865,11 @@ export interface components {
              * @default false
              */
             readonly contact_scoped: boolean;
+            /**
+             * Surface
+             * @default
+             */
+            readonly surface: string;
         };
         /**
          * AgentLoginRequestOut
@@ -33019,6 +33024,11 @@ export interface components {
              * @default false
              */
             readonly contact_scoped: boolean;
+            /**
+             * Surface
+             * @default
+             */
+            readonly surface: string;
         };
         /** AgentHostSiteIn */
         readonly AgentHostSiteIn: {
@@ -33047,6 +33057,8 @@ export interface components {
             readonly sensitive?: boolean | null;
             /** Contact Scoped */
             readonly contact_scoped?: boolean | null;
+            /** Surface */
+            readonly surface?: string | null;
         };
         /** AgentAppEntriesOut */
         readonly AgentAppEntriesOut: {
@@ -42269,6 +42281,11 @@ export interface components {
             readonly agents: readonly components["schemas"]["AgentFitOut"][];
             /** Not Allowed */
             readonly not_allowed: readonly string[];
+            /**
+             * Surfaces
+             * @default []
+             */
+            readonly surfaces: readonly components["schemas"]["SiteSurfaceOut"][];
         };
         /** SitePageOut */
         readonly SitePageOut: {
@@ -42278,6 +42295,36 @@ export interface components {
             readonly title: string;
             /** Scopes */
             readonly scopes: readonly string[];
+        };
+        /**
+         * SiteSurfaceOut
+         * @description One surface the site declares (`site.json`'s `surfaces`): a part of it serving its own people.
+         */
+        readonly SiteSurfaceOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /** Sensitive */
+            readonly sensitive: boolean;
+            /**
+             * Mcp Resource
+             * @default
+             */
+            readonly mcp_resource: string;
+            /**
+             * Person Scheme
+             * @default
+             */
+            readonly person_scheme: string;
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
         };
         /**
          * SiteDiscoveryOut

@@ -53,6 +53,16 @@ The Turn Context resolver (`turn_context.resolve_turn_context`; order in [access
 - **Ceiling.** `ceiling` optionally narrows the host's tools on the owner's word, for every turn on that site (`published_profiles.site_ceiling`). Absent, the host's grant decides; it can never widen.
 - **Contacts.** A contact (no passkey, so no act-as-you permission) is not offered an agent that has an entry for the site (`apps/contacts/contact_api.py::_for_contacts`) — unless the entry is `contact_scoped`: then the site's contacts reach the agent there, and a contact's turn reaches the site's tools bound to that one contact under a canopy-signed subject statement, the site authorizing every call ([host-systems-of-record.md](host-systems-of-record.md)).
 
+## Surfaces: one site, parts that serve different people
+
+A site whose people differ by part stays ONE host site, one registration and one key, and declares each part as a **surface** in its signed `site.json` (`surfaces`, `canopy_sdk.site.SiteSurface`): whether its conversations hold the site's sensitive data (`sensitive`, required), the MCP resource its contacts' subject-bound calls go to and the scheme of its people's records. A site with no surfaces is one surface, itself. Connect Labs is the case: its pages are the site itself (staff, act-as-you grants, sensitive), and `workers` is a surface of it (Connect Workers relayed over PersonalID, not sensitive). canopy reads them LIVE from the verified document, like `person_scheme`; the Host sites page shows them (`host_site_needs` → `surfaces`, with the agents serving each).
+
+An agent's host-site entry names the surface it serves (`surface:`, `published_profiles.surface_of`; one entry per site, so one surface per agent per site). The rules, all in `apps/host_grants/surfaces.py` (its module docstring is the rule):
+
+- **A contact holds a conversation only on a surface the site declares `sensitive: false`** (`surfaces.for_contact`, asked by `contact_api.start_session`), through a `contact_scoped` entry that names it. The conversation is not sensitive, so an arrival requiring `sensitive_data` runners is refused there (`422 surface_mismatch`), never served with the requirement dropped; a surface the site does not declare, or declares sensitive, is refused too. The session records its surface, server-owned (`surfaces.SESSION_KEY`).
+- **The site's own pages keep its sensitivity.** Nothing about a surface changes a conversation on the site itself: what its visitor assertions require still decides, and a contact still cannot hold a sensitive one (`CannotHold`).
+- **A contact's subject-bound calls go to its surface's resource** (`surfaces.subject_resource`, asked by `host_gateway._subject_context`): the conversation's surface must still be the entry's, still declared and not sensitive, and its resource on the origin of the site's registered MCP server, which only the workspace owner sets. On a site that declares surfaces, a `contact_scoped` entry naming none reaches no tools. So a contact never reaches the sensitive surface or its tools, and a site cannot point canopy at another host. A surface's tools stay out of the site's MCP Apps index, which is its pages'.
+
 ## The site is the system of record for its people
 
 A site keeps canopy's copy of the people it brings current (`POST /api/sites/contacts`, signed with its own key): a pointer to its own record (`record_uri`, under the `person_scheme` its `site.json` declares) and a small profile it owns. canopy never becomes the authority for anything the site holds → [host-systems-of-record.md](host-systems-of-record.md).
@@ -91,3 +101,4 @@ An **app entry** is the same kind of entry as a host site, bound to ONE workspac
 | An app entry: parse, its fixed tools, which app a conversation is held in | `published_profiles.parse`, `apps/agents/app_entries.py` |
 | The app tools, and what they reach | `apps/mcp/tools/app.py`, `apps/workspace_apps/agent_host.py` |
 | What the host is told | `apps/host_grants/site_agents.py` |
+| A site's surfaces: which a contact's conversation is on, where its calls go | `apps/host_grants/surfaces.py`, `published_profiles.surface_of` |

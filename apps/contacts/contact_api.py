@@ -617,6 +617,22 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
         raise HttpError(422, str(exc))
     # Server-owned, from the token: which site, and its runner requirements.
     session_services.stamp_host_metadata(metadata, request)
+    # The part of the site the agent's entry serves: a contact holds a conversation only on a
+    # surface the site declares not sensitive, or on the site itself as before.
+    from apps.host_grants import surfaces  # noqa: PLC0415 — as `_redeem_host_grant`'s: loads with a call
+
+    try:
+        surface = surfaces.for_contact(app, agent)
+    except surfaces.SurfaceRefused as exc:
+        raise HttpError(422, f"{exc.code}: {exc.message}") from None
+    if surface is not None:
+        if sensitivity.is_sensitive(Session(metadata=metadata)):
+            # The surface holds no sensitive data, and this arrival requires sensitive-data
+            # runners: refused, never dropped, as a requirement the site signed is never dropped.
+            raise HttpError(422, f"surface_mismatch: {app.name}'s {surface.name!r} surface holds no "
+                                 "sensitive data, and this arrival requires it; sign its visitors' "
+                                 "assertions with no sensitive_data runner requirement")
+        metadata[surfaces.SESSION_KEY] = surface.name
     # A sensitive site's conversation is sealed to its people's vault keys, and a
     # contact has none: refused before the conversation exists.
     if sensitivity.is_sensitive(Session(metadata=metadata)):

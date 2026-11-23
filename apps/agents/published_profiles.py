@@ -42,7 +42,8 @@ under `READ_MODE_STAMP`):
 
 One entry per site, and one site per entry (`answering`, the one writer, enforces both).
 `contact_scoped: true` (optional) also lets the site's own contacts reach the agent there, the
-site's tools bound to that one contact (`contact_scoped`).
+site's tools bound to that one contact (`contact_scoped`). `surface: <name>` (optional) names the
+part of the site the entry serves, one its `site.json` declares (`surface_of`).
 
 **An app entry** names ONE workspace app instead of a site (`apps: [<key>]`); its tools are canopy's
 own and fixed (`apps/agents/app_entries.py`), and `ceiling` there can only narrow them.
@@ -238,7 +239,7 @@ def parse(doc) -> dict:
             continue
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
                           "write_paths", "input", "sites", "ceiling", "own_login", "data",
-                          "contact_scoped"}
+                          "contact_scoped", "surface"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         entry = cap.get("entry")
@@ -268,6 +269,8 @@ def parse(doc) -> dict:
 
 
 _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+#: A surface of a site (`site.json`'s `surfaces`, `canopy_sdk.site.SURFACE_NAME`).
+_SURFACE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 #: An app key (`apps/workspace_apps/models.py::AppInstallation.key`).
 _APP_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
@@ -346,6 +349,16 @@ def _sites(cap: dict, name: str) -> dict:
         # Written only when on, so every interface published before the key existed
         # parses to exactly what it did.
         out["contact_scoped"] = True
+    surface = cap.get("surface")
+    if surface not in (None, ""):
+        if not isinstance(surface, str) or not _SURFACE.match(surface):
+            raise InterfaceError(f"{name}.surface must be a surface name the site declares "
+                                 f"({_SURFACE.pattern})", f"{name}.surface")
+        if not sites:
+            raise InterfaceError(f"{name}.surface needs `sites:` — it names a part of the site it lists",
+                                 f"{name}.surface")
+        # Written only when set, as `contact_scoped`.
+        out["surface"] = surface
     own = _own_login(cap.get("own_login"), name, sites)
     if own:
         # Written only when present, so every interface published before the key
@@ -475,6 +488,14 @@ def contact_scoped(agent, site: str) -> bool:
     there reaches the site's tools under a canopy-signed subject statement, with no grant
     (`host_gateway.resolve`; docs/architecture/host-systems-of-record.md)."""
     return _cap_for_site(agent, site).get("contact_scoped") is True
+
+
+def surface_of(agent, site: str) -> str:
+    """The surface of `site` the agent's entry for it serves (`surface:`; `site.json`'s
+    `surfaces`), or "" for the site itself. What a contact's conversation there may hold and
+    where its subject-bound calls go follow from it (`apps/host_grants/surfaces.py`)."""
+    value = _cap_for_site(agent, site).get("surface")
+    return value if isinstance(value, str) else ""
 
 
 def site_ceiling(agent, site: str) -> list[str]:

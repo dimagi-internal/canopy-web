@@ -2,6 +2,22 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.37.0 — 2026-11-22
+
+**A site may declare surfaces: parts of it that serve different people.**
+
+- `site.json` takes an optional top-level `surfaces`: `{name: {sensitive, mcp_resource?,
+  person_scheme?, title?}}` (`canopy_sdk.site.SURFACE_NAME`, at most `MAX_SURFACES`).
+  `sensitive` is required on each. `SiteNeeds.surfaces` / `SiteNeeds.surface(name)` and
+  `SiteSurface` read it back; `site_document(..., surfaces=)` builds it.
+- Django hosts declare them with `CANOPY_HOST["SURFACES"]`, or `SITE_NEEDS` returning
+  `"surfaces"`.
+- An agent's host-site entry names the surface it serves (`surface:`). canopy lets a site's
+  contact hold a conversation on a surface the site declares `sensitive: false`, and sends that
+  contact's subject-bound tool calls (`canopy_sdk.host.verify_subject`) to the surface's
+  `mcp_resource`, which is then the statement's `aud`. Additive under contract v1: a site with no
+  surfaces is one surface, as before.
+
 ## 0.36.1 — 2026-11-22
 
 - The on-demand capability's backstop Lambda (`ondemand-capability.cfn.yaml`) runs on the

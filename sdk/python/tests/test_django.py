@@ -824,6 +824,19 @@ def test_site_json_declares_the_hosts_person_scheme_and_retention(host):
     assert got.site.person_scheme == "" and got.site.retention_days is None
 
 
+def test_site_json_declares_the_hosts_surfaces(host):
+    from canopy_sdk import site as site_mod
+
+    workers = {"sensitive": False, "mcp_resource": "https://labs.example.org/messaging/canopy/mcp/",
+               "person_scheme": "labs-worker"}
+    with override_settings(CANOPY_HOST={**conf.raw(), "SURFACES": {"workers": workers}}):
+        response = Client().get("/canopy/site.json")
+    got = site_mod.verify_site_document(response.content.decode(), [host.host_key.public_key()],
+                                        site_name="connect-labs")
+    assert got.surface("workers").mcp_resource == workers["mcp_resource"]
+    assert got.surface("workers").sensitive is False
+
+
 def test_a_bad_person_scheme_or_retention_fails_the_hosts_system_check(host):
     from django.core import checks
 

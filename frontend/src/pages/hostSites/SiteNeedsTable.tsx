@@ -1,6 +1,12 @@
 import { useEffect, useState, type JSX } from 'react'
 import { runnerFlagLabel } from '@/components/chat/runnerEligibility'
-import { getHostSiteNeeds, type HostSite, type SiteNeeds, type AgentFit } from '@/api/hostSites'
+import {
+  getHostSiteNeeds,
+  type HostSite,
+  type SiteNeeds,
+  type AgentFit,
+  type SiteSurface,
+} from '@/api/hostSites'
 import { Td, Th, Tr } from '@/components/DataTable'
 
 function Tick({ on }: { on: boolean }): JSX.Element {
@@ -118,6 +124,7 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
           — it can never show them.
         </p>
       )}
+      {needs.surfaces.length > 0 && <SurfacesTable surfaces={needs.surfaces} />}
       {needs.pages.length > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground">
@@ -148,6 +155,52 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
           </p>
         </details>
       )}
+    </div>
+  )
+}
+
+/**
+ * The parts of the site that serve different people, as its `site.json` declares them. A contact
+ * (one of the site's own people, with no canopy account) holds a conversation only on a surface
+ * that holds no sensitive data, through an agent whose host-site entry names it; its tools are
+ * called at that surface's MCP server, never the site's own.
+ */
+export function SurfacesTable({ surfaces }: { surfaces: readonly SiteSurface[] }): JSX.Element {
+  return (
+    <div className="space-y-1">
+      <h4 className="text-xs text-foreground">Surfaces</h4>
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <Tr rule="bottom" head="plain">
+            <Th density="compact-gutter" weight="normal">Surface</Th>
+            <Th density="compact-gutter" weight="normal">Sensitive data</Th>
+            <Th density="compact-gutter" weight="normal">MCP server</Th>
+            <Th density="compact-gutter" weight="normal">People&apos;s records</Th>
+            <Th density="compact-gutter" weight="normal">Agents serving it</Th>
+          </Tr>
+        </thead>
+        <tbody>
+          {surfaces.map((s) => (
+            <Tr rule="bottom-last" top key={s.name}>
+              <Td density="compact-gutter" tone="foreground">
+                {s.title || s.name} <span className="text-muted-foreground">({s.name})</span>
+              </Td>
+              <Td density="compact-gutter"><Tick on={s.sensitive} /></Td>
+              <Td density="compact-gutter" tone="muted" mono>{s.mcp_resource || '—'}</Td>
+              <Td density="compact-gutter" tone="muted" mono>
+                {s.person_scheme ? `${s.person_scheme}://` : '—'}
+              </Td>
+              <Td density="compact-gutter" tone="muted">
+                {s.agents.length > 0 ? s.agents.join(', ') : 'none yet'}
+              </Td>
+            </Tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-muted-foreground text-xs">
+        An agent serves a surface when its host site entry for this site names it. The site&apos;s
+        own contacts reach it only on a surface without sensitive data.
+      </p>
     </div>
   )
 }
