@@ -232,7 +232,10 @@ def delete_agent_credential(request: HttpRequest, slug: str, name: str):
         accounts.refuse_delegated_names(agent, [name])
     except ZkError as exc:
         raise zk_problem(exc) from exc
-    services.delete_agent_credential(agent, name)
+    # The first delete takes the stored value; on a declared name with no value it
+    # takes the declaration, so the row leaves the table.
+    if not services.delete_agent_credential(agent, name):
+        services.undeclare_credential_name(agent, name)
     return services.agent_credential_status(agent)
 
 

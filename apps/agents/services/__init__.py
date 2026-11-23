@@ -24,6 +24,7 @@ from .agent_credentials import (
     delete_agent_credential,
     record_credential_reads,
     set_agent_credentials,
+    undeclare_credential_name,
 )
 from .agents import (
     DEFINITION_FIELDS,
@@ -213,6 +214,7 @@ __all__ = [
     "declare_credential_names",
     "declared_credential_names",
     "delete_agent_credential",
+    "undeclare_credential_name",
     "delete_sync",
     "filter_tasks",
     "finish_or_reopen",
