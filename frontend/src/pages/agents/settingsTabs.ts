@@ -43,8 +43,6 @@ const ANCHORS: Record<string, SettingsTab> = {
   'vault-storage': 'security',
   'read-alerts': 'security',
   'agent-test-key': 'security',
-  'browser-sign-in': 'security',
-  'browser-sign-in-section': 'security',
 }
 
 export function isSettingsTab(s: string | undefined): s is SettingsTab {

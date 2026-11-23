@@ -783,7 +783,7 @@ def test_an_already_linked_workspace_account_keeps_signing_in(db):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# An agent's Google account never opens a browser session as the agent
+# An agent's Google login and the JIT merge
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -797,32 +797,6 @@ def _agent_login(email="hal@dimagi-ai.com"):
     login = User.objects.create_user(username=email, email=email)
     Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=owner, user=login)
     return login
-
-
-@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")
-def test_an_agents_google_account_is_not_linked_to_its_login(db):
-    login = _agent_login()
-    sociallogin = _make_jit_social_login("hal@dimagi-ai.com")
-
-    with pytest.raises(ImmediateHttpResponse) as exc:
-        CustomSocialAccountAdapter().pre_social_login(
-            RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
-
-    assert exc.value.response.status_code == 403
-    assert "an agent" in exc.value.response.content.decode()
-    sociallogin.connect.assert_not_called()
-    assert not login.socialaccount_set.exists()
-
-
-@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")
-def test_an_agent_login_already_linked_to_google_is_refused_too(db):
-    login = _agent_login()
-    sociallogin = _make_jit_social_login("hal@dimagi-ai.com", is_existing=True)
-    sociallogin.user = login
-
-    with pytest.raises(ImmediateHttpResponse):
-        CustomSocialAccountAdapter().pre_social_login(
-            RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
 
 
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")

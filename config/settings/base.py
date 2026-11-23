@@ -162,9 +162,6 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    # A browser session an agent's login opened under a grant for testing ends with
-    # the grant (apps/agents/browser_sign_in.py).
-    "apps.agents.browser_sign_in.SessionMiddleware",
     "apps.tokens.middleware.BearerTokenAuthMiddleware",  # PAT bearer auth (after AuthenticationMiddleware, before LoginRequired)
     # X-Request-Id + who/what/parent of this request, read when a Turn or Session
     # is created (apps/harness/provenance.py). After the bearer middleware: it
