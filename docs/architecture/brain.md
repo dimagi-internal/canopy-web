@@ -305,10 +305,8 @@ follows the operator's turn mode and rails. What makes it a learning run:
   a removal of any reaches the output; `cited` marks the ones it names, which are all a screen shows. Words are scrubbed,
   object keys as well as values; the same output twice is one. **Every piece of evidence is grounded**
   (`grounding.check`): each `body.evidence` item `{source, index, quote}` must name a source this run read, a row it
-  was served (at or before `BrainRunRead.through`), and a quote that is in that row once both are folded (case,
-  whitespace, curly quotes, dashes, inline markdown and quotation marks ignored; an ellipsis stands for words left out;
-  a quote may be part of the row, never more). One that fails refuses the whole emit with the item, its source and row,
-  and why (and where the quote really is, when it is in another row the run read), so the run fixes it in the same run.
+  was served, and a quote that is in that row (how quotes are matched: the `grounding` module docstring). One that
+  fails refuses the whole emit, naming the item and why, so the run fixes it in the same run.
   A missing `index` is found and written in; the sources evidence names are cited. Emits spend a budget of their own per run turn
   (`mcp.rate_limit`, `BRAIN_RUN_WRITE_LIMIT`), not the accountable admin's.
 - The run's conversation holds the words it read. It has no creator and no participant and is not runner-discovered, so
