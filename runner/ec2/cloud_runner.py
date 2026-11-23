@@ -13594,6 +13594,12 @@ def _turn_model(turn: dict) -> str:
 LEAN_FETCH_FRESH_SECONDS = float(os.environ.get("LEAN_FETCH_FRESH_SECONDS", "600"))
 #: How long a lean turn waits for its page brief once the CLI is up.
 PAGE_BRIEF_WAIT_SECONDS = float(os.environ.get("PAGE_BRIEF_WAIT_SECONDS", "8"))
+#: While the page's permission waits for the person's passkey (the brief says `waiting`:
+#: the panel is asking them), the turn holds its model this long at most, asking again
+#: every PAGE_GRANT_POLL_SECONDS. canopy-web bounds the wait itself (120 s a turn) and then
+#: answers with a brief that says their approval was not given; this is only a backstop.
+PAGE_GRANT_WAIT_SECONDS = float(os.environ.get("PAGE_GRANT_WAIT_SECONDS", "135"))
+PAGE_GRANT_POLL_SECONDS = 2.0
 #: The plugin a lean page turn keeps: canopy's (its hooks say who is asking and hold the
 #: rails; its canopy-web server is the page's tools).
 LEAN_KEEP_PLUGINS = frozenset({"canopy@canopy"})
@@ -13686,22 +13692,35 @@ def _lean_session_meta(home: pathlib.Path | None = None, *, brief: str = "",
 
 class _PageBrief:
     """A lean turn's page brief (`GET /turns/{id}/page-brief`), fetched on its own
-    thread while the turn's working copy and CLI get ready."""
+    thread while the turn's working copy and CLI get ready. When the page's permission
+    waits for the person's passkey, it asks again (`?poll=true`) until they confirm or
+    canopy-web says the wait is over, and the turn's model waits for it (`wait`)."""
 
-    def __init__(self, turn_id: str):
+    def __init__(self, turn_id: str, *, poll_every: float | None = None):
         self.turn_id = turn_id
         self.text = ""
+        self.waiting = False
+        self._poll_every = PAGE_GRANT_POLL_SECONDS if poll_every is None else poll_every
         self._done = threading.Event()
         threading.Thread(target=self._fetch, daemon=True, name=f"brief-{turn_id[:8]}").start()
 
     def _fetch(self) -> None:
         started = time.time()
+        path = f"/turns/{self.turn_id}/page-brief"
         try:
-            status, body = _api("GET", f"/turns/{self.turn_id}/page-brief")
-            if status == 200 and isinstance(body, dict):
+            status, body = _api("GET", path)
+            while (status == 200 and isinstance(body, dict) and body.get("waiting")
+                   and time.time() - started < PAGE_GRANT_WAIT_SECONDS):
+                if not self.waiting:
+                    self.waiting = True
+                    _log(f"turn {self.turn_id[:8]}: waiting for the person's passkey")
+                time.sleep(self._poll_every)
+                status, body = _api("GET", path + "?poll=true")
+            if status == 200 and isinstance(body, dict) and not body.get("waiting"):
                 self.text = str(body.get("text") or "")
             _log(f"turn {self.turn_id[:8]}: page brief {len(self.text)} chars in "
-                 f"{time.time() - started:.1f}s (http {status})")
+                 f"{time.time() - started:.1f}s (http {status}"
+                 + (", waited for the passkey" if self.waiting else "") + ")")
         except Exception as exc:  # noqa: BLE001 — the turn runs without it
             _log(f"warn: turn {self.turn_id[:8]}: no page brief ({exc})")
         finally:
@@ -13709,6 +13728,9 @@ class _PageBrief:
 
     def wait(self, timeout: float = PAGE_BRIEF_WAIT_SECONDS) -> str:
         self._done.wait(timeout)
+        if not self._done.is_set() and self.waiting:
+            # The person is being asked for their passkey: the model waits for them.
+            self._done.wait(PAGE_GRANT_WAIT_SECONDS)
         return self.text
 
 

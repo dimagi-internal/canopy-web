@@ -470,6 +470,11 @@ class PageBriefOut(Schema):
     tools: int = 0
     # Why the site's tools could not be listed for the person ("" when they were).
     refused: str = ""
+    # The page's permission waits for the person's passkey and the panel is asking them:
+    # no text yet; ask again with `?poll=true` until this is false.
+    waiting: bool = False
+    # Seconds the turn may still wait for them.
+    wait_left: float = 0.0
 
 
 class LiveTextIn(Schema):
