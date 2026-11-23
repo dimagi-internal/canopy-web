@@ -229,7 +229,8 @@ page within their own access. The lifecycle is the docstring of
 - **An agent's own login confirms without a passkey only under its agent test key**
   (`Agent.test_vault_key`, `apps/agents/credentials/login_test_key.py`): its own token or browser
   session on `/api/me/host-grants/{id}/confirm-as-agent`, never the panel's token, never a
-  person's grant; the same `host_grants.confirm` and View index refresh as a passkey
+  person's grant, never another agent's page unless it is a sibling in the same workspace
+  with its own test key on; the same `host_grants.confirm` and View index refresh as a passkey
   confirm. Rule and limits: [access-confinement-and-act-as.md](access-confinement-and-act-as.md)
   § Acting as the person on a host site.
 - **A View's card button says it is the person's.** `host_gateway.view_call` carries

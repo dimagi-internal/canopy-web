@@ -394,8 +394,9 @@ def confirm_my_host_grant_as_agent(request: HttpRequest, grant_id: int,
     """FOR TESTING. Only an agent's own canopy login, with its own token or browser
     session (never a site's panel token), while an admin of the agent has turned on its
     agent test key (`PUT /api/agents/{slug}/test-vault-key`), confirms its
-    OWN waiting permission on a host site's page — for its own agent's page or one for
-    any agent — without a passkey. From then, for the usual 30 minutes, the agent may act
+    OWN waiting permission on a host site's page — for its own agent's page, one for
+    any agent, or a sibling agent's in its workspace whose test key is also on —
+    without a passkey. From then, for the usual 30 minutes, the agent may act
     as its own login on that page. A person confirms with their passkey and is refused
     here; no one confirms anyone else's permission."""
     from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports host_grants
