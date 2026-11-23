@@ -25,8 +25,12 @@ status item like any other app.
   zero duplicated components. Authenticated seamlessly by minting a session from the
   runner's PAT (the credential it shares with the daemon), so there's no separate login.
 - **Right-click → local controls**: Pause/Resume (writes the `PAUSED` sentinel the
-  daemon honors), Start/Stop daemon (launchctl), Open Supervisor in browser, Reload,
-  Open Log, Quit.
+  daemon honors), Start/Stop daemon (launchctl), Settings…, Open Supervisor in browser,
+  Reload, Open Log, Quit.
+- **Settings…** (right-click, and ⌘, in the app menu): opens this runner's own page on
+  canopy at its Settings tab — Session runtime (emdash / Claude desktop / Claude CLI),
+  pause, sessions, flags — in the panel, which is already signed in. It loads
+  `/runners/<runner_id>/settings`, which forwards to the page under the runner's workspace.
 - **Close sessions** (right-click submenu): lists this box's open sessions per project
   (`ace — 6 sessions…`) plus "All sessions", and after a confirm closes them with
   `canopy-runner close-sessions --project <p> | --all` — each one the same close as the

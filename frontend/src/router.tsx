@@ -74,6 +74,7 @@ import { ProjectRefRedirect } from './pages/work/ProjectRefRedirect'
 import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import { RunnerPage, RunnerTabRoute } from './pages/runner/RunnerPage'
+import { RunnerRedirect } from './pages/runner/RunnerRedirect'
 import { VaultPage } from './pages/vault/VaultPage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
@@ -338,6 +339,9 @@ export const routeTable: RouteObject[] = [
       // What the runner's menu bar opens: it knows no workspace.
       { path: '/apps', element: <TenantRedirect to="apps?tab=personal" /> },
       { path: '/supervisor', element: <SupervisorPage /> },
+      // The app's "Settings…": its runner's page, before it knows the workspace.
+      { path: '/runners/:runnerId', element: <RunnerRedirect /> },
+      { path: '/runners/:runnerId/:tab', element: <RunnerRedirect /> },
       { path: '/ide', element: <LazySection><IdePage /></LazySection> },
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
       { path: '/schedules', element: <SchedulesPage /> },
