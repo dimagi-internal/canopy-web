@@ -86,7 +86,9 @@ parameters; the Outputs canopy-web requires are `aws.REQUIRED_OUTPUTS`, `CHECKED
    `{"ok": true|false, "reason"?, "timings"?, "cli_version"?}`; `ok: false` fails the lease at once and
    terminates the machine;
 3. halt at `max_lifetime_s` (a halt terminates);
-4. put every `exec.allow` command on `PATH` for SSM's root shell, and have `bash` and `base64`;
+4. put every `exec.allow` command on `PATH` for SSM's root shell, and have `bash` and `base64` — or, on a
+   Windows image (stack parameter `Platform=windows`, whose exec step is `aws:runPowerShellScript`), on the
+   SYSTEM `PATH` as an application `Get-Command` resolves (an `.exe` takes its argv verbatim);
 5. read and write S3 only through the URIs it is given (argv, `CANOPY_LEASE_IN`, `CANOPY_LEASE_OUT`) — never
    compute a lease path itself.
 
