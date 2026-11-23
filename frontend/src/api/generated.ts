@@ -10794,6 +10794,143 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A project's files: the live revision, the draft waiting to be published, and its skills
+         * @description The draft is shown to those who may change the project; everyone who reads the
+         *     project sees the live files.
+         */
+        readonly get: operations["get_project_files"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/revisions/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Every revision of a project's files, newest first */
+        readonly get: operations["list_project_file_revisions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/content": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One file of a project, from its live files or a given revision
+         * @description `revision` omitted reads the live files. A draft or discarded revision is read only
+         *     by those who may change the project.
+         */
+        readonly get: operations["get_project_file"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/draft": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Make or replace a project's draft of its files
+         * @description `{base, changes: [{path, content | null}], message}`: the changes are made on the
+         *     live revision `base` (0 while nothing is live) and replace any earlier draft. Nothing
+         *     runs until a person who may publish it does. Every file is held to the policy
+         *     (`policy` on `GET …/files/`): text only, no executable, nothing shaped like a secret.
+         */
+        readonly put: operations["put_project_files_draft"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/draft/{number}/publish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Publish a project's draft of its files
+         * @description What is published runs in the project's member agents' turns, with every vault
+         *     attached to the project, so only the people those vaults open to publish it.
+         */
+        readonly post: operations["publish_project_files"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/draft/{number}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Discard a project's draft of its files */
+        readonly delete: operations["discard_project_files_draft"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/revisions/{number}/rollback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Publish an earlier revision of a project's files again, as a new revision */
+        readonly post: operations["rollback_project_files"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/": {
         readonly parameters: {
             readonly query?: never;
@@ -40509,6 +40646,134 @@ export interface components {
             readonly config?: {
                 readonly [key: string]: unknown;
             };
+        };
+        /** ProjectFileChangeOut */
+        readonly ProjectFileChangeOut: {
+            /** Path */
+            readonly path: string;
+            /** Change */
+            readonly change: string;
+        };
+        /** ProjectFileEntryOut */
+        readonly ProjectFileEntryOut: {
+            /** Path */
+            readonly path: string;
+            /** Size */
+            readonly size: number;
+            /** Sha256 */
+            readonly sha256: string;
+        };
+        /** ProjectFilesOut */
+        readonly ProjectFilesOut: {
+            /** Project */
+            readonly project: string;
+            readonly live: components["schemas"]["ProjectFilesRevisionOut"] | null;
+            readonly draft: components["schemas"]["ProjectFilesRevisionOut"] | null;
+            /** Skills */
+            readonly skills: readonly components["schemas"]["ProjectSkillFilesOut"][];
+            /** May Draft */
+            readonly may_draft: boolean;
+            /** May Publish */
+            readonly may_publish: boolean;
+            /** Policy */
+            readonly policy: readonly string[];
+        };
+        /** ProjectFilesRevisionOut */
+        readonly ProjectFilesRevisionOut: {
+            /** Number */
+            readonly number: number;
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /** Root Sha256 */
+            readonly root_sha256: string;
+            /** Commit */
+            readonly commit: string;
+            /** Author */
+            readonly author: string;
+            /** Author Agent */
+            readonly author_agent: string | null;
+            /** Published By */
+            readonly published_by: string | null;
+            /** Published At */
+            readonly published_at: string | null;
+            /** Created At */
+            readonly created_at: string;
+            /** Files */
+            readonly files: readonly components["schemas"]["ProjectFileEntryOut"][];
+            /** Changes */
+            readonly changes: readonly components["schemas"]["ProjectFileChangeOut"][];
+        };
+        /** ProjectSkillFilesOut */
+        readonly ProjectSkillFilesOut: {
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Files */
+            readonly files: readonly string[];
+        };
+        /** ProjectFilesRevisionSummaryOut */
+        readonly ProjectFilesRevisionSummaryOut: {
+            /** Number */
+            readonly number: number;
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /** Author */
+            readonly author: string;
+            /** Published By */
+            readonly published_by: string | null;
+            /** Published At */
+            readonly published_at: string | null;
+            /** Created At */
+            readonly created_at: string;
+        };
+        /** ProjectFileOut */
+        readonly ProjectFileOut: {
+            /** Path */
+            readonly path: string;
+            /** Revision */
+            readonly revision: number;
+            /** Content */
+            readonly content: string;
+        };
+        /** ProjectFileChangeIn */
+        readonly ProjectFileChangeIn: {
+            /** Path */
+            readonly path: string;
+            /** Content */
+            readonly content?: string | null;
+        };
+        /** ProjectFilesDraftIn */
+        readonly ProjectFilesDraftIn: {
+            /** Base */
+            readonly base: number;
+            /** Changes */
+            readonly changes: readonly components["schemas"]["ProjectFileChangeIn"][];
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
+        /** ProjectFilesPublishIn */
+        readonly ProjectFilesPublishIn: {
+            /**
+             * Expect Root
+             * @default
+             */
+            readonly expect_root: string;
+        };
+        /** ProjectFilesRollbackIn */
+        readonly ProjectFilesRollbackIn: {
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
@@ -70909,6 +71174,293 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["KbSourceOut"];
+                };
+            };
+        };
+    };
+    readonly get_project_files: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_file_revisions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectFilesRevisionSummaryOut"][];
+                };
+            };
+        };
+    };
+    readonly get_project_file: {
+        readonly parameters: {
+            readonly query: {
+                readonly path: string;
+                readonly revision?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFileOut"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly put_project_files_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectFilesDraftIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesRevisionOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly publish_project_files: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectFilesPublishIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesRevisionOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly discard_project_files_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesRevisionOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly rollback_project_files: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectFilesRollbackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesRevisionOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

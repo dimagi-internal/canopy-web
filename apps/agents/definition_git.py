@@ -78,12 +78,15 @@ class AgentObjectStore(MemoryObjectStore):
     Reads go to the rows on demand and are cached; `preload` reads every row in one
     query (a fetch walks the whole graph, so it should not ask object by object). Added
     objects are held in memory until `flush` inserts them; nothing is ever updated or
-    deleted. `model` is the row class — a data migration passes its historical one."""
+    deleted. `model` is the row class — a data migration passes its historical one.
+    `owner` names the row's owner column: `agent_id`, or `project_id` for a project's
+    repository (`ProjectGitObject`, `apps/agents/project_files.py`)."""
 
-    def __init__(self, agent_id: int, *, model=AgentGitObject) -> None:
+    def __init__(self, agent_id: int, *, model=AgentGitObject, owner: str = "agent_id") -> None:
         super().__init__()
         self.agent_id = agent_id
         self._model = model
+        self._owner = owner
         self._new: dict[bytes, ShaFile] = {}
         self._complete = False
 
@@ -91,7 +94,7 @@ class AgentObjectStore(MemoryObjectStore):
 
     def _row(self, sha: bytes) -> ShaFile | None:
         hexsha = sha.decode("ascii")
-        row = self._model.objects.filter(agent_id=self.agent_id, sha=hexsha).values_list("type", "data").first()
+        row = self._model.objects.filter(**{self._owner: self.agent_id}, sha=hexsha).values_list("type", "data").first()
         if row is None:
             return None
         obj = ShaFile.from_raw_string(row[0], zlib.decompress(bytes(row[1])), sha=sha)
@@ -100,7 +103,7 @@ class AgentObjectStore(MemoryObjectStore):
 
     def preload(self) -> AgentObjectStore:
         if not self._complete:
-            for sha, type_num, data in (self._model.objects.filter(agent_id=self.agent_id)
+            for sha, type_num, data in (self._model.objects.filter(**{self._owner: self.agent_id})
                                         .values_list("sha", "type", "data").iterator()):
                 key = sha.encode("ascii")
                 if key not in self._data:
@@ -141,7 +144,7 @@ class AgentObjectStore(MemoryObjectStore):
 
     def flush(self) -> int:
         """Insert the objects added since the last flush; return how many."""
-        rows = [self._model(agent_id=self.agent_id, sha=sha.decode("ascii"), type=obj.type_num,
+        rows = [self._model(**{self._owner: self.agent_id}, sha=sha.decode("ascii"), type=obj.type_num,
                             data=zlib.compress(obj.as_raw_string()))
                 for sha, obj in self._new.items()]
         if rows:
@@ -153,21 +156,21 @@ class AgentObjectStore(MemoryObjectStore):
 # --- refs -------------------------------------------------------------------
 
 
-def refs_of(agent_id: int, *, model=AgentGitRef) -> dict[str, str]:
-    """{ref name: sha} of the agent's repository."""
-    return dict(model.objects.filter(agent_id=agent_id).values_list("name", "sha"))
+def refs_of(agent_id: int, *, model=AgentGitRef, owner: str = "agent_id") -> dict[str, str]:
+    """{ref name: sha} of the agent's repository (or, with `owner="project_id"`, a project's)."""
+    return dict(model.objects.filter(**{owner: agent_id}).values_list("name", "sha"))
 
 
-def ref(agent_id: int, name: str, *, model=AgentGitRef) -> str:
-    return model.objects.filter(agent_id=agent_id, name=name).values_list("sha", flat=True).first() or ""
+def ref(agent_id: int, name: str, *, model=AgentGitRef, owner: str = "agent_id") -> str:
+    return model.objects.filter(**{owner: agent_id}, name=name).values_list("sha", flat=True).first() or ""
 
 
-def set_ref(agent_id: int, name: str, sha: str, *, model=AgentGitRef) -> None:
-    model.objects.update_or_create(agent_id=agent_id, name=name, defaults={"sha": sha})
+def set_ref(agent_id: int, name: str, sha: str, *, model=AgentGitRef, owner: str = "agent_id") -> None:
+    model.objects.update_or_create(**{owner: agent_id}, name=name, defaults={"sha": sha})
 
 
-def delete_ref(agent_id: int, name: str, *, model=AgentGitRef) -> None:
-    model.objects.filter(agent_id=agent_id, name=name).delete()
+def delete_ref(agent_id: int, name: str, *, model=AgentGitRef, owner: str = "agent_id") -> None:
+    model.objects.filter(**{owner: agent_id}, name=name).delete()
 
 
 # --- trees and commits -------------------------------------------------------

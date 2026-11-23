@@ -22,6 +22,7 @@ from .agent import (
 )
 from .aws import AgentAwsRoleRequest
 from .definition import AgentDefinitionRevision, AgentGitObject, AgentGitRef
+from .project_files import ProjectFilesRevision, ProjectGitObject, ProjectGitRef
 from .kb import (
     KbPassage,
     KbSource,
@@ -104,6 +105,9 @@ __all__ = [
     "MAX_TASK_DEPTH",
     "PreferredAgent",
     "ProjectBacking",
+    "ProjectFilesRevision",
+    "ProjectGitObject",
+    "ProjectGitRef",
     "ProjectMilestone",
     "ProjectMember",
     "ProjectParticipant",

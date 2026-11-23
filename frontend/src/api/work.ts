@@ -366,3 +366,49 @@ export async function removeProjectShare(
   })
   return typed(unwrap(res, 'removeProjectShare'))
 }
+
+// ---- a project's files (its git repository, `apps/agents/project_files.py`) ----
+
+export type ProjectFiles = Schemas['ProjectFilesOut']
+export type ProjectFilesRevision = Schemas['ProjectFilesRevisionOut']
+
+export async function getProjectFiles(workspace: string, handle: string): Promise<ProjectFiles> {
+  const res = await apiV2.GET('/api/workspace-projects/{workspace}/{handle}/files/', {
+    params: { path: { workspace, handle } },
+  })
+  return typed(unwrap(res, 'getProjectFiles'))
+}
+
+export async function getProjectFile(
+  workspace: string,
+  handle: string,
+  path: string,
+  revision?: number,
+): Promise<string> {
+  const res = await apiV2.GET('/api/workspace-projects/{workspace}/{handle}/files/content', {
+    params: { path: { workspace, handle }, query: { path, revision } },
+  })
+  return unwrap(res, 'getProjectFile').content
+}
+
+export async function publishProjectFiles(
+  workspace: string,
+  handle: string,
+  number: number,
+  expectRoot: string,
+): Promise<ProjectFilesRevision> {
+  const res = await apiV2.POST('/api/workspace-projects/{workspace}/{handle}/files/draft/{number}/publish', {
+    params: { path: { workspace, handle, number } },
+    body: { expect_root: expectRoot },
+  })
+  return typed(unwrap(res, 'publishProjectFiles'))
+}
+
+export async function discardProjectFiles(workspace: string, handle: string, number: number): Promise<void> {
+  ensureOk(
+    await apiV2.DELETE('/api/workspace-projects/{workspace}/{handle}/files/draft/{number}', {
+      params: { path: { workspace, handle, number } },
+    }),
+    'discardProjectFiles',
+  )
+}

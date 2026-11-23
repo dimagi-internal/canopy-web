@@ -67,6 +67,8 @@ A project has member agents (`member_agents`) and member **people** (`apps/agent
 
 A project can serve things to its workspace as `ProjectService` rows, one per thing, by `kind` (`kb`, `mcp`, `skill`, `plugin`; the `ProjectService` docstring says what each is). canopy serves a `kb` (as the project's own MCP server) and a `skill`'s instructions; it neither proxies nor vets an `mcp` server and does not load a `plugin`: those are listed with their add lines.
 
+A skill that runs code keeps that code in the project's **files**, a git repository canopy hosts for the project, drafted by whoever may change it and published only by a person its vaults open to ([project-files.md](project-files.md)).
+
 A skill that needs a secret uses the project's **vault**: a workspace vault attached to the project (`VaultAttachment.project`) opens to the project's people and is read in the turns of every member agent in the vault's workspace tree, with no per-agent attachment (`vault.md` § Workspace vaults). The project's detail lists the vaults by name, the secret names and who they serve, never a value.
 
 ## A project's toolbox reaches a session only when the work asks
