@@ -9,6 +9,7 @@ frame makes the conversation's working copy before its first turn arrives.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 import subprocess
 import threading
 import time
@@ -212,3 +213,61 @@ def test_the_ws_loops_chores_run_off_the_socket_thread(cloud_runner, monkeypatch
     tick = ws[ws.index("if time.monotonic() - last_poll >= POLL_SECONDS:"):]
     tick = tick[:tick.index("except Exception as exc:")]
     assert "_drain(ws, runner_id)" in tick and "_sync_session_views" not in tick and "_drain_inbox" not in tick
+
+
+def test_run_acp_starts_a_lean_session_and_streams_the_reply(cloud_runner, monkeypatch, tmp_path):
+    """The wiring, end to end through run_acp and the real drive_turn: the agent is made with
+    the lean session meta, and every reply fragment reaches the live view whole so far."""
+    made, heard = [], []
+
+    class Agent:
+        session_id = "acp-lean"
+
+        def __init__(self, *, cwd, env, on_update, session_meta=None, **kw):
+            made.append(session_meta)
+            self.on_update = on_update
+            self._session_meta = session_meta
+
+        def start(self):
+            return {}
+
+        def new_session(self, timeout=None):
+            return self.session_id
+
+        def set_mode(self, mode):
+            return SimpleNamespace(result=lambda timeout=None: {})
+
+        def prompt(self, _p):
+            for text in ("EHA ", "is furthest", " behind."):
+                self.on_update(self.session_id, {"sessionUpdate": "agent_message_chunk",
+                                                 "content": {"type": "text", "text": text}})
+            return SimpleNamespace(result=lambda timeout=None: {"stopReason": "end_turn"})
+
+        def cancel(self):
+            pass
+
+        def close(self):
+            pass
+
+    import canopy_acp
+
+    class Core:
+        AcpAgent = Agent
+        UpdateReducer = canopy_acp.UpdateReducer
+
+    monkeypatch.setattr(cloud_runner, "_acp_core", lambda: Core)
+    monkeypatch.setattr(cloud_runner, "_agent_env", lambda slug: {})
+    monkeypatch.setattr(cloud_runner, "_acp_spawn_for", lambda tid: None)
+    cloud_runner._TURN_ENV.lean = True
+    cloud_runner._TURN_ENV.page_brief = "<page_context/>"
+    cloud_runner._TURN_ENV.live_text = lambda i, t: heard.append((i, t))
+    try:
+        ok, text, _ = cloud_runner.run_acp("which partner?", "t-lean", lambda e: None, cwd=tmp_path)
+    finally:
+        cloud_runner._TURN_ENV.lean = False
+        cloud_runner._TURN_ENV.page_brief = ""
+        cloud_runner._TURN_ENV.live_text = None
+    assert ok and text == "EHA is furthest behind."
+    assert made and made[0]["systemPrompt"] == {"append": "<page_context/>"}
+    assert made[0]["claudeCode"]["options"]["settingSources"] == ["user"]
+    assert heard == [(0, "EHA "), (0, "EHA is furthest"), (0, "EHA is furthest behind.")]
