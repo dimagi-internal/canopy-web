@@ -28,6 +28,7 @@ import datetime as dt
 import re
 
 from cryptography.hazmat.primitives.asymmetric import ec
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
@@ -392,7 +393,7 @@ def wrap_route(agent, device_key) -> str:
       vault key, or an endorsement a keeper has sat on past `KEEPER_GRACE`). Told: the
       owner, as before.
     """
-    from . import zk_endorse  # noqa: PLC0415 - zk_endorse imports this module's helpers
+    from . import zk_endorse  # cycle: zk_endorse -> zk  # noqa: PLC0415
 
     if not device_key.ecdh_jkt:
         return "admin"
@@ -428,7 +429,6 @@ def device_wrap_missing(agent, request, device_key) -> str:
         else:
             to = None
             if route == "person":
-                from django.contrib.auth import get_user_model  # noqa: PLC0415
                 to = list(get_user_model().objects.filter(
                     pk=vault_members.person_of_device(device_key), is_active=True))
             vault_alerts.raise_alert(
