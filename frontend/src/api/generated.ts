@@ -35340,7 +35340,7 @@ export interface components {
              * @default no_valid_proof
              * @enum {string}
              */
-            readonly reason: "not_routed" | "no_valid_proof";
+            readonly reason: "not_routed" | "key_pending" | "no_valid_proof";
         };
         /**
          * ZkWrapMissingOut

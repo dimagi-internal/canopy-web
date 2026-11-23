@@ -234,6 +234,14 @@ def known_key(jkt: str):
             .filter(jkt=jkt, status=RunnerDeviceKey.ACTIVE).first())
 
 
+def pending_key(jkt: str):
+    """The PENDING device key with this thumbprint: registered, nobody has approved it
+    yet. A refusal names it so its owner is told "waiting for you to approve it", not
+    "a key nobody approved" (which reads as a stranger's machine)."""
+    return (RunnerDeviceKey.objects.select_related("runner", "runner__owner")
+            .filter(jkt=jkt, status=RunnerDeviceKey.PENDING).first())
+
+
 def active_key_for_agent(agent, jkt: str):
     """The ACTIVE device key with this thumbprint, if its runner serves `agent`."""
     key = known_key(jkt)
