@@ -306,6 +306,27 @@ def test_a_finished_turn_may_not_read_or_write_it(w):
     assert _put_doc(bearer, expected=1).status_code == 403
 
 
+def test_a_held_laptop_session_login_may_not_read_or_write_it(w):
+    """A session-scoped login works between a person's messages elsewhere (the brain); here it is still refused."""
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import RunnerAssignment
+
+    _put_doc(_sweep(w))
+    laptop = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=w["owner"], workspace=w["ws"],
+                                   last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    RunnerAssignment.objects.create(agent=w["trellis"], runner=laptop, rank=0)
+    conv = Session.objects.create(workspace=w["ws"], created_by=w["owner"], title="", agent=w["trellis"],
+                                  status=Session.ACTIVE)
+    RunnerBinding.objects.create(session=conv, runner=laptop, session_key="trellis-chat")
+    turn = _chat_turn(w, conv)
+    bearer = turn_agent_tokens.issue_for_session(turn, laptop, conv)["token"]
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    r = _get_doc(bearer)
+    assert r.status_code == 403 and b"lili@dimagi.com" not in r.content
+    assert _put_doc(bearer, {"people": {}}, expected=1).status_code == 403
+    assert AgentStateDocument.objects.get(agent=w["trellis"]).version == 1
+
+
 def test_a_colleagues_turn_may_write_but_never_read_everyone(w):
     """Their request to be forgotten has to reach the backup; everyone's records must not
     reach their turn."""
