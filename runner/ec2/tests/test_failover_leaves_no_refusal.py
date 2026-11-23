@@ -1,11 +1,10 @@
 """A turn that fails over to the next Claude credential never shows the refused
 credential's own line to the people in the conversation.
 
-Live case (connect-guide, session b46e18f8, 2026-11-23 16:48Z): the turn hit
-"You've hit your weekly limit · resets 9pm (UTC)" on its first credential, failed over,
-and the next credential answered — but the CLI had written the cap into the session's
-transcript as an assistant record, and the runner shipped it as the conversation's first
-reply. Every channel (the panel, Slack, email) reads the stored rows.
+The CLI writes a credential's refusal ("You've hit your weekly limit · resets 9pm (UTC)")
+into the session's transcript as an assistant record. The runner ships that transcript as
+the conversation's stored rows, which the panel, Slack and email all read, so the box
+drops the refusal from every ship: the next credential's answer is the reply.
 """
 from __future__ import annotations
 
