@@ -54,6 +54,9 @@ from .schemas import (
     TranscriptAppendIn,
     TranscriptAppendOut,
     TurnAbortIn,
+    LiveTextIn,
+    LiveTextOut,
+    PageBriefOut,
     TurnEventCountOut,
     TurnEventsIn,
     TurnEventsOut,
@@ -253,6 +256,54 @@ def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEv
         if event.kind == owner_ask.EVENT:
             owner_ask.record(turn, (event.payload or {}).get("line"))
     return {"count": count}
+
+
+def _running_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+    """A turn the caller reports on (`reporting_turn_or_404`) that is still running."""
+    turn = reporting_turn_or_404(request, turn_id)
+    if turn.status not in (Turn.CLAIMED, Turn.RUNNING):
+        raise ProblemError(409, "Turn not running", detail=f"status={turn.status}")
+    return turn
+
+
+@router.get("/turns/{turn_id}/page-brief", response=PageBriefOut)
+@gate("runner")
+def get_turn_page_brief(request: HttpRequest, turn_id: uuid.UUID):
+    """A LEAN page turn's opening context, for the runner to put at the top of its prompt:
+    the conversation's page and the site's tools, exactly as `current_page` and
+    `site_tools` would answer this turn — through the gateway, as the person who sent,
+    under their own act-as-you permission. Only for the box running the turn, only while it
+    runs, and only for a turn whose agent asked for lean page turns (`page_lean:`)."""
+    from apps.agents import published_profiles  # noqa: PLC0415 — the interface reads models, loaded with a call
+    from . import page_brief  # noqa: PLC0415 — reads the gateway, loaded with a call
+
+    turn = _running_turn_or_404(request, turn_id)
+    if not published_profiles.lean_page_turn(turn):
+        return {"refused": "not_a_lean_page_turn"}
+    out = page_brief.build(turn)
+    # On the turn's own ledger: which site and how many tools, never what came back.
+    ledger.append_events(turn, [{"kind": "lifecycle", "payload": {
+        "event": "page_brief", "site": out["site"], "tools": out["tools"],
+        **({"refused": out["refused"][:200]} if out["refused"] else {})}}])
+    return out
+
+
+@router.post("/turns/{turn_id}/live-text", response=LiveTextOut)
+@gate("runner", kind="turn")
+def post_turn_live_text(request: HttpRequest, turn_id: uuid.UUID, payload: LiveTextIn):
+    """The reply the agent is writing right now, whole so far, for the people watching its
+    chat: fanned out to the conversation's socket as `chat.live_text` and never stored. The
+    stored reply arrives as it always has and takes its place. A sensitive conversation's
+    words never stream."""
+    from apps.realtime import groups  # noqa: PLC0415 — realtime imports harness
+
+    turn = _running_turn_or_404(request, turn_id)
+    if not turn.chat_session_id or sensitivity.is_sensitive(turn):
+        return {"sent": False}
+    groups.publish(groups.session_group(turn.chat_session_id), {
+        "type": "chat.live_text", "turn_id": str(turn.pk),
+        "message": payload.message, "text": payload.text})
+    return {"sent": True}
 
 
 @router.get("/turns/{turn_id}/events", response=TurnEventsOut)

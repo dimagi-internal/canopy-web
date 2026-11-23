@@ -45,6 +45,8 @@ def new_site_defaults() -> dict:
         "sensitive": False,
         "contact_scoped": False,
         "surface": "",
+        "page_lean": False,
+        "page_model": "",
     }
 
 
@@ -74,7 +76,9 @@ def _row(name: str, entry: dict, site: str) -> dict:
             "own_login": (entry.get("own_login") or {}).get(site) or [],
             "sensitive": entry.get("data") == sensitive_data.SENSITIVE,
             "contact_scoped": entry.get("contact_scoped") is True,
-            "surface": entry.get("surface") or ""}
+            "surface": entry.get("surface") or "",
+            "page_lean": entry.get("page_lean") is True,
+            "page_model": str(entry.get("page_model") or "")}
 
 
 def host_sites_of(agent) -> list[dict]:
@@ -243,6 +247,10 @@ def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
             entry["contact_scoped"] = True
         if merged.get("surface"):
             entry["surface"] = merged["surface"]
+        if merged.get("page_lean"):
+            entry["page_lean"] = True
+        if merged.get("page_model"):
+            entry["page_model"] = merged["page_model"]
         caps[name] = _validated(name, entry)
     return _edit(agent, change, by=by, dry_run=dry_run)
 

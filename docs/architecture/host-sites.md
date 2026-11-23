@@ -62,6 +62,16 @@ An agent's host-site entry names the surface it serves (`surface:`, `published_p
 - **A contact holds a conversation only on a surface the site declares `sensitive: false`** (`surfaces.for_contact`, asked by `contact_api.start_session`), through a `contact_scoped` entry that names it. The conversation is not sensitive, so an arrival requiring `sensitive_data` runners is refused there (`422 surface_mismatch`), never served with the requirement dropped; a surface the site does not declare, or declares sensitive, is refused too. The session records its surface, server-owned (`surfaces.SESSION_KEY`).
 - **The site's own pages keep its sensitivity.** Nothing about a surface changes a conversation on the site itself: what its visitor assertions require still decides, and a contact still cannot hold a sensitive one (`CannotHold`).
 - **A contact's subject-bound calls go to its surface's resource** (`surfaces.subject_resource`, asked by `host_gateway._subject_context`): the conversation's surface must still be the entry's, still declared and not sensitive, and its resource on the origin of the site's registered MCP server, which only the workspace owner sets. On a site that declares surfaces, a `contact_scoped` entry naming none reaches no tools. So a contact never reaches the sensitive surface or its tools, and a site cannot point canopy at another host. A surface's tools stay out of the site's MCP Apps index, which is its pages'.
+## Lean page turns: fast answers in the panel
+
+An agent admin can make every turn held on one site's pages start with only what a page needs: `page_lean: true` on the site's entry (Agent settings › Channels, or `PUT /api/agents/{slug}/host-sites/{site}`, the `put_agent_host_site` tool), and optionally `page_model:` (a Claude Code model name, e.g. `claude-sonnet-5-5`) for the model those turns start on. Both are parsed by `published_profiles._page_turn_settings`, read through `page_lean_of` / `page_model_of`, and apply to everyone on that site's pages, the owner included. Neither changes what a turn may do: its profile, the gateway, the grant, the withheld own logins and every refusal are the same.
+
+- **The claim** says `page_site.lean` (`published_profiles.page_turn`) and starts the conversation on `page_model` (`claim_payload.page_model`; a conversation still keeps the model of its first claim). The agent's other turns keep `cli_models`.
+- **The runner** (`runner/ec2/cloud_runner.py`, "lean page turns") opens the ACP session with user settings only and every plugin but canopy's switched off (`_lean_session_meta`), skips the plugin refresh and connection staging, and reuses a recently fetched clone.
+- **canopy's MCP lists only the page tools** to such a turn (`turn_scope.LEAN_PAGE_TOOLS`, by the chat key or the caller token): the list only, since narrowing what a session is shown widens nothing.
+- **The page brief.** While the CLI starts, the runner fetches `GET /api/harness/turns/{id}/page-brief` (`apps/harness/page_brief.py`): the conversation's page state and the site's tools, as `current_page` and `site_tools` would answer, listed through the gateway as the person who sent (refused, and said so, without their confirmed grant). It opens the prompt, so the first model call can go straight to `site_call`.
+- **Preparing.** Opening such a conversation, or its page first declaring its state, rings the cloud runners that may hold the agent with a `prepare` frame (`apps/harness/prepare.py`), and the runner makes the conversation's worktree before the turn arrives (`_prepare_session`). It names only the agent and the conversation; the turn is claimed as always.
+- **The reply streams** into the panel as it is written: the runner posts it whole so far to `POST /api/harness/turns/{id}/live-text`, fanned out as `chat.live_text` and never stored; the stored reply replaces it ([chat-sessions.md](chat-sessions.md) § How the runner drives a chat).
 
 ## The site is the system of record for its people
 
@@ -96,6 +106,7 @@ An **app entry** is the same kind of entry as a host site, bound to ONE workspac
 | Which site is this conversation on | `published_profiles.session_site` (`embed_app`) |
 | Which entry does a site select for this asker | `turn_context._entry_for` → `published_profiles.site_entry` |
 | Does this turn run on a site's page; what is withheld | `published_profiles.page_site_of`, `page_turn`, `own_login_of` |
+| A lean page turn: settings, the listing, the brief, preparing | `published_profiles.page_lean_of` / `page_model_of`, `apps/mcp/turn_scope.py`, `apps/harness/page_brief.py`, `apps/harness/prepare.py` |
 | Sensitive | `apps/agents/sensitive_data.py`, `turn_context._sensitive_rule` |
 | The gateway | `apps/host_grants/host_gateway.py`, `apps/mcp/tools/site.py` |
 | An app entry: parse, its fixed tools, which app a conversation is held in | `published_profiles.parse`, `apps/agents/app_entries.py` |

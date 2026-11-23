@@ -109,6 +109,7 @@ def declare_page_state(request: HttpRequest, session_id: uuid.UUID,
         # 422: well-formed request, unacceptable CONTENT — the page must change
         # what it sends, which is a different fix from retrying.
         raise HttpError(422, f"{exc.code}: {exc.message}")
+    _ring_prepare(session)
     return PageStateOut(state=stored, version=int(stored.get("version") or 0))
 
 
@@ -141,6 +142,7 @@ def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
             stored = page_state.set_page_state(session, payload.state)
         except page_state.PageStateError as exc:
             raise HttpError(422, f"{exc.code}: {exc.message}")
+    _ring_prepare(session)
     return RunAgentInputOut(
         state=stored,
         version=int(stored.get("version") or 0),
@@ -202,3 +204,11 @@ def resolve_page_action(request: HttpRequest, session_id: uuid.UUID, action_id: 
     action = page_actions.resolve(action, result=payload.result, error=payload.error)
     return PageActionOut(id=str(action.id), name=action.name, status=action.status,
                          result=action.result, error=action.error)
+
+
+def _ring_prepare(session) -> None:
+    """The panel attached to a page: its runner may get ready now (`harness.prepare`,
+    which rings a conversation at most every couple of minutes)."""
+    from apps.harness import prepare  # noqa: PLC0415 — harness imports this app
+
+    prepare.ring(session)

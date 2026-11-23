@@ -464,8 +464,12 @@ class AcpAgent:
 
     def __init__(self, *, cwd, argv: list[str] | None = None, env: dict | None = None,
                  on_update=None, permission_policy=None, confine_fs: bool = True,
-                 ask_human=None, spawn=None):
+                 ask_human=None, spawn=None, session_meta: dict | None = None):
         self.cwd = pathlib.Path(cwd)
+        # `_meta` for `session/new` and `session/load` (claude-agent-acp reads
+        # `claudeCode.options`, Agent SDK options for the session): how a caller starts
+        # a session with less than the adapter's defaults load. None sends none.
+        self._session_meta = dict(session_meta) if session_meta else None
         # `spawn(argv, cwd=, env=)` -> a Popen-like with text stdin/stdout/stderr, for a
         # caller whose adapter must outlive it (the cloud runner's turn relay). None
         # spawns the adapter as this process's own child.
@@ -541,6 +545,7 @@ class AcpAgent:
         agent._confine_fs = confine_fs
         agent.session_id = session_id
         agent._stderr_tail = collections.deque(maxlen=STDERR_TAIL_LINES)
+        agent._session_meta = None
         if getattr(proc, "stderr", None) is not None:
             threading.Thread(target=agent._drain_stderr, daemon=True, name="acp-stderr").start()
         agent.conn = AcpConnection(
@@ -591,9 +596,14 @@ class AcpAgent:
         tail = " | ".join(list(self._stderr_tail)[-5:])
         return f"adapter {how}" + (f"; last stderr: {tail}" if tail else "; no stderr")
 
+    def _with_meta(self, params: dict) -> dict:
+        meta = getattr(self, "_session_meta", None)
+        return {**params, "_meta": meta} if meta else params
+
     def new_session(self, timeout: float = 120) -> str:
         result = self.conn.request(
-            "session/new", {"cwd": str(self.cwd), "mcpServers": []}).result(timeout=timeout)
+            "session/new", self._with_meta({"cwd": str(self.cwd), "mcpServers": []})
+        ).result(timeout=timeout)
         self.session_id = result.get("sessionId") or ""
         return self.session_id
 
@@ -605,7 +615,7 @@ class AcpAgent:
         """
         result = self.conn.request(
             "session/load",
-            {"sessionId": session_id, "cwd": str(self.cwd), "mcpServers": []},
+            self._with_meta({"sessionId": session_id, "cwd": str(self.cwd), "mcpServers": []}),
         ).result(timeout=timeout)
         self.session_id = session_id
         return result

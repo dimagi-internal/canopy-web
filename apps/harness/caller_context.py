@@ -587,7 +587,8 @@ def _site(turn, agent) -> dict | None:
         return None
     site = block["site"]
     return {
-        **block,
+        # `lean` says how the runner starts the turn; the agent has nothing to do with it.
+        **{k: v for k, v in block.items() if k != "lean"},
         "reach_with": ["site_tools", "site_call", "site_read"],
         "as": "the person who sent",
         "note": (f"This conversation is held on a {site} page. Read or change anything at {site} "

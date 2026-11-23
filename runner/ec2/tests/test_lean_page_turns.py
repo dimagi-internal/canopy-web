@@ -1,0 +1,197 @@
+"""Lean page turns: a question asked in a host site's panel starts with only what a page needs.
+
+canopy-web marks such a turn `page_site.lean` (the agent entry's `page_lean:`). The runner then
+opens its ACP session with user settings only and every plugin but canopy's switched off, puts
+the page brief at the top of the prompt, streams the reply being written to the panel, and does
+not refresh the agent's plugin, stage its connections or fetch a fresh clone again. A `prepare`
+frame makes the conversation's working copy before its first turn arrives.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import threading
+import time
+
+import pytest
+
+
+def test_lean_is_what_canopy_web_says(cloud_runner):
+    assert cloud_runner._lean_page({"page_site": {"site": "connect-labs", "lean": True}})
+    assert not cloud_runner._lean_page({"page_site": {"site": "connect-labs"}})
+    assert not cloud_runner._lean_page({"page_site": {"site": "connect-labs", "lean": "yes"}})
+    assert not cloud_runner._lean_page({})
+
+
+def test_the_lean_session_keeps_only_canopys_plugin(cloud_runner, tmp_path):
+    plugins = tmp_path / ".claude" / "plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "installed_plugins.json").write_text(json.dumps({"plugins": {
+        "canopy@canopy": [{}], "ace@ace": [{}], "chrome-sales@chrome-sales": [{}]}}))
+    meta = cloud_runner._lean_session_meta(tmp_path)
+    options = meta["claudeCode"]["options"]
+    # No project settings: the worktree's CLAUDE.md and .claude/ settings stay out.
+    assert options["settingSources"] == ["user"]
+    assert options["settings"]["enabledPlugins"] == {"ace@ace": False, "chrome-sales@chrome-sales": False}
+
+
+def test_no_plugin_list_switches_nothing_off(cloud_runner, tmp_path):
+    meta = cloud_runner._lean_session_meta(tmp_path)
+    assert meta["claudeCode"]["options"]["settings"]["enabledPlugins"] == {}
+
+
+def test_the_page_brief_opens_the_prompt(cloud_runner):
+    assert cloud_runner._with_page_brief("Which partner?", "<page_context/>") == "<page_context/>\n\nWhich partner?"
+    assert cloud_runner._with_page_brief("Which partner?", "") == "Which partner?"
+    # A plugin command must stay first: the CLI reads one only at the very start.
+    assert cloud_runner._with_page_brief("/ace:ask\nWhich?", "B") == "/ace:ask\n\nB\n\nWhich?"
+    assert cloud_runner._with_page_brief("/ace:ask", "B") == "/ace:ask\n\nB"
+
+
+def test_the_brief_is_fetched_off_the_turns_thread(cloud_runner, monkeypatch):
+    calls = []
+
+    def fake_api(method, path, body=None, **kw):
+        calls.append((method, path))
+        time.sleep(0.05)
+        return 200, {"text": "<page_context>x</page_context>"}
+
+    monkeypatch.setattr(cloud_runner, "_api", fake_api)
+    brief = cloud_runner._PageBrief("11111111-2222-3333-4444-555555555555")
+    assert brief.wait(2) == "<page_context>x</page_context>"
+    assert calls == [("GET", "/turns/11111111-2222-3333-4444-555555555555/page-brief")]
+
+
+def test_a_brief_that_does_not_come_leaves_the_prompt_alone(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (500, None))
+    assert cloud_runner._PageBrief("t" * 36).wait(2) == ""
+
+
+def test_live_text_sends_the_latest_whole_reply_and_coalesces(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "LIVE_TEXT_EVERY_SECONDS", 0.05)
+    sent = []
+    gate = threading.Event()
+
+    def post(body):
+        sent.append(body)
+        gate.set()
+        return 200, {"sent": True}
+
+    live = cloud_runner._LiveText("t" * 36, post=post)
+    live(0, "Ch")
+    live(0, "Check")
+    live(0, "Checking.")
+    deadline = time.time() + 2
+    while time.time() < deadline and (not sent or sent[-1]["text"] != "Checking."):
+        time.sleep(0.01)
+    live.stop()
+    assert sent[-1] == {"message": 0, "text": "Checking."}
+    assert len(sent) <= 3
+
+
+def test_live_text_stops_when_nobody_hears_it(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "LIVE_TEXT_EVERY_SECONDS", 0.01)
+    sent = []
+
+    def post(body):
+        sent.append(body)
+        return 200, {"sent": False}  # a sensitive conversation: its words never stream
+
+    live = cloud_runner._LiveText("t" * 36, post=post)
+    live(0, "a")
+    deadline = time.time() + 2
+    while time.time() < deadline and not sent:
+        time.sleep(0.01)
+    time.sleep(0.05)
+    live(0, "ab")
+    time.sleep(0.1)
+    live.stop()
+    assert len(sent) == 1
+
+
+def _git(*args, cwd):
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+
+
+@pytest.fixture
+def agent_clone(cloud_runner, monkeypatch, tmp_path):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git("init", "-q", "-b", "main", cwd=origin)
+    (origin / "CLAUDE.md").write_text("v1\n")
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A", cwd=origin)
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "v1", cwd=origin)
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    _git("clone", "-q", str(origin), str(agents / "ace"), cwd=tmp_path)
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(agents))
+    monkeypatch.setattr(cloud_runner, "WORK_DIR", str(tmp_path / "work"))
+    monkeypatch.setattr(cloud_runner, "_CLONE_FETCH", {})
+    monkeypatch.setattr(cloud_runner, "_clone_refresh_env", lambda slug, env: env)
+    return agents / "ace"
+
+
+SESSION = "3a812762-f945-4987-951c-4248998fa3b0"
+
+
+def test_prepare_cuts_the_conversations_worktree_before_its_turn(cloud_runner, agent_clone, tmp_path):
+    assert cloud_runner._prepare_session("ace", SESSION) is True
+    worktree = tmp_path / "work" / "sessions" / cloud_runner._safe_session_dirname(SESSION)
+    assert (worktree / "CLAUDE.md").read_text() == "v1\n"
+
+
+def test_prepare_never_bootstraps_an_agent_this_box_lacks(cloud_runner, agent_clone):
+    assert cloud_runner._prepare_session("hal", SESSION) is False
+    assert cloud_runner._prepare_session("ace", "../../etc") is False
+    assert cloud_runner._prepare_session("", SESSION) is False
+
+
+def test_a_lean_turn_neither_refreshes_the_plugin_nor_refetches_a_fresh_clone(
+        cloud_runner, agent_clone, monkeypatch):
+    refreshed, fetched = [], []
+    monkeypatch.setattr(cloud_runner, "_refresh_agent_plugin", lambda slug, clone: refreshed.append(slug))
+    real_fetch = cloud_runner._fetch_clone
+    monkeypatch.setattr(cloud_runner, "_fetch_clone",
+                        lambda clone, env=None, **kw: fetched.append(kw) or real_fetch(clone, env, **kw))
+    monkeypatch.setattr(cloud_runner, "_ensure_agent_clone", lambda *a, **k: None)
+    monkeypatch.setattr(cloud_runner, "_is_stored_agent", lambda *a, **k: False)
+    assert cloud_runner._prepare_session("ace", SESSION)
+    fetched.clear()
+    turn = {"id": "9" * 36, "agent_slug": "ace", "origin_ref": {"chat_session_id": SESSION},
+            "page_site": {"site": "connect-labs", "lean": True}}
+    cloud_runner._TURN_ENV.lean = True
+    try:
+        path = cloud_runner._turn_cwd(turn, turn["id"])
+    finally:
+        cloud_runner._TURN_ENV.lean = False
+    assert (path / "CLAUDE.md").exists()
+    assert refreshed == [] and fetched == []
+    # An ordinary turn on the same conversation still does both.
+    cloud_runner._turn_cwd(turn, turn["id"])
+    assert refreshed == ["ace"] and fetched
+
+
+def test_the_ws_loops_chores_run_off_the_socket_thread(cloud_runner, monkeypatch):
+    """A wake must be claimed at once: the poll tick's chores (streams, backfills, the usage
+    report, mints, credentials, the inbox) run on their own thread, never between a wake and
+    its claim."""
+    ran = []
+    for name in ("_drain_session_interrupts", "_sync_session_views", "_drain_mint", "_drain_inbox"):
+        monkeypatch.setattr(cloud_runner, name, lambda *a, _n=name, **k: ran.append((_n, threading.current_thread().name)))
+    for name in ("_maybe_reread_credentials", "_credential_tick", "_job_cap_tick"):
+        monkeypatch.setattr(cloud_runner, name, lambda *a, _n=name, **k: ran.append((_n, threading.current_thread().name)))
+    monkeypatch.setattr(cloud_runner, "POLL_SECONDS", 0)
+    chores = cloud_runner._WsChores("rid")
+    chores.start()
+    deadline = time.time() + 2
+    while time.time() < deadline and not any(n == "_drain_inbox" for n, _ in ran):
+        time.sleep(0.01)
+    chores.stop()
+    assert {n for n, _ in ran} >= {"_drain_session_interrupts", "_sync_session_views", "_drain_inbox",
+                                   "_credential_tick"}
+    assert {t for _, t in ran} == {"ws-chores"}
+    src = open(cloud_runner.__file__).read()
+    ws = src[src.index("def run_over_ws"):src.index("def main()")]
+    tick = ws[ws.index("if time.monotonic() - last_poll >= POLL_SECONDS:"):]
+    tick = tick[:tick.index("except Exception as exc:")]
+    assert "_drain(ws, runner_id)" in tick and "_sync_session_views" not in tick and "_drain_inbox" not in tick

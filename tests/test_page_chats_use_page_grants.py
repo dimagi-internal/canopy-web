@@ -185,7 +185,7 @@ def test_an_editors_page_chat_reaches_the_site_as_the_editor(w, host):
 
 def test_the_claim_names_the_site_and_the_agents_own_login_to_withhold(w):
     out = claim_payload(Turn.objects.get(pk=w["owner_turn"].pk))
-    assert out["page_site"] == {"site": "connect-labs", "withheld": ["LABS_MCP_TOKEN"]}
+    assert out["page_site"] == {"site": "connect-labs", "withheld": ["LABS_MCP_TOKEN"], "lean": False}
     site = out["caller_context"]["site"]
     assert site["site"] == "connect-labs" and site["withheld"] == ["LABS_MCP_TOKEN"]
     assert "site_call" in site["note"] and "not available" in site["note"]
@@ -193,7 +193,7 @@ def test_the_claim_names_the_site_and_the_agents_own_login_to_withhold(w):
 
 def test_a_confined_visitors_claim_names_it_too(w):
     out = claim_payload(Turn.objects.get(pk=w["turn"].pk))
-    assert out["page_site"] == {"site": "connect-labs", "withheld": ["LABS_MCP_TOKEN"]}
+    assert out["page_site"] == {"site": "connect-labs", "withheld": ["LABS_MCP_TOKEN"], "lean": False}
 
 
 def test_a_chat_off_any_page_withholds_nothing(w):

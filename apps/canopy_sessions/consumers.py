@@ -586,6 +586,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                     frame["data"]["secret_request"] = ask
             await self.send_json(frame)
 
+    async def chat_live_text(self, message):
+        """The reply the agent is writing right now (`POST /turns/{id}/live-text`): the
+        whole of it so far, never stored. The client draws it under its own id until
+        the stored reply arrives and takes its place (`chat.live_text` in sessionReducer)."""
+        turn_id = str(message.get("turn_id") or "")
+        await self.send_json({"event": "chat.live_text", "data": {
+            "message_id": f"live:{turn_id}:{int(message.get('message') or 0)}",
+            "turn_id": turn_id, "text": str(message.get("text") or "")}})
+
     def _app_for_result(self, block):
         from apps.mcp_apps_host import mcp_apps_views
 

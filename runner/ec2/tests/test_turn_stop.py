@@ -161,7 +161,10 @@ def test_a_recorded_session_interrupt_is_carried_out_and_retired(running, monkey
     src = open(mod.__file__).read()
     assert "_drain_session_interrupts(runner_id)" in src[src.index("def run_over_rest"):src.index("def _ws_url")]
     ws = src[src.index("def run_over_ws"):src.index("def main()")]
-    assert ws.count("_drain_session_interrupts(runner_id)") >= 2  # the frame, and the poll tick
+    assert ws.count("_drain_session_interrupts(runner_id)") >= 1  # the frame
+    # …and the poll tick, which runs on the WS loop's chores thread (`_WsChores`).
+    chores = src[src.index("class _WsChores"):src.index("def _ws_url")]
+    assert "_drain_session_interrupts(rid)" in chores and "chores.start()" in ws
 
 
 def test_the_ws_loop_and_every_heartbeat_honour_stops(cloud_runner):

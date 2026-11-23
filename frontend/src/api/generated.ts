@@ -15896,6 +15896,53 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/turns/{turn_id}/page-brief": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Turn Page Brief
+         * @description A LEAN page turn's opening context, for the runner to put at the top of its prompt:
+         *     the conversation's page and the site's tools, exactly as `current_page` and
+         *     `site_tools` would answer this turn — through the gateway, as the person who sent,
+         *     under their own act-as-you permission. Only for the box running the turn, only while it
+         *     runs, and only for a turn whose agent asked for lean page turns (`page_lean:`).
+         */
+        readonly get: operations["get_turn_page_brief"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/turns/{turn_id}/live-text": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Turn Live Text
+         * @description The reply the agent is writing right now, whole so far, for the people watching its
+         *     chat: fanned out to the conversation's socket as `chat.live_text` and never stored. The
+         *     stored reply arrives as it always has and takes its place. A sensitive conversation's
+         *     words never stream.
+         */
+        readonly post: operations["post_turn_live_text"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/{turn_id}/transcript": {
         readonly parameters: {
             readonly query?: never;
@@ -31970,6 +32017,16 @@ export interface components {
              * @default
              */
             readonly surface: string;
+            /**
+             * Page Lean
+             * @default false
+             */
+            readonly page_lean: boolean;
+            /**
+             * Page Model
+             * @default
+             */
+            readonly page_model: string;
         };
         /**
          * AgentLoginRequestOut
@@ -33129,6 +33186,16 @@ export interface components {
              * @default
              */
             readonly surface: string;
+            /**
+             * Page Lean
+             * @default false
+             */
+            readonly page_lean: boolean;
+            /**
+             * Page Model
+             * @default
+             */
+            readonly page_model: string;
         };
         /** AgentHostSiteIn */
         readonly AgentHostSiteIn: {
@@ -33159,6 +33226,10 @@ export interface components {
             readonly contact_scoped?: boolean | null;
             /** Surface */
             readonly surface?: string | null;
+            /** Page Lean */
+            readonly page_lean?: boolean | null;
+            /** Page Model */
+            readonly page_model?: string | null;
         };
         /** AgentAppEntriesOut */
         readonly AgentAppEntriesOut: {
@@ -46209,6 +46280,11 @@ export interface components {
              * @default []
              */
             readonly withheld: readonly string[];
+            /**
+             * Lean
+             * @default false
+             */
+            readonly lean: boolean;
         };
         /**
          * ClaimedTurnOut
@@ -47266,6 +47342,47 @@ export interface components {
         readonly TurnEventsOut: {
             /** Events */
             readonly events: readonly components["schemas"]["TurnEventOut"][];
+        };
+        /**
+         * PageBriefOut
+         * @description A lean page turn's opening context (`harness.page_brief`).
+         */
+        readonly PageBriefOut: {
+            /**
+             * Text
+             * @default
+             */
+            readonly text: string;
+            /**
+             * Site
+             * @default
+             */
+            readonly site: string;
+            /**
+             * Tools
+             * @default 0
+             */
+            readonly tools: number;
+            /**
+             * Refused
+             * @default
+             */
+            readonly refused: string;
+        };
+        /** LiveTextOut */
+        readonly LiveTextOut: {
+            /** Sent */
+            readonly sent: boolean;
+        };
+        /**
+         * LiveTextIn
+         * @description The reply an agent is writing right now, for the people watching its chat.
+         */
+        readonly LiveTextIn: {
+            /** Message */
+            readonly message: number;
+            /** Text */
+            readonly text: string;
         };
         /** TranscriptAppendOut */
         readonly TranscriptAppendOut: {
@@ -76447,6 +76564,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnEventCountOut"];
+                };
+            };
+        };
+    };
+    readonly get_turn_page_brief: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PageBriefOut"];
+                };
+            };
+        };
+    };
+    readonly post_turn_live_text: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LiveTextIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LiveTextOut"];
                 };
             };
         };
