@@ -16,7 +16,8 @@
  *   lease in its place, once.
  * - One click opens one lease ("operation"): up to 10 minutes and 500 writes within what
  *   the screen declared. It ends 120 seconds after its last write, or when it is used up
- *   or the screen changes. A write with neither a live lease nor a click is refused here,
+ *   or the screen changes. The server says how far each one goes (a screen that only changes Drive
+ *   labels gets the hour of Google access the viewer granted), and this keeps to what it said. A write with neither a live lease nor a click is refused here,
  *   with no request. `canopy.connection.begin()` opens it without writing yet.
  * - Calls wait their turn in one first-come queue for the page, at most 8 at once across
  *   its frames: a dashboard's load outnumbers what the server takes from one person.
@@ -73,6 +74,11 @@ export interface LeaseWindow {
   expires_at: string
   hard_limit_at: string
   writes: readonly { provider: string; method: string; path: string }[]
+  /** How far this click goes (the server's): 500 writes, 120 s idle, 10 min; longer on a screen that only
+   * changes Drive labels. Absent from an older server: the ordinary click. */
+  max_writes?: number
+  idle_seconds?: number
+  hard_limit_seconds?: number
 }
 export interface Operation extends LeaseWindow {
   operation_id: string
@@ -364,9 +370,12 @@ export class ConnectionCalls {
   /** The live lease on this surface with room for `writes` more. */
   private liveLease(key: string, writes = 1): Lease | null {
     const l = this.lease
-    if (!l || l.key !== key || l.used + writes > MAX_WRITES) return null
+    const w = l?.window
+    if (!l || !w || l.key !== key || l.used + writes > (w.max_writes ?? MAX_WRITES)) return null
     const t = this.now()
-    return t < l.lastWrite + LEASE_IDLE_MS && t < l.opened + LEASE_HARD_LIMIT_MS ? l : null
+    const idle = w.idle_seconds ? w.idle_seconds * 1000 : LEASE_IDLE_MS
+    const hard = w.hard_limit_seconds ? w.hard_limit_seconds * 1000 : LEASE_HARD_LIMIT_MS
+    return t < l.lastWrite + idle && t < l.opened + hard ? l : null
   }
 
   private open(surface: Surface, key: string): Promise<Lease> {
@@ -376,8 +385,10 @@ export class ConnectionCalls {
       .openOperation(surface, ctl.signal)
       .then((op) => {
         const at = this.now()
-        const { expires_at, hard_limit_at, writes } = op
-        const lease = { key, id: op.operation_id, opened: at, lastWrite: at, used: 0, window: { expires_at, hard_limit_at, writes } }
+        const { expires_at, hard_limit_at, writes, max_writes, idle_seconds, hard_limit_seconds } = op
+        const window: LeaseWindow = { expires_at, hard_limit_at, writes }
+        if (max_writes) Object.assign(window, { max_writes, idle_seconds, hard_limit_seconds })
+        const lease = { key, id: op.operation_id, opened: at, lastWrite: at, used: 0, window }
         this.lease = lease
         return lease
       })

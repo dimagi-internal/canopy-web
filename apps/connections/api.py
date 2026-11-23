@@ -304,7 +304,9 @@ def open_connection_operation(request: HttpRequest, payload: ConnectionOperation
     that reaches this route with the person's session gets a lease too. What the lease does is limit how
     far that goes: only what this screen declared, at most 500 writes, for this person, this screen and
     this revision. It ends 120 seconds after its last write, or after it opened if there is none, and in
-    any case 10 minutes after it opened. Each write is still checked against the declaration, so on a page
+    any case 10 minutes after it opened. A screen whose only writes are Drive label changes on the
+    viewer's own Google account gets 20000 writes, 15 minutes idle and an hour (`max_writes`,
+    `idle_seconds`, `hard_limit_seconds` say which). Each write is still checked against the declaration, so on a page
     behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
 
     Only a person signed in here: a personal access token or OAuth token is refused 403

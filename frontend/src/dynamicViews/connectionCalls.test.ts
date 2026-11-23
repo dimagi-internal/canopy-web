@@ -284,6 +284,23 @@ describe('the lease slides', () => {
     expect(client.request).toHaveBeenCalledTimes(6)
   })
 
+  it('keeps to a longer window the server gives (a Drive-labels screen): past 500 writes and 10 minutes', async () => {
+    const { calls, client, state } = setup({ active: true })
+    ;(client.openOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      operation_id: 'hour', expires_at: new Date(state.now + 900_000).toISOString(), hard_limit_at: new Date(state.now + 3_600_000).toISOString(),
+      writes: [], max_writes: 20000, idle_seconds: 900, hard_limit_seconds: 3600,
+    })
+    await calls.handle(WRITE)
+    state.active = false
+    for (let i = 0; i < 600; i++) await calls.handle(WRITE) // past 500 on one click
+    state.now += 800_000 // a quiet stretch shorter than 900 s
+    await calls.handle(WRITE)
+    state.now += 1_200_000 // 33 minutes in
+    await expect(calls.handle(WRITE)).rejects.toThrow('This needs a click.') // 1200 s idle ends it
+    expect(client.openOperation).toHaveBeenCalledTimes(1)
+    expect(client.request).toHaveBeenCalledTimes(602)
+  })
+
   it('does not trust the browser clock against the server clock', async () => {
     const { calls, client, state } = setup({ active: true })
     ;(client.openOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -297,6 +314,17 @@ describe('the lease slides', () => {
 })
 
 describe('canopy.connection.begin', () => {
+  it('tells the frame how far a longer window goes', async () => {
+    const { calls, client, state } = setup({ active: true })
+    ;(client.openOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      operation_id: 'hour', expires_at: new Date(state.now + 900_000).toISOString(), hard_limit_at: new Date(state.now + 3_600_000).toISOString(),
+      writes: [], max_writes: 20000, idle_seconds: 900, hard_limit_seconds: 3600,
+    })
+    const out = await calls.begin()
+    expect(out).toMatchObject({ max_writes: 20000, idle_seconds: 900, hard_limit_seconds: 3600 })
+    expect(out).not.toHaveProperty('operation_id')
+  })
+
   it('opens the lease in the click and says what it covers, with no id for the frame', async () => {
     const { calls, client } = setup({ active: true })
     const out = await calls.begin()
