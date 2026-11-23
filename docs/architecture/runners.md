@@ -145,9 +145,11 @@ The stack parameter `Runners` lists them (`cloud_runner.parse_runners`); `up.sh 
 
 A runner's turn cannot reach the instance role (it reads the runner seed secrets). `runner/ec2/aws_broker.py`
 (root, uid from `SO_PEERCRED`) assumes ONLY the read-only roles it names and hands the runner an hour of keys
-in `credential_process` shape; its module docstring is the spec. **It never vends `labs-readwrite`**: the
-agent a runner names is a claim, so that role comes only from canopy-web, which checks the agent and
-`settings.CANOPY_AWS_ROLE_AGENTS` (`apps/agents/api_aws.py`). The canopy CLI asks `canopy aws credentials --role`.
+in `credential_process` shape; its module docstring is the spec. **It never vends a fenced role**
+(`labs-readwrite`, `labs-config`): the agent a runner names is a claim, so a fenced role comes only from
+canopy-web, which checks the agent and the live grant a person approved for it (`apps/agents/api_aws.py`,
+`apps/agents/aws_grants.py`). The canopy CLI asks `canopy aws credentials --role`; for a fenced role the agent
+first asks `canopy aws request --role <name> --reason "..."`, and a workspace owner approves it with a passkey.
 
 ### The job broker (`canopy-job-broker`)
 

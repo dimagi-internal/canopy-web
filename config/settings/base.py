@@ -837,24 +837,37 @@ else:
 MAIL_ENABLED = env.bool("MAIL_ENABLED", default=False)
 MAIL_SES_REGION = env("MAIL_SES_REGION", default=CANOPY_SES_REGION)
 
-# AWS roles canopy-web vends to agents for one hour (apps/agents/api_aws.py):
+# AWS roles canopy-web vends to agents for at most an hour at a time (apps/agents/api_aws.py):
 # name -> role ARN, JSON. Each role's trust policy must also name canopy-web's task
 # role, and the task role must be allowed to assume it (canopy-web-task-role.cfn.yaml).
-# `labs-read` is connect-labs' read-only, non-sensitive role
-# (infra/labs-observe-readonly.yml): metrics, alarms, resource and RDS metadata; no
-# log events, object bodies, secrets or task env. `labs-observe` is its old name,
-# kept so older canopy CLIs and existing profiles keep working. `labs-readwrite`
-# (infra/labs-agent-readwrite.yml) changes agent-named RDS copies of production and
-# runs one psql client task; production is source-only.
+# What each role can do is CANOPY_AWS_ROLE_SUMMARIES, the line an approver reads.
 CANOPY_AWS_ROLES = env.json("CANOPY_AWS_ROLES", default={
     "labs-read": "arn:aws:iam::858923557655:role/labs-jj-observe-readonly",
     "labs-observe": "arn:aws:iam::858923557655:role/labs-jj-observe-readonly",
     "labs-readwrite": "arn:aws:iam::858923557655:role/labs-jj-agent-readwrite",
+    "labs-config": "arn:aws:iam::858923557655:role/labs-jj-agent-config",
 })
-# Roles only some agents get: name -> agent slugs. A role not listed here goes to any
-# agent that may ask; one listed goes to those agents only (403 for the rest).
+# One line per role: what it can do, in the words the approval page shows
+# (connect-labs infra/labs-observe-readonly.yml, labs-agent-readwrite.yml, labs-agent-config.yml).
+# `labs-observe` is labs-read's old name, kept so older canopy CLIs and profiles keep working.
+CANOPY_AWS_ROLE_SUMMARIES = env.json("CANOPY_AWS_ROLE_SUMMARIES", default={
+    "labs-read": "Read labs metrics, alarms, and resource and RDS metadata. No log events, object "
+                 "bodies, secrets, task environments or database content.",
+    "labs-observe": "Read labs metrics, alarms, and resource and RDS metadata. No log events, object "
+                    "bodies, secrets, task environments or database content.",
+    "labs-readwrite": "Make and change agent-named RDS copies of labs production and run one psql "
+                      "client task. Production is a source only; IAM changes are denied.",
+    "labs-config": "Create and update labs app secrets named labs-jj-app-*. It never reads a secret "
+                   "value, deletes nothing and changes no IAM.",
+})
+# Fenced roles: name -> the agents that get the role with no approval. A role not listed
+# here goes to any agent that may ask (labs-read). A listed role goes to the agents named,
+# and to any other agent only while it holds a grant a person approved
+# (POST /api/agents/{slug}/aws-role-requests). Every list is empty: a fenced role is
+# requested when needed and approved by a person, never a standing allowlist.
 CANOPY_AWS_ROLE_AGENTS = env.json("CANOPY_AWS_ROLE_AGENTS", default={
-    "labs-readwrite": ["hal", "ada"],
+    "labs-readwrite": [],
+    "labs-config": [],
 })
 CANOPY_AWS_STS_REGION = env("CANOPY_AWS_STS_REGION", default="us-east-1")
 MAIL_INBOUND_BUCKET = env("MAIL_INBOUND_BUCKET", default="")

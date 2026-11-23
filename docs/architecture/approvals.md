@@ -27,7 +27,7 @@ its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalP
 - **A link never decides by itself.** The email's buttons open the request with the choice made, to
   confirm (mail scanners open every link: `channel_email.py`). A Slack click decides, but only from
   the DM canopy sent THAT person for THAT request, matched on the message ts
-  (`slack/approvals.py::handle_click`). A decision carries no passkey step-up, except for a kind with `Kind.step_up` (`vault.attach_agent`, which stands in for a route that needs one; `agent.definition.publish`, so a turn acting as an admin never approves an agent's change it was asked for): the web decide route asks for it (`apps/approvals/api.py::decide_approval`), and `services.decide` refuses an approval from a Slack click or alert button for such a kind.
+  (`slack/approvals.py::handle_click`). A decision carries no passkey step-up, except for a kind with `Kind.step_up` (`vault.attach_agent`, which stands in for a route that needs one; `agent.definition.publish`, so a turn acting as an admin never approves an agent's change it was asked for; `agent.aws_role`, because it grants AWS account rights): the web decide route asks for it (`apps/approvals/api.py::decide_approval`), and `services.decide` refuses an approval from a Slack click or alert button for such a kind.
 - **Superseded, not left pending.** When someone with the authority to take a request's action
   takes it directly, the request is closed by `services.supersede`: `cancelled`, result
   `{"superseded": true}`, a comment naming who acted, and no authority asked of them (the route
@@ -36,6 +36,14 @@ its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalP
   closes the draft's open request. That kind is filed only for a draft no agent may publish: an
   agent's draft of itself, or one by an agent that does not administer the target
   ([stored-agents.md](stored-agents.md)).
+- **A fenced AWS role is a grant a person approves, never a standing list.** `agent.aws_role` is filed
+  only by `POST /api/agents/{slug}/aws-role-requests` (`apps/approvals/api_aws_roles.py`) for a role in
+  `settings.CANOPY_AWS_ROLE_AGENTS`; its one param is the server-made `AgentAwsRoleRequest`, so the
+  preview (agent, role and ARN, `settings.CANOPY_AWS_ROLE_SUMMARIES`, duration) is the server's. Only an
+  owner of the agent's workspace or a canopy superuser may approve it, never an agent's login and never
+  an agent's admin as such (`kinds/agent_aws_role.py::AgentAwsRole.may_approve`). Approving makes a grant
+  that `aws-credentials` vends under until it ends or is revoked; the rules are
+  `apps/agents/api_aws.py`'s module docstring.
 - **A passkey kind offers no Approve anywhere but its page.** The card says `step_up` and carries
   `page_url` (`cards.py::build`); in Approve's place the Slack DM, the alert and the email offer a
   link to the request's page (`cards.STEP_UP_APPROVE`), the push opens that page, and the page asks

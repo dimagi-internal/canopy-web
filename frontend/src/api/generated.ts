@@ -8616,16 +8616,70 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * One hour of a named AWS role, as this agent
-         * @description Short-lived AWS keys for ONE role named in canopy-web's settings
-         *     (`labs-read` = read-only, non-sensitive labs observability; `labs-readwrite` =
-         *     agent-named RDS copies and a psql client task, for listed agents only), with the
-         *     agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). 404 for a role
-         *     name canopy-web does not vend; 403 for a browser session or an agent the role is
-         *     not for; 502 when AWS refused.
+         * At most an hour of a named AWS role, as this agent
+         * @description Short-lived AWS keys for ONE role named in canopy-web's settings (`labs-read` = read-only,
+         *     non-sensitive labs observability, on ask; `labs-readwrite` and `labs-config` are fenced), with
+         *     the agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). A fenced role goes to
+         *     the agents listed for it, and to another agent only while it holds a live grant a person
+         *     approved (`POST /api/agents/{slug}/aws-role-requests`), for at most the grant's remaining time.
+         *     404 for a role name canopy-web does not vend; 403 for a browser session, or `approval_required`
+         *     (with `request_with`) for a fenced role and no live grant; 502 when AWS refused.
          */
         readonly post: operations["agent_aws_credentials"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/aws-role-requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This agent's AWS role requests and grants, newest first
+         * @description The agent's requests for fenced AWS roles (optionally one `role`), newest first, each with its
+         *     status as of now: `approved` is a live grant until `expires_at`.
+         */
+        readonly get: operations["list_aws_role_requests"];
+        readonly put?: never;
+        /**
+         * Ask a person to let this agent take a fenced AWS role
+         * @description File a request for a role in `settings.CANOPY_AWS_ROLE_AGENTS` (a fenced role), with the
+         *     reason and how long it should last. It files an approval (kind `agent.aws_role`) that an owner of
+         *     the agent's workspace or a canopy superuser approves on its page (`approval_url`) with a passkey;
+         *     then `POST aws-credentials` vends the role to this agent until the grant ends. 404 for a role
+         *     canopy-web does not vend; 422 for a role vended on ask (`labs-read`) or one this agent already
+         *     gets with no approval. While a request for the same role is pending, asking again returns it (200).
+         */
+        readonly post: operations["request_aws_role"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/aws-role-requests/{request_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Revoke a grant, or withdraw a request still waiting
+         * @description An approved grant: revoked at once, so `aws-credentials` refuses the role from now (keys already
+         *     handed out last until their own expiry, at most an hour). By the person who approved it, an owner
+         *     of the agent's workspace, or a canopy superuser. A pending request: withdrawn, with its approval,
+         *     by those people or whoever asked. 409 for one already closed.
+         */
+        readonly delete: operations["revoke_aws_role_request"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -37192,6 +37246,76 @@ export interface components {
         readonly AwsCredentialsIn: {
             /** Role */
             readonly role: string;
+        };
+        /** AwsRoleRequestOut */
+        readonly AwsRoleRequestOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent */
+            readonly agent: string;
+            /** Role */
+            readonly role: string;
+            /** Reason */
+            readonly reason: string;
+            /** Minutes */
+            readonly minutes: number;
+            /**
+             * Status
+             * @description pending | approved | declined | cancelled | expired | revoked
+             */
+            readonly status: string;
+            /** Approval Id */
+            readonly approval_id?: number | null;
+            /**
+             * Approval Url
+             * @default
+             */
+            readonly approval_url: string;
+            /**
+             * Requested By
+             * @default
+             */
+            readonly requested_by: string;
+            /**
+             * Approved By
+             * @default
+             */
+            readonly approved_by: string;
+            /** Approved At */
+            readonly approved_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Revoked By
+             * @default
+             */
+            readonly revoked_by: string;
+            /** Revoked At */
+            readonly revoked_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** AwsRoleRequestIn */
+        readonly AwsRoleRequestIn: {
+            /**
+             * Role
+             * @description A fenced role canopy-web vends, e.g. `labs-readwrite`.
+             */
+            readonly role: string;
+            /**
+             * Reason
+             * @description Why the agent needs it now, in your own words. Shown to the approver as yours.
+             */
+            readonly reason: string;
+            /**
+             * Minutes
+             * @description How long the grant lasts once approved (15 to 480; default 60).
+             * @default 60
+             */
+            readonly minutes: number;
         };
         /** ScheduleOut */
         readonly ScheduleOut: {
@@ -67375,6 +67499,97 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AwsCredentialsOut"];
+                };
+            };
+        };
+    };
+    readonly list_aws_role_requests: {
+        readonly parameters: {
+            readonly query?: {
+                readonly role?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AwsRoleRequestOut"][];
+                };
+            };
+        };
+    };
+    readonly request_aws_role: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AwsRoleRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsRoleRequestOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsRoleRequestOut"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly revoke_aws_role_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsRoleRequestOut"];
                 };
             };
         };

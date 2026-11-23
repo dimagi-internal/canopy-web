@@ -111,7 +111,9 @@ def test_a_role_for_listed_agents_goes_to_those_agents_only(tenancy, sts, settin
     settings.CANOPY_AWS_ROLE_AGENTS = {"labs-readwrite": ["ada"]}
     r = _post(pat_client(tenancy["bot"]), role="labs-readwrite")
     assert r.status_code == 403
-    assert "ada" in r.json()["detail"]
+    # Anyone else needs a grant a person approved, and is told where to ask.
+    assert r.json()["error"] == "approval_required"
+    assert r.json()["request_with"] == "POST /api/agents/hal/aws-role-requests"
     assert sts.calls == []
     # Not listed: any agent that may ask.
     assert _post(pat_client(tenancy["bot"]), role="labs-read").status_code == 200
@@ -130,6 +132,13 @@ def test_the_shipped_settings_keep_the_old_name_and_fence_readwrite():
     assert roles["labs-readwrite"] == RW_ARN
     assert "labs-readwrite" in live.CANOPY_AWS_ROLE_AGENTS
     assert "labs-read" not in live.CANOPY_AWS_ROLE_AGENTS
+    # Every fenced role is request-only: no agent holds one standing, hal and ada included.
+    assert roles["labs-config"] == "arn:aws:iam::858923557655:role/labs-jj-agent-config"
+    assert live.CANOPY_AWS_ROLE_AGENTS == {"labs-readwrite": [], "labs-config": []}
+    # An approver reads what each vended role can do.
+    assert set(live.CANOPY_AWS_ROLE_SUMMARIES) >= set(roles)
+    # Every role has the one line an approver reads.
+    assert set(live.CANOPY_AWS_ROLE_SUMMARIES) == set(roles)
 
 
 def test_aws_refusal_is_a_502_with_the_reason(tenancy, monkeypatch, settings):
