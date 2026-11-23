@@ -211,7 +211,8 @@ describe('BrainPage', () => {
   })
 
   it('asks the operator to fix a finding, saying first exactly what that starts and the message it sends', async () => {
-    listBrainOutputs.mockResolvedValueOnce([{ ...OUTPUTS[0], fixer: { slug: 'ada', name: 'Ada' } }, ...OUTPUTS.slice(1)])
+    listBrainOutputs.mockResolvedValueOnce([{ ...OUTPUTS[0], fixer: { slug: 'ada', name: 'Ada' }, may_request_fix: true },
+      ...OUTPUTS.slice(1)])
     getFixPlan.mockResolvedValue({ agent: { slug: 'ada', name: 'Ada' }, label: 'Ask Ada to fix this', continues: false,
       what_happens: 'Starts a conversation between you and Ada, with this finding as the brief.',
       brief: 'Jonathan asked you to fix finding 1.' })
@@ -235,8 +236,14 @@ describe('BrainPage', () => {
   })
 
   it('says a finding is already fixed or not worth fixing, each choice saying what it does', async () => {
+    listBrainOutputs.mockResolvedValueOnce([OUTPUTS[0], { ...OUTPUTS[1], fixer: { slug: 'ada', name: 'Ada' } },
+      ...OUTPUTS.slice(2)])
     setup(true, '/w/dimagi/brain')
     const card = await openFinding('A medium one seen lately')
+    // An agent may set a status but never asks for a fix itself: it is told who does, and nothing is fetched.
+    expect(within(card).queryByRole('button', { name: /fix this/ })).toBeNull()
+    expect(within(card).getByText(/for a person who decides on it, signed in as themselves/)).toBeTruthy()
+    expect(getFixPlan).not.toHaveBeenCalled()
     expect(within(card).getByText(/Dismisses it\. Learning folds repeats into it/)).toBeTruthy()
     setOutputStatus.mockResolvedValue({ ...OUTPUTS[1], status: 'dismissed' })
     fireEvent.click(within(card).getByRole('button', { name: 'Not worth fixing' }))

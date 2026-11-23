@@ -185,6 +185,8 @@ class BrainOutputOut(StrictModel):
     sightings: list[str] = Field(default_factory=list, description="When it was seen, oldest first (ISO times).")
     may_set_status: bool = Field(False, description="Whether you may change its status.")
     fixer: BrainOutputAgent | None = Field(None, description="The agent a fix is asked of: its learner's operator.")
+    may_request_fix: bool = Field(False, description="Whether you may ask its operator to fix it (`/fix`): the person "
+                              "themselves, who may set its status, of a learner with an operator.")
     fix_session: str | None = Field(None, description="The address of a conversation fixing it that you read (`/fix`), "
                                      "if any.")
     created_at: dt.datetime

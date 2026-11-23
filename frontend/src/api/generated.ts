@@ -53929,6 +53929,12 @@ export interface components {
             /** @description The agent a fix is asked of: its learner's operator. */
             readonly fixer?: components["schemas"]["BrainOutputAgent"] | null;
             /**
+             * May Request Fix
+             * @description Whether you may ask its operator to fix it (`/fix`): the person themselves, who may set its status, of a learner with an operator.
+             * @default false
+             */
+            readonly may_request_fix: boolean;
+            /**
              * Fix Session
              * @description The address of a conversation fixing it that you read (`/fix`), if any.
              */

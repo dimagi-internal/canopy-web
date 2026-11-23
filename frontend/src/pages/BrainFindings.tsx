@@ -201,9 +201,9 @@ function FindingRow({ ws, o, open, onToggle, onChange, onError }: {
     <li aria-label={title} className="text-[13px]">
       <button type="button" aria-expanded={open} aria-controls={detailId} onClick={onToggle}
               className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/40">
-        <span className="mt-1.5 flex w-16 shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="mt-1.5 flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:w-16">
           <span aria-hidden className={`h-2 w-2 rounded-full ${SEVERITY_DOT[severity] ?? 'bg-border'}`} />
-          {severity ? plain(severity) : '—'}
+          <span className="sr-only sm:not-sr-only">{severity ? plain(severity) : 'No severity'}</span>
         </span>
         <span className="min-w-0 flex-1 space-y-0.5">
           <h3 className={`text-sm font-medium text-foreground ${open ? '' : 'line-clamp-2'}`}>{title}</h3>
@@ -299,15 +299,19 @@ function Decide({ ws, o, onChange, onError }: {
 }): JSX.Element {
   const status = statusOf(o)
   const [plan, setPlan] = useState<BrainFixPlan | null>(null)
+  const [planError, setPlanError] = useState('')
   const [busy, setBusy] = useState(false)
   const may = Boolean(o.may_set_status)
   const fixer = o.fixer?.name ?? ''
+  const mayAsk = Boolean(o.may_request_fix)
   useEffect(() => {
-    if (!may || status !== 'open' || !o.fixer) return
+    if (!mayAsk || status !== 'open') return
     let live = true
-    getFixPlan(ws, o.id).then((p) => { if (live) setPlan(p) }, () => { if (live) setPlan(null) })
+    getFixPlan(ws, o.id).then(
+      (p) => { if (live) setPlan(p) },
+      (e: unknown) => { if (live) setPlanError(e instanceof Error ? e.message : 'Could not load what it starts') })
     return () => { live = false }
-  }, [ws, o.id, o.fixer, may, status])
+  }, [ws, o.id, mayAsk, status])
   const run = async (work: () => Promise<BrainOutput>) => {
     setBusy(true)
     onError('')
@@ -336,9 +340,14 @@ function Decide({ ws, o, onChange, onError }: {
         status === 'open' && <p className="text-xs text-muted-foreground">Its workspace's owners and admins decide what happens to it.</p>
       ) : status === 'open' ? (
         <>
-          {o.fixer && (
+          {o.fixer && !mayAsk && (
+            <p className="text-xs text-muted-foreground">
+              Asking {fixer} to fix it is for a person who decides on it, signed in as themselves.
+            </p>
+          )}
+          {mayAsk && (
             <Choice label={plan?.label || `Ask ${fixer} to fix this`} primary disabled={busy || !plan} onClick={fix}
-                    note={plan?.what_happens ?? 'Loading what this starts…'}>
+                    note={plan?.what_happens ?? (planError || 'Loading what this starts…')}>
               {plan?.brief && (
                 <details className="text-xs text-muted-foreground">
                   <summary className="cursor-pointer">Read the message {fixer} gets</summary>
