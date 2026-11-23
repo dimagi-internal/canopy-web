@@ -12,38 +12,39 @@ In workspace `connect`:
 The site's reply webhook is not set here: it receives the relayed conversations' words, so it
 is a workspace owner's change behind a passkey step-up (`update_host_site`).
 
-A database without `connect-labs` in `connect` (every test and development database) is left
-as it is. Running it twice changes nothing.
+Plain SQL rather than `RunPython`: a walk-back test unapplies and reapplies every migration
+after its target, and a `RunPython` renders the whole project state each way. A database
+without `connect-labs` in `connect` (every test and development database) is left as it is.
+Running it twice changes nothing.
 """
 
 from django.db import migrations
-from django.utils import timezone
 
-WORKSPACE = "connect"
-OLD_SITE = "connect-messaging"
-SITE = "connect-labs"
-AGENTS = ("connect-helper", "connect-coach")
+ALLOW_AGENTS = """
+INSERT INTO app_credential_agents (app_id, agent_id, created_at, is_default)
+SELECT site.id, agent.id, CURRENT_TIMESTAMP, FALSE
+FROM app_credentials site
+JOIN agents_agent agent ON agent.workspace_id = site.workspace_id
+WHERE site.workspace_id = 'connect' AND site.name = 'connect-labs' AND site.revoked_at IS NULL
+  AND agent.slug IN ('connect-helper', 'connect-coach')
+  AND NOT EXISTS (SELECT 1 FROM app_credential_agents row
+                  WHERE row.app_id = site.id AND row.agent_id = agent.id)
+"""
 
+REVOKE_CONNECT_MESSAGING = """
+UPDATE app_credentials SET revoked_at = CURRENT_TIMESTAMP
+WHERE workspace_id = 'connect' AND name = 'connect-messaging' AND revoked_at IS NULL
+  AND EXISTS (SELECT 1 FROM app_credentials site
+              WHERE site.workspace_id = 'connect' AND site.name = 'connect-labs' AND site.revoked_at IS NULL)
+"""
 
-def forward(apps, schema_editor):
-    Agent = apps.get_model("agents", "Agent")
-    AppCredential = apps.get_model("tokens", "AppCredential")
-    AppCredentialAgent = apps.get_model("tokens", "AppCredentialAgent")
-
-    site = AppCredential.objects.filter(name=SITE, workspace__slug=WORKSPACE, revoked_at__isnull=True).first()
-    if site is None:
-        return
-    for agent in Agent.objects.filter(slug__in=AGENTS, workspace_id=site.workspace_id):
-        AppCredentialAgent.objects.get_or_create(app=site, agent=agent)
-    AppCredential.objects.filter(name=OLD_SITE, workspace__slug=WORKSPACE, revoked_at__isnull=True).update(
-        revoked_at=timezone.now()
-    )
+SQL = (ALLOW_AGENTS, REVOKE_CONNECT_MESSAGING)
 
 
 class Migration(migrations.Migration):
-    dependencies = [
-        ("agents", "0143_creator_agent_admins"),
-        ("tokens", "0047_reply_push"),
-    ]
+    # The tables it writes are long settled (agents_agent is far older than tokens 0047): no
+    # dependency on a newer agents migration, which would pull this one into every walk-back of
+    # agents' recent history.
+    dependencies = [("tokens", "0047_reply_push")]
 
-    operations = [migrations.RunPython(forward, migrations.RunPython.noop)]
+    operations = [migrations.RunSQL(sql, migrations.RunSQL.noop) for sql in SQL]

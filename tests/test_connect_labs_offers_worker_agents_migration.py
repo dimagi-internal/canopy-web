@@ -1,13 +1,13 @@
 """`connect-labs` may offer connect-helper and connect-coach, and `connect-messaging` is revoked
-(tokens 0048). `forward` runs against today's models, which carry every field it touches, so the
+(tokens 0048). Its SQL runs against today's tables, which carry every column it touches, so the
 test needs no walk back through the migration graph. Delete once that migration has deployed."""
 from __future__ import annotations
 
 from importlib import import_module
 
 import pytest
-from django.apps import apps
 from django.contrib.auth import get_user_model
+from django.db import connection
 
 from apps.agents.models import Agent
 from apps.tokens.models import AppCredential, AppCredentialAgent
@@ -15,7 +15,13 @@ from apps.workspaces.models import Workspace
 
 pytestmark = pytest.mark.django_db
 
-forward = import_module("apps.tokens.migrations.0048_connect_labs_offers_worker_agents").forward
+SQL = import_module("apps.tokens.migrations.0048_connect_labs_offers_worker_agents").SQL
+
+
+def forward():
+    with connection.cursor() as cursor:
+        for statement in SQL:
+            cursor.execute(statement)
 
 ENTRY = {"description": "Connect Workers over PersonalID", "entry": "/connect-helper:worker-chat",
          "tools": ["Read"], "bash": [], "read_paths": ["{cwd}/**"], "write_paths": [],
@@ -42,7 +48,7 @@ def _allowed(app) -> set[str]:
 
 
 def test_connect_labs_may_offer_both_agents_and_connect_messaging_is_revoked(world):
-    forward(apps, None)
+    forward()
     assert _allowed(world["labs"]) == {"connect-helper", "connect-coach"}
     for slug in world["agents"]:   # each agent's own entry is its admin's to change, not this migration's
         assert Agent.objects.get(slug=slug).interface["capabilities"]["connect_messaging"] == ENTRY
@@ -53,13 +59,13 @@ def test_connect_labs_may_offer_both_agents_and_connect_messaging_is_revoked(wor
 
 
 def test_running_it_twice_changes_nothing(world):
-    forward(apps, None)
-    forward(apps, None)
+    forward()
+    forward()
     assert AppCredentialAgent.objects.filter(app=world["labs"]).count() == 2
 
 
 def test_a_database_without_connect_labs_in_connect_changes_nothing(world):
     world["labs"].delete()
-    forward(apps, None)
+    forward()
     assert not AppCredentialAgent.objects.exists()
     assert AppCredential.objects.get(pk=world["old"].pk).revoked_at is None
