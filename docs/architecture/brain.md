@@ -532,9 +532,10 @@ What is new decides where it goes. Never add a scheduler, a cursor, a read path 
 schedule, `brain_read`, the learned set and `brain_emit`'s fold by key are those, for every learner.
 
 - **New judgment for a lens that exists** (a signal to look for, a sharper "don't emit when", a report shape): edit the
-  lens paragraph in the canopy plugin's `brain-learn` skill, or, for one organisation's detail, a skill in its support
-  project (Dimagi: the `review-*` skills of `dimagi/canopy-support`, which the operator names in its own procedure). No
-  new learner, no code.
+  lens paragraph in the canopy plugin's `brain-learn` skill. A run loads no other skill, so that paragraph is the only
+  place a run's judgment lives. An organisation's own review skills (Dimagi: the `review-*` skills of
+  `dimagi/canopy-support`) refine its classes for reviews outside a run and for whoever routes a finding. No new
+  learner, no code.
 - **The same lens somewhere new** (another workspace or a project): `POST /api/brain/targets` (`add_learning_target`),
   with its own schedule and budget. Run now to check it.
 - **A new lens** (a new subject, purpose or output kind): a canopy admin registers a `BrainCapability` (`POST
