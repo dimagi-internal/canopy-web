@@ -5605,7 +5605,9 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _lifecycle(turn_id, "started", pid=getattr(getattr(agent, "proc", None), "pid", 0),
                    agent=agent_slug or "", executor="acp", session=session_id,
                    resume=resume or "", cwd=str(workdir),
-                   relayed=isinstance(getattr(agent, "proc", None), RelayProc))
+                   relayed=isinstance(getattr(agent, "proc", None), RelayProc),
+                   lean=bool(getattr(agent, "_session_meta", None)) or None,
+                   streams=bool(getattr(_TURN_ENV, "live_text", None)) or None)
 
     started = time.time()
 
@@ -13724,6 +13726,7 @@ class _LiveText:
         self._wake = threading.Event()
         self._stopped = False
         self._off = False
+        self._said = False
         threading.Thread(target=self._loop, daemon=True, name=f"live-{turn_id[:8]}").start()
 
     def __call__(self, index: int, text: str) -> None:
@@ -13745,8 +13748,14 @@ class _LiveText:
                 status, body = self._post({"message": pending[0], "text": pending[1][:200_000]})
                 if status in (404, 405, 409) or (status == 200 and not (body or {}).get("sent", True)):
                     self._off = True  # an older server, an ended turn, or nobody hears it
-            except Exception:  # noqa: BLE001 — a live view never costs the turn
-                pass
+                if not self._said:
+                    # Once per turn, on its own ledger: whether the panel can see it stream.
+                    self._said = True
+                    _lifecycle(self.turn_id, "live_text", http=status, sent=bool((body or {}).get("sent")))
+            except Exception as exc:  # noqa: BLE001 — a live view never costs the turn
+                if not self._said:
+                    self._said = True
+                    _lifecycle(self.turn_id, "live_text", error=type(exc).__name__)
             time.sleep(LIVE_TEXT_EVERY_SECONDS)
 
     def stop(self) -> None:
