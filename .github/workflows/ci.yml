@@ -337,8 +337,9 @@ jobs:
     runs-on: ubuntu-latest
     # Most of it is the walk-back migration tests (`-m needs_migrations`), which re-render the project state for every
     # operation they replay; that grows with each model that points at users, sessions or workspaces (the brain added
-    # a dozen), so 15 minutes ejected a green PR from the queue.
-    timeout-minutes: 25
+    # a dozen). They take 15-20 minutes on main, and a PR that adds a migration misses the test DB cache and replays
+    # every migration first (about 4 more), so a tighter cap ejects green PRs from the queue.
+    timeout-minutes: 40
     services:
       postgres:
         image: pgvector/pgvector:pg18
