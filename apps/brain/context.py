@@ -25,11 +25,13 @@ from apps.harness.models import Turn
 
 from . import budget, findings
 from .models import BRAIN_RUN_KEY, BrainRun
-from .reading import candidates
+from .reading import candidates, verdicts
 from .schemas import BrainRunContext
 
 #: How many due source ids the envelope names at most; `sessions_due` is the whole count.
 MAX_DUE_IDS = 200
+#: How many due sessions the context names with their triage verdict (`triage`), best first.
+MAX_TRIAGE = 20
 #: The context document's version: bump it when a field changes meaning, never for an added one.
 VERSION = 1
 
@@ -39,9 +41,20 @@ def _name(u) -> str:
 
 
 def due(run: BrainRun) -> tuple[int, list[int]]:
-    """How many sources the run may still read, and the first of them, most recently active first."""
+    """How many sources the run may still read, and the first of them, best first (`triage`; past what it triaged,
+    most recently active first)."""
+    count, ids, _ = due_triaged(run)
+    return count, ids
+
+
+def due_triaged(run: BrainRun) -> tuple[int, list[int], list[dict]]:
+    """`due`, and the first `MAX_TRIAGE` sessions' verdicts ({source, score, reason}), best first."""
     qs = candidates(run)
-    return qs.count(), list(qs.values_list("pk", flat=True)[:MAX_DUE_IDS])
+    found = verdicts(run, qs)
+    ids = [v.source for v in found][:MAX_DUE_IDS]
+    if len(ids) < MAX_DUE_IDS:
+        ids += list(qs.exclude(pk__in=ids).values_list("pk", flat=True)[:MAX_DUE_IDS - len(ids)])
+    return qs.count(), ids, [{"source": v.source, "score": v.score, "reason": v.reason} for v in found[:MAX_TRIAGE]]
 
 
 def document(run: BrainRun, *, accountable=None) -> dict:
@@ -52,7 +65,7 @@ def document(run: BrainRun, *, accountable=None) -> dict:
 def block(run: BrainRun, *, accountable=None) -> dict:
     """The envelope's `brain_run`: everything the run is, by id and name, nothing a session said."""
     cap, t = run.capability, run.target
-    count, ids = due(run) if run.state == BrainRun.OPEN else (0, [])
+    count, ids, triaged = due_triaged(run) if run.state == BrainRun.OPEN else (0, [], [])
     if accountable is None and run.session_id is not None:
         first = (Turn.objects.filter(chat_session_id=run.session_id).order_by("created_at")
                  .select_related("initiator_user").first())
@@ -70,7 +83,7 @@ def block(run: BrainRun, *, accountable=None) -> dict:
                     "project": t.project.handle if t.project_id else "", "schedule_id": t.schedule_id}
                    if t is not None else None),
         "accountable": ({"email": accountable.email, "name": _name(accountable)} if accountable is not None else None),
-        "sessions_due": count, "source_ids_due": ids, "lookback_days": budget.lookback_days(t),
+        "sessions_due": count, "source_ids_due": ids, "triage": triaged, "lookback_days": budget.lookback_days(t),
         "open_findings_total": total, "open_findings": known,
         "dismissed_findings_total": gone_total, "dismissed_findings": gone,
         "budget": {"max_sources_per_run": lim.max_sources_per_run, "max_outputs_per_run": lim.max_outputs_per_run,
@@ -109,12 +122,19 @@ def prompt_lines(run: BrainRun, *, accountable=None) -> list[str]:
             f"Target: {where}." + (f" Its schedule is #{t['schedule_id']}." if t else ""),
             f"Accountable: {who}.",
             f"Sessions due: {b['sessions_due']}"
-            + (f", active in the last {b['lookback_days']} days, most recent first." if b["lookback_days"]
-               else ", most recent first."),
+            + (f", active in the last {b['lookback_days']} days" if b["lookback_days"] else "")
+            + (", most worth reading first (brain_read serves them in this order; pass `source` to read any due one):"
+               if b["triage"] else ", most recent first."),
+            *_triage_lines(b),
             *_finding_lines(b),
             f"Budget: at most {b['budget']['max_sources_per_run']} sessions read and "
             f"{b['budget']['max_outputs_per_run']} outputs written this run.",
             b["how"]]
+
+
+def _triage_lines(b: dict) -> list[str]:
+    """One line per triaged session: its id, score and why (counts only, never its words)."""
+    return [f"- source {v['source']} (score {v['score']}): {v['reason']}" for v in b["triage"]]
 
 
 def _finding_lines(b: dict) -> list[str]:

@@ -284,8 +284,8 @@ follows the operator's turn mode and rails. What makes it a learning run:
   shipped (`_isolated_forget_turn`), so no later turn reads it off the disk. A laptop runner does not report it and
   takes none.
 
-- **`brain_read`** serves the run's next eligible sources once each, most recently active first (`reading.activity`, the
-  session list's last-activity rule), only those active within its target's window (`budget.lookback_days`, on the
+- **`brain_read`** serves the run's next eligible sources once each, best first by triage (below; ties most recently
+  active first by `reading.activity`, the session list's last-activity rule), only those active within its target's window (`budget.lookback_days`, on the
   target: 14 days for a workspace, 30 for a project unless set; an older session is never read and no run walks back
   through a backlog), leaving out what a clean run of the same feature already read for the same subject. A session
   that grew by `reading.REREAD_ROWS` rows past where its last clean read stopped (`BrainRunRead.through`) is due again
@@ -295,6 +295,8 @@ follows the operator's turn mode and rails. What makes it a learning run:
   calls (`next_index`, passed back as `index`), never splitting a row. The directives of the people in a source travel with it, and the sources removed since the feature learned
   from them are named once (`revoked`, from `RevocationNotice`). Every source served is recorded (`BrainRunRead`, a
   `brain.read` event).
+- **Triage** (`triage` module docstring) orders what is due, never filters it: a deterministic, cached, counts-only
+  verdict per due session; `brain_read` serves best first and reads any due one by `source`.
 - **`brain_emit`** writes one output of a declared kind, about the run's own subject, citing sources, and a `key`
   naming what it is: a repeat folds into the open finding with that key (below). Every cited
   source must be one this run read and must still be eligible now, or nothing is written. The lineage
@@ -303,10 +305,8 @@ follows the operator's turn mode and rails. What makes it a learning run:
   a removal of any reaches the output; `cited` marks the ones it names, which are all a screen shows. Words are scrubbed,
   object keys as well as values; the same output twice is one. **Every piece of evidence is grounded**
   (`grounding.check`): each `body.evidence` item `{source, index, quote}` must name a source this run read, a row it
-  was served (at or before `BrainRunRead.through`), and a quote that is in that row once both are folded (case,
-  whitespace, curly quotes, dashes, inline markdown and quotation marks ignored; an ellipsis stands for words left out;
-  a quote may be part of the row, never more). One that fails refuses the whole emit with the item, its source and row,
-  and why (and where the quote really is, when it is in another row the run read), so the run fixes it in the same run.
+  was served, and a quote that is in that row (how quotes are matched: the `grounding` module docstring). One that
+  fails refuses the whole emit, naming the item and why, so the run fixes it in the same run.
   A missing `index` is found and written in; the sources evidence names are cited. Emits spend a budget of their own per run turn
   (`mcp.rate_limit`, `BRAIN_RUN_WRITE_LIMIT`), not the accountable admin's.
 - The run's conversation holds the words it read. It has no creator and no participant and is not runner-discovered, so

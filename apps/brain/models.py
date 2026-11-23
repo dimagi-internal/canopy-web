@@ -450,9 +450,35 @@ class BrainRunRead(models.Model):
     #: How far into the session it read: the last row (`Message.turn_index`) served. A session that grew well past it
     #: since a clean read is due again, from here (`reading.REREAD_ROWS`). Null: unknown (read before it was kept).
     through = models.IntegerField(null=True, blank=True)
+    #: The triage verdict it was served under (`triage`): its score and one-line reason. Null: read before triage.
+    triage_score = models.IntegerField(null=True, blank=True)
+    triage_reason = models.CharField(max_length=200, blank=True, default="")
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["run", "source"], name="brain_run_reads_once")]
+
+
+class BrainTriage(models.Model):
+    """A cheap verdict on how worth reading a due source is (`triage`): counts of friction in what a learner's view
+    of it holds past where the read would start, and a score and reason built from them. Never a word of the session.
+    Kept per (source, view, the row a read starts after, the last row it ends at, `version`): a re-ask for the same
+    range costs one lookup, and a session that grew, or a change in how verdicts are made, is a new row."""
+
+    source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="+")
+    view = models.CharField(max_length=16)
+    #: The row a read starts after (`reading.resume_after`), -1 for the whole session.
+    after = models.IntegerField()
+    #: The session's last row when judged (-1: none).
+    upto = models.IntegerField()
+    version = models.PositiveSmallIntegerField()
+    score = models.IntegerField()
+    signals = models.JSONField(default=dict)
+    reason = models.CharField(max_length=200, blank=True, default="")
+    made_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["source", "view", "after", "upto", "version"],
+                                               name="brain_triage_once")]
 
 
 class RederiveRequest(models.Model):

@@ -34,6 +34,8 @@ READERS: dict[str, str] = {
     "apps/brain/grounding.py": ("a learning run's emit checking its quotes against rows that same run was already "
                                 "served (`BrainRunRead`), in the run's own view, scrubbed; nothing leaves it but the "
                                 "refusal to that run"),
+    "apps/brain/triage.py": ("counts over a due session's rows for a learning run's triage, only over `reading."
+                             "candidates` and in the learner's own view; stores counts, never a word"),
     "apps/canopy_sessions/access.py": CHAT,
     "apps/canopy_sessions/activity.py": INGEST,
     "apps/canopy_sessions/api_read.py": CHAT,
