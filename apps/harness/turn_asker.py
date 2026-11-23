@@ -199,13 +199,16 @@ def _serving(user, credential: dict | None, *, session_login_live: bool = False)
 def serving_turn(user) -> Turn | None:
     """The one turn `user`'s request is made INSIDE: `user` is an agent's own login and the
     request carries the per-turn login canopy-web issued for a turn of that agent that is
-    running now (not a stored token, a session login, a finished or confined turn). Worked
-    out from the server's own record, never from anything the agent sends. None otherwise."""
+    running now (not a stored token, a finished or confined turn). On a laptop the turn closes as
+    soon as its session starts and the session goes on: its session login counts while that
+    session is active and still bound to its runner (`session_held`), as `check` and `standing`
+    already treat it. Worked out from the server's own record, never from anything the agent
+    sends. None otherwise."""
     cred = getattr(user, CREDENTIAL_ATTR, None) if user is not None else None
     if not cred:
         return None
     try:
-        return _serving(user, cred)[1]
+        return _serving(user, cred, session_login_live=True)[1]
     except Refused:
         return None
 

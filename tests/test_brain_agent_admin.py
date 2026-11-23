@@ -153,6 +153,33 @@ def test_an_admin_agent_in_its_own_turn_manages(w, name):
     assert r.status_code == _routes(w)[name][3], (name, r.status_code, r.content[:300])
 
 
+def _laptop_login(w, *, held=True) -> str:
+    """cee on a laptop: its turn closed when the session started (DONE), the session goes on."""
+    from apps.canopy_sessions.models import RunnerBinding  # noqa: PLC0415
+    laptop = Runner.objects.create(name="mbp", kind=Runner.EMDASH, owner=w["connect_admin"], workspace=w["connect"],
+                                   last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    session = Session.objects.create(workspace=w["connect"], agent=w["cee"], status=Session.ACTIVE)
+    if held:
+        RunnerBinding.objects.create(session=session, runner=laptop, session_key="k1")
+    turn = Turn.objects.create(agent=None, chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                               prompt="set up learning", idempotency_key=uuid.uuid4().hex, status=Turn.DONE,
+                               claimed_by=laptop, initiator_kind="user", initiator_via="chat",
+                               initiator_assurance="session", initiator_user=w["connect_admin"])
+    return turn_agent_tokens.issue_for_session(turn, laptop, session)["token"]
+
+
+def test_an_admin_agent_on_a_laptop_manages_while_its_session_is_held(w):
+    """The laptop turn is DONE seconds after it starts; its session login still serves it (ada's T112)."""
+    name = "set_learning_reads"
+    r = _call(w, name, _laptop_login(w))
+    assert r.status_code == _routes(w)[name][3], r.content[:300]
+
+
+def test_a_laptop_login_whose_session_is_not_held_manages_nothing(w):
+    r = _call(w, "set_learning_reads", _laptop_login(w, held=False))
+    assert r.status_code == 403, r.content[:300]
+
+
 @pytest.mark.parametrize("name", ROUTE_NAMES)
 def test_a_non_admin_agent_is_refused(w, name):
     r = _call(w, name, _login(w, agent="dee"))
