@@ -12,7 +12,11 @@ conversation, and a runner that holds the agent does that work now
 exactly as before: preparing grants nothing and starts nothing.
 
 Rung when the conversation is created and when its page first declares its state
-(the panel attaching), at most once per `PREPARE_EVERY` per conversation.
+(the panel attaching), at most once per `PREPARE_EVERY` per conversation — and, before
+any conversation exists, when the panel opens on a page (`ring_agent`, `POST
+/api/embed/prepare`): then the frame names only the agent, and the runner refreshes the
+agent's clone and its own resolve of the agent's credentials, so the turn that follows
+finds both warm instead of waiting on them.
 """
 from __future__ import annotations
 
@@ -69,3 +73,28 @@ def _ring(session) -> int:
         groups.publish(groups.runner_group(runner.pk), {
             "type": "runner.prepare", "agent": agent.slug, "session_id": str(session.pk)})
     return len(runners)
+
+
+def ring_agent(agent, site: str) -> int:
+    """The panel opened on `site`'s page with `agent`, before any conversation: ring the
+    runners that could take its turns to get the agent ready (`prepare` naming no
+    conversation). Only for an agent that asked for lean page turns on that site, at most
+    once per `PREPARE_EVERY` per agent. Never raises."""
+    try:
+        from apps.agents import published_profiles  # noqa: PLC0415 — the interface reads models, loaded with a call
+        from apps.realtime import groups  # noqa: PLC0415 — realtime imports harness
+
+        if not site or site not in published_profiles.page_sites(agent):
+            return 0
+        if not published_profiles.page_lean_of(agent, site):
+            return 0
+        if not cache.add(f"harness.prepare.agent:{agent.pk}", 1, PREPARE_EVERY):
+            return 0
+        runners = candidate_runners(agent)
+        for runner in runners:
+            groups.publish(groups.runner_group(runner.pk), {
+                "type": "runner.prepare", "agent": agent.slug, "session_id": ""})
+        return len(runners)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not ring runners to prepare agent %s", getattr(agent, "slug", None))
+        return 0

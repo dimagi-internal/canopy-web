@@ -2272,6 +2272,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/embed/prepare": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The panel opened: let the agent's runner get ready for a question
+         * @description Say the panel is open with this agent, before anything is asked.
+         *
+         *     An agent set up for fast page answers on this site gets its runner ready now, so the
+         *     first question is answered sooner. Nothing is started, created or read: the question
+         *     still starts the conversation. An agent this site does not offer you is a 404.
+         */
+        readonly post: operations["embed_prepare"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/embed/ws-ticket": {
         readonly parameters: {
             readonly query?: never;
@@ -25655,6 +25679,16 @@ export interface components {
              * @default false
              */
             readonly host_grant: boolean;
+        };
+        /** EmbedPrepareOut */
+        readonly EmbedPrepareOut: {
+            /** Rung */
+            readonly rung: boolean;
+        };
+        /** EmbedPrepareIn */
+        readonly EmbedPrepareIn: {
+            /** Agent Slug */
+            readonly agent_slug: string;
         };
         /** WsTicketOut */
         readonly WsTicketOut: {
@@ -58464,6 +58498,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EmbedSelfTokenOut"];
+                };
+            };
+        };
+    };
+    readonly embed_prepare: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["EmbedPrepareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EmbedPrepareOut"];
                 };
             };
         };

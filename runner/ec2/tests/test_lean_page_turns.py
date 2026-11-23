@@ -164,6 +164,17 @@ def test_prepare_never_bootstraps_an_agent_this_box_lacks(cloud_runner, agent_cl
     assert cloud_runner._prepare_session("", SESSION) is False
 
 
+def test_prepare_with_no_conversation_warms_the_agent(cloud_runner, agent_clone, monkeypatch):
+    """The panel opened, nothing asked yet: the clone is pulled and the box's own resolve of
+    the agent's credentials is cached for the turn that follows (never a turn's resolve)."""
+    resolved = []
+    monkeypatch.setattr(cloud_runner, "secrets_off_disk", lambda: True)
+    monkeypatch.setattr(cloud_runner, "_turn_values", lambda slug, **kw: resolved.append((slug, kw)) or {})
+    assert cloud_runner._prepare_session("ace", "") is True
+    assert resolved == [("ace", {"outside_turn": True})]
+    assert cloud_runner._prepare_session("hal", "") is False
+
+
 def test_a_lean_turn_neither_refreshes_the_plugin_nor_refetches_a_fresh_clone(
         cloud_runner, agent_clone, monkeypatch):
     refreshed, fetched = [], []

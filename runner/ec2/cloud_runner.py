@@ -13780,13 +13780,22 @@ def _prepare_session(slug: str, session_id: str) -> bool:
     the conversation's worktree — so its first turn does not. Only for an agent this box
     already has a clone of; nothing of any turn (no prompt, no credential) is involved,
     and the fetch uses the runner's own refresh identity, as a confined turn's does."""
-    if not slug or not session_id or not _CHAT_ID.match(session_id):
+    if not slug or (session_id and not _CHAT_ID.match(session_id)):
         return False
     clone = pathlib.Path(AGENT_ROOT) / slug
     if not (clone / ".git").exists():
         return False
-    path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
     started = time.time()
+    if not session_id:
+        # The panel opened, no conversation yet: the agent's clone, and this box's own
+        # resolve of its credentials (cached `_AGENT_ENV_TTL_SECONDS`, the cache the
+        # turn's own resolve reads), so the question that follows waits on neither.
+        if secrets_off_disk() and not SENSITIVE_DATA_MODE:
+            _turn_values(slug, outside_turn=True)
+        _fetch_clone(clone, _clone_refresh_env(slug, None), pull=True)
+        _log(f"prepared {slug} in {time.time() - started:.1f}s")
+        return True
+    path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
     with _session_prep_lock(session_id):
         env = _clone_refresh_env(slug, None)
         _fetch_clone(clone, env, pull=True)
@@ -13800,7 +13809,7 @@ def _prepare_in_background(slug: str, session_id: str) -> None:
         try:
             _prepare_session(slug, session_id)
         except Exception as exc:  # noqa: BLE001
-            _log(f"warn: could not prepare {slug} session {session_id[:8]}: {exc}")
+            _log(f"warn: could not prepare {slug} {session_id[:8] or ''}: {exc}")
     threading.Thread(target=run, daemon=True, name=f"prepare-{session_id[:8]}").start()
 
 

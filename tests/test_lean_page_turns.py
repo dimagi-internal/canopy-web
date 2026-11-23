@@ -291,3 +291,38 @@ def test_lean_page_turn_is_false_off_a_page(w):
                                initiator_kind="user", idempotency_key=str(uuid.uuid4()))
     assert published_profiles.lean_page_turn(turn) is False
     assert published_profiles.lean_page_turn(w["owner_turn"]) is True
+
+
+# --- the panel opening, before anything is asked ---------------------------------------
+
+
+def test_opening_the_panel_rings_the_lean_agents_runners_by_agent_only(w, client):
+    from django.core.cache import cache
+
+    from tests.token_helpers import delegated_headers
+
+    cache.clear()
+    cloud = Runner.objects.create(name="cloud", owner=w["owner"], kind=Runner.CLOUD)
+    RunnerAssignment.objects.create(agent=w["agent"], runner=cloud, rank=0)
+    with mock.patch("apps.realtime.groups.publish") as publish:
+        r = client.post("/api/embed/prepare", {"agent_slug": "ace"}, content_type="application/json",
+                        **delegated_headers(w["app"], w["owner"]))
+        again = client.post("/api/embed/prepare", {"agent_slug": "ace"}, content_type="application/json",
+                            **delegated_headers(w["app"], w["owner"]))
+    assert r.status_code == 200 and r.json() == {"rung": True}
+    assert again.json() == {"rung": False}  # at most every PREPARE_EVERY
+    (group, frame), _ = publish.call_args
+    # Names the agent only: there is no conversation, and nothing is started.
+    assert frame == {"type": "runner.prepare", "agent": "ace", "session_id": ""}
+    assert not Session.objects.exclude(pk=w["chat"].pk).exclude(pk=w["session"].pk).exists()
+    assert Turn.objects.count() == 2
+
+
+def test_an_agent_the_site_does_not_offer_is_not_found(w, client):
+    from tests.token_helpers import delegated_headers
+
+    r = client.post("/api/embed/prepare", {"agent_slug": "nobody"}, content_type="application/json",
+                    **delegated_headers(w["app"], w["owner"]))
+    assert r.status_code == 404
+    assert client.post("/api/embed/prepare", {"agent_slug": "ace"},
+                       content_type="application/json").status_code in (401, 403, 404)
