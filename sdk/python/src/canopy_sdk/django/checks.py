@@ -59,14 +59,16 @@ def check_resource_schemes(app_configs=None, **kwargs):
 def check_person_scheme(app_configs=None, **kwargs):
     """``CANOPY_HOST["PERSON_SCHEME"]`` is a scheme a host may name its records under
     (``canopy_sdk.resources.check_scheme``), and ``RETENTION_DAYS`` a whole number of days
-    ``site.json`` accepts. Either one bad makes the signed ``site.json`` malformed."""
+    ``site.json`` accepts, and ``REPLY_MODE`` one of ``site.REPLY_MODES``. Any one bad makes the
+    signed ``site.json`` malformed."""
     from ..resources import ResourceError, check_scheme
-    from ..site import MAX_RETENTION_DAYS, MIN_RETENTION_DAYS
+    from ..site import MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, REPLY_MODES
     from . import conf
 
     try:
         scheme = conf.person_scheme()
         days = conf.retention_days()
+        mode = conf.reply_mode()
     except Exception as exc:  # noqa: BLE001 — an unreadable CANOPY_HOST is its own error
         return [checks.Error(f"CANOPY_HOST could not be read: {exc}", id="canopy_host.E010")]
     hint = "Until this is fixed site.json is malformed and canopy reads none of it."
@@ -84,4 +86,8 @@ def check_person_scheme(app_configs=None, **kwargs):
         errors.append(checks.Error(
             f"CANOPY_HOST['RETENTION_DAYS'] is {days!r}: a whole number of days from "
             f"{MIN_RETENTION_DAYS} to {MAX_RETENTION_DAYS}, or None", hint=hint, id="canopy_host.E012"))
+    if mode and mode not in REPLY_MODES:
+        errors.append(checks.Error(
+            f"CANOPY_HOST['REPLY_MODE'] is {mode!r}: one of {', '.join(REPLY_MODES)}, or unset",
+            hint=hint, id="canopy_host.E012"))
     return errors

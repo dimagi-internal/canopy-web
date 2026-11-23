@@ -59,6 +59,16 @@ OF RECORD for the people it brings, and a contact's ``record_uri``
 canopy enforces the shorter of it and the workspace's own rule. Both are read LIVE, like
 ``resource_schemes``: neither widens anything.
 
+``site.reply_url`` (optional, SDK 0.38+; the Django host fills it from ``CANOPY_HOST["REPLY_URL"]``)
+is where the site takes canopy's reply push (``canopy_sdk.host.replies``): the agent's replies in
+the conversations the site relays over its own channel. ``site.reply_mode`` (optional;
+``REPLY_MODE``) is ``final`` (one post when a turn ends) or ``stream`` (a post per piece of
+prose). canopy ADOPTS a declared ``reply_url`` without its owner typing it, but only when the
+document verifies against the site's registered keys, the URL is https, its origin is exactly one
+of the site's REGISTERED origins (never the ones this document lists), and it passes canopy's
+outbound checks: the site can name only an address it already holds. A reply webhook a person set
+in canopy wins over the declared one.
+
 ``surfaces`` (optional, SDK 0.37+) splits one site into the parts that serve different people.
 A site with none is one surface, as before. Each is keyed by a name (``SURFACE_NAME``) and says
 whether its conversations hold the site's sensitive data (``sensitive``, REQUIRED, so a surface is
@@ -236,7 +246,10 @@ def _site(value) -> dict:
     out["resource_id_lengths"] = _id_lengths(value.get("resource_id_lengths"), out["resource_schemes"])
     out["person_scheme"] = _person_scheme(value.get("person_scheme"))
     out["retention_days"] = _retention_days(value.get("retention_days"))
-    for key in ("resource_schemes", "resource_id_lengths", "person_scheme", "retention_days"):
+    out["reply_url"] = _url(value.get("reply_url"), "site.reply_url")
+    out["reply_mode"] = _reply_mode(value.get("reply_mode"))
+    for key in ("resource_schemes", "resource_id_lengths", "person_scheme", "retention_days",
+                "reply_url", "reply_mode"):
         if not out[key]:
             del out[key]
     return out if any(out.values()) else {}
@@ -271,6 +284,20 @@ def _retention_days(value) -> int | None:
             or not MIN_RETENTION_DAYS <= value <= MAX_RETENTION_DAYS:
         raise SiteDocumentError("malformed", f"site.retention_days must be a whole number of days from "
                                              f"{MIN_RETENTION_DAYS} to {MAX_RETENTION_DAYS}")
+    return value
+
+
+#: The values of ``site.reply_mode``: one post when a turn ends, or one per piece of prose.
+REPLY_MODES: tuple[str, ...] = ("final", "stream")
+
+
+def _reply_mode(value) -> str:
+    """``site.reply_mode``: ``final`` or ``stream``; "" when absent (canopy then posts ``final``)."""
+    if value is None or value == "":
+        return ""
+    if value not in REPLY_MODES:
+        raise SiteDocumentError("malformed", f"site.reply_mode must be one of {', '.join(REPLY_MODES)}, "
+                                             f"not {value!r}")
     return value
 
 
@@ -356,7 +383,8 @@ def _surfaces(value) -> dict:
 
 #: The keys of ``site``, in order.
 SITE_FACTS: tuple[str, ...] = ("origins", "jwks_url", "issuer", "mcp_resource", "resource_schemes",
-                               "resource_id_lengths", "person_scheme", "retention_days")
+                               "resource_id_lengths", "person_scheme", "retention_days", "reply_url",
+                               "reply_mode")
 
 
 def _normalize(claims: Mapping) -> dict:
@@ -401,7 +429,7 @@ def site_document(site_name: str, *, pages: Sequence[Mapping] = (), sensitive_da
     ``sensitive_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
     ``{"agents", "sensitive_data_agents", "version"}``, ``site`` as ``{"origins",
     "jwks_url", "issuer", "mcp_resource", "resource_schemes", "resource_id_lengths", "person_scheme",
-    "retention_days"}`` (each optional; left out
+    "retention_days", "reply_url", "reply_mode"}`` (each optional; left out
     when empty), ``title`` the site's display name and ``scope_labels`` as ``{scope: phrase}`` (both optional,
     descriptive text for the consent prompt), and ``surfaces`` as ``{name: {"sensitive", "mcp_resource",
     "person_scheme", "title"}}`` (optional; ``sensitive`` required on each)."""
@@ -446,6 +474,10 @@ class SiteFacts:
     #: How many days canopy keeps the conversations of this site's contacts (the shorter of
     #: this and the workspace's own rule wins). None when the site declares none.
     retention_days: int | None = None
+    #: Where the site takes canopy's reply push ("" when it declares none), and how
+    #: (``final`` / ``stream``; "" when it declares none).
+    reply_url: str = ""
+    reply_mode: str = ""
 
     def resource_policy(self) -> dict[str, int | None]:
         """``{scheme: declared id length or None}``, as ``resources.validate_link`` takes it."""
@@ -516,7 +548,9 @@ class SiteNeeds:
                             resource_id_lengths=tuple(
                                 (body["site"].get("resource_id_lengths") or {}).items()),
                             person_scheme=body["site"].get("person_scheme") or "",
-                            retention_days=body["site"].get("retention_days"))
+                            retention_days=body["site"].get("retention_days"),
+                            reply_url=body["site"].get("reply_url") or "",
+                            reply_mode=body["site"].get("reply_mode") or "")
                   if body.get("site") else None),
             title=body.get("title", ""), scope_labels=dict(body.get("scope_labels") or {}),
             surfaces=tuple(SiteSurface(name=name, sensitive=facts["sensitive"],

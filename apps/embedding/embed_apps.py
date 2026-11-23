@@ -408,7 +408,11 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
         fields.append("host_mcp_resource")
     if reply_webhook_url is not None:
         # canopy POSTs the site's contacts' conversations here (`host_grants/reply_relay.py`).
-        app.reply_webhook_url = _clean_host_url(reply_webhook_url, what="reply webhook URL") or None
+        cleaned = _clean_host_url(reply_webhook_url, what="reply webhook URL") or None
+        if cleaned != (app.reply_webhook_url or None):
+            app.reply_webhook_set_by = user if cleaned else None
+            fields.append("reply_webhook_set_by")
+        app.reply_webhook_url = cleaned
         fields.append("reply_webhook_url")
     if reply_mode is not None:
         if reply_mode not in dict(AppCredential.REPLY_MODE_CHOICES):

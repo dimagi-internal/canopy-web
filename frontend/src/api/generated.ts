@@ -42196,6 +42196,8 @@ export interface components {
             readonly contact_token_issuer_limit?: number | null;
             /** Reply Webhook Url */
             readonly reply_webhook_url?: string | null;
+            /** Reply Webhook Set By */
+            readonly reply_webhook_set_by?: string | null;
             /**
              * Reply Mode
              * @default final
@@ -42500,6 +42502,39 @@ export interface components {
             /** Url */
             readonly url: string;
         };
+        /**
+         * ReplyPushOut
+         * @description Where canopy pushes the agent's replies in the conversations this site relays, and
+         *     who said so: a person on the Host sites page, or the site in its signed `site.json`.
+         */
+        readonly ReplyPushOut: {
+            /** Url */
+            readonly url: string;
+            /** Mode */
+            readonly mode: string;
+            /** Source */
+            readonly source: string;
+            /**
+             * Set By
+             * @default
+             */
+            readonly set_by: string;
+            /**
+             * Declared Url
+             * @default
+             */
+            readonly declared_url: string;
+            /**
+             * Declared Mode
+             * @default
+             */
+            readonly declared_mode: string;
+            /**
+             * Declared Reason
+             * @default
+             */
+            readonly declared_reason: string;
+        };
         /** SensitiveDataRequiresOut */
         readonly SensitiveDataRequiresOut: {
             /**
@@ -42544,6 +42579,7 @@ export interface components {
              * @default []
              */
             readonly surfaces: readonly components["schemas"]["SiteSurfaceOut"][];
+            readonly reply_push?: components["schemas"]["ReplyPushOut"] | null;
         };
         /** SitePageOut */
         readonly SitePageOut: {

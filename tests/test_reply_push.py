@@ -270,3 +270,133 @@ def test_the_deletion_signal_reaches_the_replies(w):
     session_content_deleted.send(sender=Session, session=turn.chat_session, turn_ids=[turn.pk], by=None)
     row.refresh_from_db()
     assert row.text == ""
+
+
+# --- a site declares its reply webhook in its signed site.json -------------------------
+
+ORIGIN = "https://labs.example.org"
+DECLARED = f"{ORIGIN}/messaging/canopy/replies/"
+
+
+@pytest.fixture()
+def declares(w, monkeypatch):
+    """The site registered on `ORIGIN` with no webhook of a person's, publishing a
+    `site.json` signed with whatever key the test says (its own, by default)."""
+    from canopy_sdk import site as site_wire
+
+    from apps.host_grants import outbound, site_needs
+
+    AppCredential.objects.filter(pk=w["app"].pk).update(
+        reply_webhook_url=None, allowed_frame_origins=[ORIGIN])
+    published = {}
+
+    def publish(reply_url=DECLARED, reply_mode="final", key=None):
+        cache.clear()
+        facts = {"origins": [ORIGIN], "reply_url": reply_url, "reply_mode": reply_mode}
+        published["token"] = site_wire.sign_site_document(
+            key or w["priv"], site_wire.site_document("connect-labs", site=facts))
+
+    monkeypatch.setattr(site_needs, "document_url", lambda jwks_url: f"{ORIGIN}/labs/canopy/site.json")
+    monkeypatch.setattr(site_needs, "_get", lambda url: published["token"])
+    # The address check resolves the host; this one is the test's.
+    monkeypatch.setattr(outbound, "refuse_private", lambda host: None)
+    publish()
+    return publish
+
+
+def _app(w):
+    return AppCredential.objects.get(pk=w["app"].pk)
+
+
+def test_a_declared_webhook_on_the_sites_origin_is_adopted(w, declares):
+    declares(reply_mode="stream")
+    push = reply_relay.push_for(_app(w))
+    assert (push.url, push.mode, push.source) == (DECLARED, "stream", "site")
+    turn = _turn(w)
+    _say(turn, "Your next visit is due Friday.")
+    assert reply_relay.on_rows(turn, list(TurnEvent.objects.filter(turn=turn, kind="assistant"))) == 1
+    row = reply_relay.on_finished(_end(turn))
+    sent, post = _posted()
+    reply_relay.attempt(row, post=post)
+    [(url, token)] = sent
+    assert url == DECLARED
+    assert jwt.decode(token, options={"verify_signature": False})["aud"] == DECLARED
+
+
+def test_a_declared_webhook_off_the_sites_origin_is_ignored(w, declares):
+    declares(reply_url="https://elsewhere.example.org/replies/")
+    assert reply_relay.push_for(_app(w)) is None
+    from apps.host_grants import site_needs
+
+    declared = site_needs.declared_reply(_app(w))
+    assert not declared.adopted and "not one of this site's registered origins" in declared.reason
+    turn = _turn(w)
+    _say(turn, "hi")
+    assert reply_relay.on_finished(_end(turn)) is None
+
+
+def test_a_declared_webhook_in_a_document_the_site_did_not_sign_is_ignored(w, declares):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    declares(key=Ed25519PrivateKey.generate())
+    assert reply_relay.push_for(_app(w)) is None
+    turn = _turn(w)
+    _say(turn, "hi")
+    assert reply_relay.on_finished(_end(turn)) is None
+
+
+def test_a_declared_webhook_that_is_not_https_is_refused(w, declares):
+    from apps.host_grants import site_needs
+
+    AppCredential.objects.filter(pk=w["app"].pk).update(allowed_frame_origins=["http://labs.example.org"])
+    declares(reply_url="http://labs.example.org/messaging/canopy/replies/")
+    declared = site_needs.declared_reply(_app(w))
+    assert declared.url and not declared.adopted and "https" in declared.reason
+    assert reply_relay.push_for(_app(w)) is None
+
+
+def test_a_declared_webhook_that_fails_the_outbound_checks_is_refused(w, declares, monkeypatch):
+    from apps.host_grants import outbound, site_needs
+
+    def private(host):
+        raise outbound.OutboundError(f"{host!r} resolves to 10.0.0.5, inside private address space")
+
+    monkeypatch.setattr(outbound, "refuse_private", private)
+    declares()
+    declared = site_needs.declared_reply(_app(w))
+    assert not declared.adopted and "private address space" in declared.reason
+
+
+def test_a_persons_webhook_wins_over_the_declared_one(w, declares):
+    c = Client()
+    c.force_login(w["owner"])
+    grant_step_up(c)
+    r = c.patch(f"/api/workspaces/w1/host-sites/{w['app'].pk}", {"reply_webhook_url": HOOK},
+                content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert (r.json()["reply_webhook_url"], r.json()["reply_webhook_set_by"]) == (HOOK, "boss@dimagi.com")
+    push = reply_relay.push_for(_app(w))
+    assert (push.url, push.source, push.set_by) == (HOOK, "person", "boss@dimagi.com")
+    turn = _turn(w)
+    _say(turn, "hi")
+    row = reply_relay.on_finished(_end(turn))
+    sent, post = _posted()
+    reply_relay.attempt(row, post=post)
+    assert [u for u, _ in sent] == [HOOK]
+    # Cleared, the site's own declaration takes over again, with no one recorded.
+    r = c.patch(f"/api/workspaces/w1/host-sites/{w['app'].pk}", {"reply_webhook_url": ""},
+                content_type="application/json")
+    assert r.json()["reply_webhook_set_by"] is None
+    assert reply_relay.push_for(_app(w)).source == "site"
+
+
+def test_the_needs_route_says_where_replies_go_and_on_whose_word(w, declares):
+    c = Client()
+    c.force_login(w["owner"])
+    r = c.get(f"/api/workspaces/w1/host-sites/{w['app'].pk}/needs")
+    assert r.status_code == 200, r.content
+    got = r.json()["reply_push"]
+    assert (got["url"], got["mode"], got["source"], got["declared_url"]) == (DECLARED, "final", "site", DECLARED)
+    declares(reply_url="https://elsewhere.example.org/replies/")
+    got = c.get(f"/api/workspaces/w1/host-sites/{w['app'].pk}/needs").json()["reply_push"]
+    assert got["source"] == "" and got["url"] == "" and got["declared_reason"]

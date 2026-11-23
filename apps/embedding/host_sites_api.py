@@ -120,6 +120,10 @@ class HostSiteOut(Schema):
     #: Where canopy POSTs the agent's replies in this site's contacts' conversations
     #: (reply push, for a site that relays them over its own channel); null = none.
     reply_webhook_url: str | None = None
+    #: Who set `reply_webhook_url` (their email); null when no one has, or the account is gone.
+    #: With none set, canopy uses the webhook the site declares in its `site.json`, when it
+    #: adopts it (`SiteNeedsOut.reply_push`).
+    reply_webhook_set_by: str | None = None
     #: `final`: one post when a turn ends; `stream`: each piece of prose as it lands.
     reply_mode: str = "final"
     created_at: str
@@ -162,7 +166,8 @@ class UpdateIn(Schema):
     contact_token_issuer_limit: int | None = Field(None, ge=0, le=100_000)
     #: Where canopy POSTs the agent's replies to this site's contacts ("" to stop). It
     #: receives their conversations, so changing it needs a person at a browser who just
-    #: confirmed with their passkey (403 `step_up_required` otherwise).
+    #: confirmed with their passkey (403 `step_up_required` otherwise). It wins over a webhook
+    #: the site declares in its `site.json`; "" goes back to that one.
     reply_webhook_url: str | None = None
     reply_mode: Literal["final", "stream"] | None = None
 
@@ -189,6 +194,11 @@ def _traffic_out(app: AppCredential) -> TrafficHealthOut:
                             refusals_24h=health.refusals_24h)
 
 
+def _set_by(app: AppCredential) -> str | None:
+    who = app.reply_webhook_set_by if app.reply_webhook_url else None
+    return (who.email or who.get_username()) if who is not None else None
+
+
 def _out(app: AppCredential) -> HostSiteOut:
     return HostSiteOut(
         id=app.pk,
@@ -213,6 +223,7 @@ def _out(app: AppCredential) -> HostSiteOut:
         asserts_verified_email=app.asserts_verified_email,
         contact_token_issuer_limit=app.contact_token_issuer_limit,
         reply_webhook_url=app.reply_webhook_url or None,
+        reply_webhook_set_by=_set_by(app),
         reply_mode=app.reply_mode,
         created_at=app.created_at.isoformat(),
         last_used_at=app.last_used_at.isoformat() if app.last_used_at else None,

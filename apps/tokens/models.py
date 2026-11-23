@@ -358,8 +358,13 @@ class AppCredential(models.Model):
     #: conversations over its own channel, so it never has to poll. Null = no push.
     #: canopy sends the person's conversation there, so it goes through the same
     #: outbound rules as `host_issuer` (https, never private address space, no
-    #: redirects), and changing it needs a passkey step-up.
+    #: redirects), and changing it needs a passkey step-up. A site may instead declare its
+    #: webhook in its signed `site.json` (`site.reply_url`), which canopy adopts only on the
+    #: site's own registered origin (`site_needs.declared_reply`); one set here wins.
     reply_webhook_url = models.URLField(null=True, blank=True, max_length=500)
+    #: Who set `reply_webhook_url` (null when no one has, or the account is gone).
+    reply_webhook_set_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     #: `final`: one POST when a turn ends, with all its prose. `stream`: a POST per
     #: piece of prose as it lands, then an `ended` one.
     REPLY_FINAL, REPLY_STREAM = "final", "stream"
