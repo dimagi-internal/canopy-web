@@ -331,6 +331,7 @@ from apps.agents.api_engagement import router as engagement_router  # noqa: E402
 from apps.agents.api_fleet import router as fleet_tasks_router  # noqa: E402
 from apps.agents.api_tasks import router as workspace_tasks_router  # noqa: E402
 from apps.agents.api_kb import router as kb_router  # noqa: E402
+from apps.agents.api_project_files import router as project_files_router  # noqa: E402
 from apps.agents.api_proposals import router as proposals_router  # noqa: E402
 from apps.attention.alerts_api import router as alerts_router  # noqa: E402
 from apps.attention.api import router as attention_router  # noqa: E402
@@ -541,6 +542,7 @@ api.add_router("", fleet_tasks_router)
 # must not be read as a key.
 api.add_router("", workspace_tasks_router)
 api.add_router("", kb_router)
+api.add_router("", project_files_router)  # a project's files (its git repository)
 api.add_router("/workspaces", workspaces_router)
 api.add_router("/workspaces", retention_router)  # /{slug}/retention… (workspace settings, served by the retention app)
 api.add_router("/workspaces", admission_rules_router)  # /{slug}/admission-… (served by the admission app)

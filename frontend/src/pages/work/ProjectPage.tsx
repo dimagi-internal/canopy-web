@@ -28,6 +28,7 @@ import { errorText } from '@/api/problem'
 import { MilestonesSection } from '@/pages/work/ProjectMilestones'
 import { PropertyHeader, primaryLink } from '@/pages/work/ProjectProperties'
 import { ProjectMeetings } from '@/pages/work/ProjectMeetings'
+import { ProjectFiles } from '@/pages/work/ProjectFiles'
 import { ProjectServices } from '@/pages/work/ProjectServices'
 import { UpdatesSection } from '@/pages/work/ProjectUpdates'
 import { ProjectMembers } from '@/pages/work/ProjectMembers'
@@ -236,7 +237,12 @@ export function ProjectPage(): JSX.Element {
         onContent={reporter.meetings}
       />
     ),
-    toolbox: <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />,
+    toolbox: (
+      <>
+        <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+        <ProjectFiles workspace={workspace} handle={handle} />
+      </>
+    ),
     members: detail.visibility !== 'personal' && (
       <ProjectMembers detail={detail} workspace={workspace} handle={handle} onChanged={reload} onContent={reporter.members} />
     ),
