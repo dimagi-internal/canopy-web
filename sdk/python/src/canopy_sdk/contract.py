@@ -98,6 +98,12 @@ CLIENT_METADATA_MAX_CACHE_SECONDS = 3600
 #: A compact JWS in this contract is a handful of claims; anything this large is
 #: not one, and is refused before a signature check spends CPU on it.
 MAX_JWT_BYTES = 8 * 1024
+#: canopy's signed site agents response is the one JWS that is a DOCUMENT, not a
+#: handful of claims: one entry per agent allowed on the site, each with its
+#: description, URLs, runner flags and problems. Six agents already outgrow
+#: ``MAX_JWT_BYTES``, so it has its own cap, equal to the body ``canopy_sdk.fetch``
+#: will read at all. Every other token keeps ``MAX_JWT_BYTES``.
+MAX_SITE_AGENTS_BYTES = 64 * 1024
 #: A ``jti`` is an opaque unique string (usually a UUID). Bounded so a hostile
 #: one cannot be arbitrarily large.
 MAX_JTI_LENGTH = 256

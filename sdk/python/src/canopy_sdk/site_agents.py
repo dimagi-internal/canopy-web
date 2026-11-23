@@ -409,7 +409,9 @@ def verify_site_agents(token: str, *, client_id: str, site_name: str, client_key
     from .host.client_keys import MetadataError
 
     try:
-        header = unverified_header(token)
+        # The response is a document, one entry per agent: it has its own cap
+        # (`contract.MAX_SITE_AGENTS_BYTES`), not the 8 KB every other token gets.
+        header = unverified_header(token, max_bytes=contract.MAX_SITE_AGENTS_BYTES)
         if header.get("typ") != RESPONSE_TYP:
             raise ContractError("bad_typ", f"not a canopy site agents response (typ {RESPONSE_TYP})")
         jwk = client_keys.key_for(client_id, header.get("kid"))
