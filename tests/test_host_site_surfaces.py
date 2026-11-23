@@ -180,6 +180,18 @@ def test_an_agent_serving_the_sites_pages_is_never_offered_to_its_contacts(site)
     assert r.status_code == 404
 
 
+def test_a_sensitive_arrivals_panel_lists_no_agent_of_a_surface(site):
+    """The staff pages sign their arrivals as requiring sensitive-data runners: their panel never
+    lists the site's worker agents, while a workers arrival's does."""
+    def listed(token):
+        r = Client(HTTP_AUTHORIZATION=f"Bearer {token}").get("/api/contact/me")
+        assert r.status_code == 200, r.content
+        return [a["slug"] for a in r.json()["agents"]]
+
+    assert listed(_arrive(site["priv"])["token"]) == ["echo"]
+    assert listed(_arrive(site["priv"], requirements=["sensitive_data"])["token"]) == []
+
+
 def test_the_host_cannot_stamp_a_surface_itself(site):
     declare(site["agent"], {})  # on the site itself, no entry: offered to contacts as before
     r = _start(_arrive(site["priv"])["token"], metadata={surfaces.SESSION_KEY: "workers", "x_note": "hi"})

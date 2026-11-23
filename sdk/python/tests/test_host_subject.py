@@ -171,3 +171,13 @@ def test_canopy_will_not_sign_one_without_a_person():
     with pytest.raises(ValueError):
         consumer.subject_statement(generate_private_key("EdDSA"), CLIENT_ID, RESOURCE, jkt="x",
                                    **{**FACTS, "sub": ""})
+
+
+def test_a_host_checks_a_surfaces_statement_against_that_surfaces_resource(world):
+    """One host config, two resources: a statement for a surface verifies only when the host
+    names that surface's resource, and one for the host's own resource never passes there."""
+    surface = "https://host.example.org/workers/mcp/"
+    headers = _headers(world, _statement(world, audience=surface), htu=surface)
+    assert _verify(world, headers, resource=surface).sub
+    assert _refused(world, _headers(world, _statement(world, audience=surface), htu=surface)) == "bad_audience"
+    assert _refused(world, _headers(world, _statement(world)), resource=surface) == "bad_audience"

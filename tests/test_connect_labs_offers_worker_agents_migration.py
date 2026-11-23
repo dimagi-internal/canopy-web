@@ -1,5 +1,5 @@
-"""connect-helper and connect-coach move from the `connect-messaging` site to `connect-labs`'s
-`workers` surface (tokens 0048). Delete once that migration has deployed."""
+"""`connect-labs` may offer connect-helper and connect-coach, and `connect-messaging` is revoked
+(tokens 0048). Delete once that migration has deployed."""
 from __future__ import annotations
 
 import pytest
@@ -10,7 +10,7 @@ from django.db.migrations.executor import MigrationExecutor
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.needs_migrations]
 
 BEFORE = [("tokens", "0047_reply_push"), ("agents", "0143_creator_agent_admins")]
-AFTER = [("tokens", "0048_connect_workers_on_connect_labs")]
+AFTER = [("tokens", "0048_connect_labs_offers_worker_agents")]
 
 ENTRY = {"description": "Connect Workers over PersonalID", "entry": "/connect-helper:worker-chat",
          "tools": ["Read"], "bash": [], "read_paths": ["{cwd}/**"], "write_paths": [],
@@ -45,28 +45,28 @@ def _world(apps, *, mcp="https://labs.connect.dimagi.com/mcp/"):
     return agents, other, labs, old
 
 
-def test_the_agents_serve_the_workers_surface_of_connect_labs_under_the_same_key():
+def test_connect_labs_may_offer_both_agents_and_connect_messaging_is_revoked():
     agents, other, labs, old = _world(_state(BEFORE))
     apps = _state(AFTER)
     Agent, App = apps.get_model("agents", "Agent"), apps.get_model("tokens", "AppCredential")
-    for slug in agents:
-        cap = Agent.objects.get(slug=slug).interface["capabilities"]["connect_messaging"]
-        assert cap["sites"] == ["connect-labs"] and cap["surface"] == "workers"
-        assert cap["contact_scoped"] is True and cap["ceiling"] == ["worker_profile"]
-    assert Agent.objects.get(slug="ace").interface == other.interface   # anyone else is untouched
     allowed = set(apps.get_model("tokens", "AppCredentialAgent").objects.filter(app_id=labs.pk)
                   .values_list("agent__slug", flat=True))
     assert allowed == {"connect-helper", "connect-coach"}
+    for slug in agents:   # each agent's own entry is its admin's to change, not this migration's
+        assert Agent.objects.get(slug=slug).interface["capabilities"]["connect_messaging"] == ENTRY
+    assert Agent.objects.get(slug="ace").interface == other.interface
     labs = App.objects.get(pk=labs.pk)
-    assert (labs.reply_webhook_url, labs.reply_mode) == (
-        "https://labs.connect.dimagi.com/messaging/canopy/replies/", "final")
+    assert labs.reply_webhook_url is None   # a workspace owner's change, behind a passkey
     assert App.objects.get(pk=old.pk).revoked_at is not None
 
 
-def test_another_labs_keeps_its_webhook_unset():
-    _agents, _other, labs, _old = _world(_state(BEFORE), mcp="https://labs-staging.example.org/mcp/")
+def test_running_it_twice_changes_nothing():
+    _agents, _other, labs, _old = _world(_state(BEFORE))
     apps = _state(AFTER)
-    assert apps.get_model("tokens", "AppCredential").objects.get(pk=labs.pk).reply_webhook_url is None
+    from importlib import import_module
+
+    import_module("apps.tokens.migrations.0048_connect_labs_offers_worker_agents").forward(apps, None)
+    assert apps.get_model("tokens", "AppCredentialAgent").objects.filter(app_id=labs.pk).count() == 2
 
 
 def test_a_database_without_connect_labs_in_connect_changes_nothing():
@@ -74,7 +74,5 @@ def test_a_database_without_connect_labs_in_connect_changes_nothing():
     _agents, _other, labs, old = _world(apps)
     apps.get_model("tokens", "AppCredential").objects.filter(pk=labs.pk).delete()
     apps = _state(AFTER)
-    Agent = apps.get_model("agents", "Agent")
-    assert Agent.objects.get(slug="connect-helper").interface["capabilities"]["connect_messaging"]["sites"] == [
-        "connect-messaging"]
+    assert not apps.get_model("tokens", "AppCredentialAgent").objects.exists()
     assert apps.get_model("tokens", "AppCredential").objects.get(pk=old.pk).revoked_at is None

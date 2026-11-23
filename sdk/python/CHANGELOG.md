@@ -17,6 +17,9 @@ The import name is `canopy_sdk` and does not change with the distribution name.
   contact's subject-bound tool calls (`canopy_sdk.host.verify_subject`) to the surface's
   `mcp_resource`, which is then the statement's `aud`. Additive under contract v1: a site with no
   surfaces is one surface, as before.
+- `canopy_sdk.host.verify_subject(..., resource=)` checks a statement against a surface's
+  `mcp_resource` (its `aud` and the proof's `htu`) instead of `HostConfig.resource`, so one host
+  serves its pages' resource and a surface's from the same config.
 
 ## 0.36.1 — 2026-11-22
 
