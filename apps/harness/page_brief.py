@@ -4,8 +4,8 @@ A turn held on a host site's page spends its first model call finding out where 
 is — `current_page`, `site_tools` — before it can do anything for the person. For an
 agent whose owner asked for lean page turns (`published_profiles.page_lean_of`), the
 runner fetches this brief while the agent CLI starts (`GET /api/harness/turns/{id}/page-brief`)
-and puts it at the top of the turn's prompt, so the first model call can go straight
-to `site_call`.
+and appends it to the session's system prompt (never the person's message), so the first
+model call can go straight to `site_call`.
 
 It is exactly what those two tools would answer, for the same turn and the same
 person: the conversation's own page state (`page_state`, as `current_page` reads it
@@ -109,9 +109,9 @@ def build(turn) -> dict:
         refused = exc.message
     parts = [
         f"<page_context site=\"{site}\">",
-        f"You are answering in the agent panel on a {site} page, for the person who sent the "
-        "message below. This is what you would get from current_page and site_tools, fetched "
-        "for you as this turn started: use it, and call site_call straight away. Call "
+        f"You are answering in the agent panel on a {site} page, for the person who sends the "
+        "next message. This is what you would get from current_page and site_tools, fetched "
+        "for you as this conversation started: use it, and call site_call straight away. Call "
         "current_page or site_tools again only if you need something this leaves out "
         "(a full tool description, or the page after it changes).",
         "",
