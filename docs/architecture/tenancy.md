@@ -149,7 +149,7 @@ failure again.
   account of an allowlisted domain (its `hd` claim), so a consumer Google account made for
   an allowlisted address is refused; an agent's own login never gets a browser session
   through Google (`apps/common/auth_adapter.py::CustomSocialAccountAdapter.pre_social_login`),
-  except under its owner's time-limited grant for testing ([access.md](access.md) § Browser sign-in for testing).
+  except while an admin of the agent has switched browser sign-in on ([access.md](access.md) § Browser sign-in for an agent).
 - **Personal access tokens** (`apps/tokens/`) authenticate machine callers with
   `Authorization: Bearer <raw>`; `apps.tokens.middleware.BearerTokenAuthMiddleware` resolves
   them after `AuthenticationMiddleware` and before `LoginRequiredMiddleware`. An MCP OAuth

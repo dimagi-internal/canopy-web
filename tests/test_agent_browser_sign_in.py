@@ -1,9 +1,9 @@
-"""Browser sign-in for testing (`apps/agents/browser_sign_in.py`).
+"""Browser sign-in for an agent (`apps/agents/browser_sign_in.py`).
 
 An agent's own Google account is refused at the browser sign-in, except while a person
-who administers the agent has a grant open for it: switched on at a browser behind a
-passkey step-up, for 1 to 30 days, never by a token or by the agent's own login, audited
-as a setting. A session made under it is the agent's login, and ends with the grant.
+who administers the agent has a grant open for it: an ordinary audited setting, until
+switched off or for 1 to 30 days, never changed by the agent's own login. A session made
+under it is the agent's login, and ends with the grant.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 from allauth.core.exceptions import ImmediateHttpResponse
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.auth.signals import user_logged_in
 from django.test import Client, RequestFactory, override_settings
@@ -76,19 +77,18 @@ def test_it_is_off_by_default(w):
     assert r.json()["login_email"] == "eva@dimagi-ai.com"
 
 
-def test_the_owner_switches_it_on_for_seven_days_by_default_and_it_is_audited(w):
+def test_the_owner_switches_it_on_until_switched_off_by_default_and_it_is_audited(w):
     r = _on(w["c"], reason="extension e2e")
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["enabled"] is True and body["granted_by_email"] == "jj@dimagi.com"
-    assert body["reason"] == "extension e2e"
-    grant = AgentBrowserSignIn.objects.get(agent=w["agent"])
-    assert timedelta(days=6, hours=23) < grant.expires_at - grant.granted_at <= timedelta(days=7)
+    assert body["reason"] == "extension e2e" and body["expires_at"] is None
+    assert AgentBrowserSignIn.objects.get(agent=w["agent"]).expires_at is None
     change = SettingChange.objects.filter(path__endswith="/browser-sign-in").latest("id")
     assert "browser-sign-in" in str(change.changes)
 
 
-def test_days_are_one_to_thirty(w):
+def test_an_end_may_be_set_from_one_to_thirty_days(w):
     assert _on(w["c"], days=0).status_code == 422
     assert _on(w["c"], days=31).status_code == 422
     assert _on(w["c"], days=30).status_code == 200
@@ -124,17 +124,15 @@ def test_another_member_may_not(w):
     assert not AgentBrowserSignIn.objects.exists()
 
 
-def test_no_step_up_is_asked_for_one(w):
-    r = _on(_browser(w["owner"], step_up=False))
-    assert r.status_code == 403 and r.json()["error"] == "step_up_required"
-    assert not AgentBrowserSignIn.objects.exists()
+def test_it_needs_no_passkey_step_up(w):
+    assert _on(_browser(w["owner"], step_up=False)).status_code == 200
 
 
-def test_a_token_cannot_switch_it_on_the_owners_included(w):
+def test_the_owners_token_may_switch_it_like_any_other_setting(w):
     raw, _ = PersonalToken.create_for_user(user=w["owner"], label="t")
     r = Client().put(URL, {}, content_type="application/json", **bearer_headers(raw))
-    assert r.status_code == 403
-    assert not AgentBrowserSignIn.objects.exists()
+    assert r.status_code == 200, r.content
+    assert AgentBrowserSignIn.objects.filter(agent=w["agent"], revoked_at__isnull=True).exists()
 
 
 def test_the_agents_own_token_never_can_even_as_its_own_admin(w):
@@ -161,7 +159,7 @@ def test_an_agent_with_no_login_has_nothing_to_switch_on(w):
     assert r.status_code == 409 and r.json()["error"] == "no_agent_login"
 
 
-def test_switching_off_needs_no_step_up_and_is_audited(w):
+def test_switching_off_is_audited(w):
     _on(w["c"])
     c = _browser(w["owner"], step_up=False)
     r = c.delete(URL)
@@ -171,7 +169,7 @@ def test_switching_off_needs_no_step_up_and_is_audited(w):
 
 
 def test_an_expired_grant_reads_as_off(w):
-    _on(w["c"])
+    _on(w["c"], days=1)
     AgentBrowserSignIn.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
     assert w["c"].get(URL).json()["enabled"] is False
     assert browser_sign_in.grant_for_login(w["login"].pk) is None
@@ -232,7 +230,7 @@ def test_an_already_linked_account_signs_in_without_a_second_link(w):
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN=DOMAINS)
 @pytest.mark.parametrize("end", ["expired", "revoked"])
 def test_an_ended_grant_refuses_again(w, end):
-    _on(w["c"])
+    _on(w["c"], days=1)
     if end == "expired":
         AgentBrowserSignIn.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
     else:
@@ -267,6 +265,13 @@ def _signed_in_as_agent(w):
     return c, request.session
 
 
+def test_a_session_under_a_standing_grant_is_an_ordinary_length(w):
+    _on(w["c"])
+    _, session = _signed_in_as_agent(w)
+    assert browser_sign_in.SESSION_KEY in session
+    assert session.get_expiry_date() <= timezone.now() + timedelta(seconds=settings.SESSION_COOKIE_AGE + 5)
+
+
 def test_the_session_is_marked_and_ends_no_later_than_the_grant(w):
     _on(w["c"], days=1)
     grant = AgentBrowserSignIn.objects.get(agent=w["agent"])
@@ -294,7 +299,7 @@ def test_the_session_has_the_agents_own_permissions(w):
 
 @pytest.mark.parametrize("end", ["revoked", "expired"])
 def test_ending_the_grant_signs_the_session_out_on_its_next_request(w, end):
-    _on(w["c"])
+    _on(w["c"], days=1)
     c, _ = _signed_in_as_agent(w)
     assert c.get("/api/me/").status_code == 200
     if end == "revoked":

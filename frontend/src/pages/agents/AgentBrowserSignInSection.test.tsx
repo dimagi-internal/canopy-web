@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
-// Browser sign-in for testing: off by default; an admin switches it on for 1, 7 or 30 days
-// (the API asks for the passkey), sees who switched it on and when it ends, and switches it off.
+// Browser sign-in: off by default; an admin switches it on until switched off or for 1, 7 or
+// 30 days, sees who switched it on and when it ends, and switches it off.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
@@ -14,7 +14,7 @@ vi.mock('@/api/browserSignIn', () => ({ getBrowserSignIn, switchOnBrowserSignIn,
 
 const { AgentBrowserSignInSection } = await import('./AgentBrowserSignInSection')
 
-const OFF = { enabled: false, login_email: 'eva@dimagi-ai.com', max_days: 30, default_days: 7 }
+const OFF = { enabled: false, login_email: 'eva@dimagi-ai.com', max_days: 30 }
 const inDays = (d: number) => new Date(Date.now() + d * 86400_000).toISOString()
 const ON = {
   ...OFF,
@@ -34,7 +34,7 @@ describe('AgentBrowserSignInSection', () => {
     getBrowserSignIn.mockResolvedValue(OFF)
     render(<AgentBrowserSignInSection slug="eva" canEdit />)
     expect((await screen.findByTestId('browser-sign-in-summary')).textContent).toBe('Off')
-    expect((screen.getByTestId('browser-sign-in-days') as HTMLSelectElement).value).toBe('7')
+    expect((screen.getByTestId('browser-sign-in-days') as HTMLSelectElement).value).toBe('')
     expect(screen.queryByTestId('browser-sign-in-off')).toBeNull()
   })
 
@@ -51,6 +51,16 @@ describe('AgentBrowserSignInSection', () => {
     expect(summary.textContent).toMatch(/ends in /)
   })
 
+  it('switches on until switched off by default', async () => {
+    getBrowserSignIn.mockResolvedValue(OFF)
+    switchOnBrowserSignIn.mockResolvedValue({ ...ON, expires_at: null })
+    render(<AgentBrowserSignInSection slug="eva" canEdit />)
+    fireEvent.click(await screen.findByTestId('browser-sign-in-on'))
+    await waitFor(() => expect(switchOnBrowserSignIn).toHaveBeenCalledWith('eva', null))
+    await screen.findByTestId('browser-sign-in-off')
+    expect(screen.getByTestId('browser-sign-in-summary').textContent).toContain('until switched off')
+  })
+
   it('switches off', async () => {
     getBrowserSignIn.mockResolvedValue(ON)
     switchOffBrowserSignIn.mockResolvedValue(OFF)
@@ -62,10 +72,10 @@ describe('AgentBrowserSignInSection', () => {
 
   it('says so when switching on is refused', async () => {
     getBrowserSignIn.mockResolvedValue(OFF)
-    switchOnBrowserSignIn.mockRejectedValue(new Error('Confirm it’s you with your passkey'))
+    switchOnBrowserSignIn.mockRejectedValue(new Error('Could not switch on browser sign-in'))
     render(<AgentBrowserSignInSection slug="eva" canEdit />)
     fireEvent.click(await screen.findByTestId('browser-sign-in-on'))
-    expect(await screen.findByText(/Confirm it’s you/)).toBeTruthy()
+    expect(await screen.findByText(/Could not switch on/)).toBeTruthy()
   })
 
   it('has nothing to switch for an agent with no login of its own', async () => {
