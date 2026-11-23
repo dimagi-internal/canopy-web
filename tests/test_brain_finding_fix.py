@@ -67,6 +67,7 @@ def test_asking_starts_the_persons_own_conversation_with_the_brief_and_marks_it_
     listed = {o["id"]: o for o in _as(w["owner"]).get("/api/w/acme/brain/outputs/").json()}
     assert listed[w["finding"].pk]["fix_session"] == f"/w/acme/sessions/{session.pk}"
     assert listed[w["finding"].pk]["fixer"] == {"slug": "ada", "name": "Ada"}
+    assert listed[w["finding"].pk]["may_ask_fix"] is True
     again = _as(w["owner"]).post(_url(w), content_type="application/json").json()
     assert again["session_id"] == str(session.pk)                               # asking again continues it
     assert "Continues your conversation with Ada" in _as(w["owner"]).get(_url(w)).json()["what_happens"]
@@ -84,6 +85,7 @@ def test_only_the_people_who_act_for_it_ask_and_never_through_a_token(w):
 def test_a_learner_with_no_operator_has_nobody_to_ask(w):
     w["sys"].operator = None
     w["sys"].save(update_fields=["operator"])
+    assert _as(w["owner"]).get("/api/w/acme/brain/outputs/").json()[0]["may_ask_fix"] is False
     plan = _as(w["owner"]).get(_url(w)).json()
     assert plan["agent"] is None and plan["label"] == ""
     r = _as(w["owner"]).post(_url(w), content_type="application/json")
