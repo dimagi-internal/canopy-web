@@ -75,7 +75,9 @@ function finishes(stored: string, live: string): boolean {
 
 /** The live replies (`chat.live_text`) whose stored reply has arrived, dropped. Only
  *  stored replies after the last thing a person said count: an earlier answer that
- *  began the same way is not this one. */
+ *  began the same way is not this one. Once the turn has settled and its stored reply
+ *  is here, every live reply goes: one the stored rows never repeat (an attempt that
+ *  failed over to another credential) must not stay on screen as if it were said. */
 export function withoutFinishedLive(state: SessionState): SessionState {
   const messages = state.messages;
   if (!messages.some((m) => m.id.startsWith(LIVE_PREFIX))) return state;
@@ -83,8 +85,10 @@ export function withoutFinishedLive(state: SessionState): SessionState {
   messages.forEach((m, i) => { if (m.role === "user") since = i + 1; });
   const stored = messages.slice(since).filter(
     (m) => m.role === "assistant" && !m.id.startsWith(LIVE_PREFIX) && m.plaintext);
+  const settled = Boolean(state.turn_status?.settled) && stored.length > 0;
   const kept = messages.filter(
-    (m) => !m.id.startsWith(LIVE_PREFIX) || !stored.some((s) => finishes(s.plaintext, m.plaintext)));
+    (m) => !m.id.startsWith(LIVE_PREFIX)
+      || (!settled && !stored.some((s) => finishes(s.plaintext, m.plaintext))));
   return kept.length === messages.length ? state : { ...state, messages: kept };
 }
 

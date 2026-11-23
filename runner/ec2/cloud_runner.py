@@ -13730,7 +13730,11 @@ class _LiveText:
         threading.Thread(target=self._loop, daemon=True, name=f"live-{turn_id[:8]}").start()
 
     def __call__(self, index: int, text: str) -> None:
-        if self._off:
+        # Nothing as short as a credential's own refusal ("You've hit your weekly limit"):
+        # `execute_prompt` holds those back while it fails over to the next credential
+        # (`_CredentialNotices`), and streaming one would show the person a limit that is
+        # not theirs. Past that length it is the agent talking.
+        if self._off or len(text) <= CREDENTIAL_NOTICE_MAX_CHARS:
             return
         with self._lock:
             self._pending = (index, text)
