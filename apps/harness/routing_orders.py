@@ -237,7 +237,7 @@ def inherited_orders(agent_ids) -> dict:
 
 def assignment_rows_for(
     agent_id, origin: str, actor: str, defaults: dict, priorities: dict,
-    *, requires: frozenset = frozenset(), serves=None,
+    *, requires: frozenset = frozenset(), serves=None, turn=None,
 ) -> list:
     """THE ordered runner list for one (agent, source, actor) triple — what the
     availability cascade then walks. Pure: no queries, no clock.
@@ -256,12 +256,18 @@ def assignment_rows_for(
     (`cannot_serve`) is dropped the same way, so it neither claims a turn only to
     fail it nor counts as a better-ranked blocker. Empty: not asked.
 
+    `turn` is the turn being routed, when there is one: a box that cannot run THIS
+    turn is dropped the same way. A caller's turn of a stored agent runs only on a
+    cloud runner (`clis.laptop_cannot_confine_stored`), so a laptop neither claims
+    it nor holds back the cloud runner below it as a better-ranked blocker.
+
     A directed-only box (`Runner.directed_only`) is always dropped, after the
     strict truncation: it takes no routed work, so a strict rule naming only it
     leaves the turn waiting, visibly.
     """
     return list(enumerate(r for r, _rung in labelled_assignment_rows(
-        agent_id, origin, actor, defaults, priorities, requires=requires, serves=serves)))
+        agent_id, origin, actor, defaults, priorities, requires=requires, serves=serves,
+        turn=turn)))
 
 
 #: Which rung of the ladder put a runner in an agent's composed list.
@@ -270,7 +276,7 @@ RUNG_PERSON, RUNG_SOURCE, RUNG_DEFAULT = "person", "source", "default"
 
 def labelled_assignment_rows(
     agent_id, origin: str, actor: str, defaults: dict, priorities: dict,
-    *, requires: frozenset = frozenset(), serves=None,
+    *, requires: frozenset = frozenset(), serves=None, turn=None,
 ) -> list:
     """`assignment_rows_for` with each runner's rung — `RUNG_PERSON` (the actor
     rule), `RUNG_SOURCE` (the source rule) or `RUNG_DEFAULT` (the default order,
@@ -317,6 +323,11 @@ def labelled_assignment_rows(
         # and the turn waits (visibly: `unclaimable_queued_turns`), never falls
         # through to boxes the rule exists to exclude.
         out = [(r, g) for r, g in out if not cannot_serve(r, serves)]
+    if turn is not None and turn.capability:
+        # The same FLOOR for what only the turn says: a laptop cannot confine a
+        # stored agent's caller turn, so a strict rule naming only laptops leaves
+        # it waiting for a cloud runner (`clis.blocker` says so).
+        out = [(r, g) for r, g in out if not clis.laptop_cannot_confine_stored(turn, r)]
     return out
 
 
@@ -391,7 +402,7 @@ def assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
     """
     rows = assignment_rows_for(
         agent_id, turn.origin, actors.actor_of(turn), defaults, priorities,
-        requires=rr.requirements_of(turn), serves=routed_agent(turn, agent_id),
+        requires=rr.requirements_of(turn), serves=routed_agent(turn, agent_id), turn=turn,
     )
     mine = next((rank for rank, r in rows if r.id == runner.id), None)
     if mine is None:

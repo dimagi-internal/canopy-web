@@ -152,6 +152,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     rows = assignment_rows_for(
         routed_agent, t.origin, actors.actor_of(t), defaults, priorities, requires=reqs,
         serves=None if ignore_serve else routed_agent_of(t, routed_agent),
+        turn=None if ignore_cli else t,
     )
     return any(row_runner.id == r.id for _rank, row_runner in rows)
 
@@ -352,10 +353,16 @@ def turn_reach(turn: Turn) -> Reach:
 def _cli_may_block(queued, unserved: set, runners) -> bool:
     """Whether the agent CLI can be what keeps any of `unserved` waiting: some
     waiting turn may run on a CLI other than Claude Code (or on none), or some box
-    lacks Claude Code. False means the CLI pass would find nothing."""
+    lacks Claude Code, or a waiting caller's turn of a stored agent has a laptop that
+    would take it but for that (`clis.laptop_cannot_confine_stored`), which the pass
+    names as waiting for a cloud runner. False means the CLI pass would find nothing."""
     if any(clis.CLAUDE_CODE not in clis.reported(r) for r in runners):
         return True
-    return any(clis.allowed(t) != [clis.CLAUDE_CODE] for t in queued if t.pk in unserved)
+    waiting = [t for t in queued if t.pk in unserved]
+    if any(t.capability and any(clis.laptop_cannot_confine_stored(t, r) for r in runners)
+           for t in waiting):
+        return True
+    return any(clis.allowed(t) != [clis.CLAUDE_CODE] for t in waiting)
 
 
 def _when(at: dt.datetime | None) -> str:
