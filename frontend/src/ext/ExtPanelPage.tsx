@@ -15,6 +15,7 @@
  * asks the extension to open the sign-in in a tab and checks again when the panel gets
  * focus, the tab changes, or the person presses the button.
  */
+import { bootstrapCsrf } from '@/api/csrf'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getMe, type MeOut } from '@/api/me'
 import { getInstalledApp, listBrowserApps, type BrowserApp, type InstalledApp } from '@/api/workspaceApps'
@@ -81,6 +82,8 @@ export function ExtPanelPage() {
 
   const check = useCallback(async () => {
     lastCheck.current = Date.now()
+    // A sign-in in another tab changed the CSRF token, and this frame can't read the cookie.
+    await bootstrapCsrf().catch(() => {})
     const me = await getMe().catch(() => null)
     setSession(me ? { kind: 'in', me } : { kind: 'out' })
   }, [])

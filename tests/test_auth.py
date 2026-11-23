@@ -92,6 +92,19 @@ def test_csrf_endpoint_is_public(db):
     assert "csrftoken" in resp.cookies
 
 
+def test_csrf_endpoint_says_the_token_a_write_must_carry(db):
+    """canopy inside the extension's side panel can't read its cookies from script, so it
+    sends the token this body says; it must be one the CSRF check accepts."""
+    client = Client(enforce_csrf_checks=True)
+    resp = client.get("/api/csrf/")
+    assert resp["Cache-Control"] == "no-store"
+    token = resp.json()["token"]
+    refused = client.post("/api/csrf/")  # any POST: the CSRF check runs before the method check
+    told = client.post("/api/csrf/", HTTP_X_CSRFTOKEN=token)
+    assert refused.status_code == 403
+    assert told.status_code == 405
+
+
 @override_settings(REQUIRE_AUTH=True)
 def test_accounts_paths_are_public(db):
     client = Client()
