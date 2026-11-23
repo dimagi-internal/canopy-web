@@ -174,6 +174,7 @@ obvious:
   hold is 409 `stale_recipients`; nothing to seal to is 409 `no_runner` or
   `runner_has_no_ecdh_key`, and the share form shows the same sentence before anyone types.
 - A chat moved to another machine cannot open what was sealed to the old one: share it again.
+- A repo chat's CLI calls as the person through its caller token, and these routes are not MCP tools, so the token is let through for GETs here only when the chat key names the token's own conversation (`apps/harness/caller_tokens.py::reads_its_chat_secrets`).
 - `GET /api/session-secrets/key/{name}` without `sealed=true` is 409 `update_canopy`
   (`secrets_api.py`): plaintext is never served.
 - **Honest limit:** canopy-web names the keys at the moment of sharing, so a canopy-web

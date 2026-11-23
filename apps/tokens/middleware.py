@@ -414,7 +414,9 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
       asker and voids exactly when `resolve` says it does;
     * only on a route the MCP server serves as a tool (`caller_token_routes`)
       — what MCP leaves out (minting a PAT, the person's own memory switches and
-      grants, the runner protocol) is refused, never quietly reachable over REST;
+      grants, the runner protocol) is refused, never quietly reachable over REST.
+      The one addition is reading the secrets shared with the token's OWN chat
+      (`caller_tokens.reads_its_chat_secrets`), which the chat key beside it decides;
     * for an AGENT's turn (`grant.read_only`), only to READ (GET) and drive the asker's
       own open page: the asker granted no act-as-you permission, so a write is refused,
       as MCP refuses it. A repo chat's token is the person's own tool and keeps writes;
@@ -428,7 +430,8 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
             "this caller token does not reach REST: it has expired, its conversation no "
             "longer has a verified asker, or its turn is confined (use MCP)"))
     routes = caller_token_routes
-    if routes is None or not routes(request.method, request.path_info):
+    if not caller_tokens.reads_its_chat_secrets(grant, request) and (
+            routes is None or not routes(request.method, request.path_info)):
         return problem_response(403, detail=(
             "a caller token reaches only the routes canopy's MCP server serves as tools, "
             "and this is not one"))
