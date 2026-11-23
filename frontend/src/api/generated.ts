@@ -623,7 +623,11 @@ export interface paths {
          *     `statement_missing_owner_agent`), that `expect` is what is stored (409
          *     `zk_value_changed`), that it is sealed only to the owner and allowed machines
          *     (422 `foreign_reader`) and that its writer MACs are the owner's (422
-         *     `bad_writer_sig`). From a browser this needs a fresh passkey check.
+         *     `bad_writer_sig`). From a browser this needs a fresh passkey check. An agent's
+         *     own login, while its agent test key is on, shares only its own connection, lent to
+         *     nobody (it may name canopy-web), and with no passkey, from anywhere
+         *     (`login_test_key.may_share_own_connection`; 403 `not_a_person` /
+         *     `share_too_broad` otherwise).
          */
         readonly put: operations["share_connection"];
         readonly post?: never;

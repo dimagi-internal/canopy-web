@@ -26,3 +26,8 @@ class ConnectionsConfig(AppConfig):
         from . import declarations, services  # noqa: PLC0415 - same
 
         declarations.on_share_target_removed(services.surface_removed)
+
+        # Turning an agent's test key off disconnects the connections its login owns.
+        from apps.agents.credentials import login_test_key  # noqa: PLC0415 - same
+
+        login_test_key.on_disable(services.disconnect_owned_by)

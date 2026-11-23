@@ -27,14 +27,15 @@ Everyone sets up a vault key of their own at sign-in, because a person can be gi
 
 ## An agent login's test vault key
 
-An agent's own login may hold a personal vault key so a headless harness signed in as the agent can take part in its own sensitive conversations (`apps/agents/credentials/login_test_key.py`; the module docstring is the full rule). It opens nothing in any vault.
+An agent's own login may hold a personal vault key so a headless harness signed in as the agent can take part in its own sensitive conversations and use screens with its own provider account (`apps/agents/credentials/login_test_key.py`; the module docstring is the full rule). It opens nothing in any vault.
 
 - **The switch:** `Agent.test_vault_key`, off by default, set by an agent admin (`GET|PUT /api/agents/{slug}/test-vault-key`). Turning it on needs a browser and a fresh passkey step-up (a token is refused); turning it off needs neither. Audited as a setting.
 - **The key:** while on, the login makes ONE key as itself: passphrase seals only, never replaced (`login_test_key.check_keyset_write`). With the switch off, or for any other system account, a keyset write is refused (`not_a_person`).
 - **What it receives:** only copies of the keys of sensitive conversations the login is itself in, and only while the switch is on (`conversation_keys._keyset`, `conversation_keys.add_wrap`).
 - **What it never receives:** a copy of any vault's key or a value sealed to it, or an endorsement, whatever eligibility says (`vault_engine.parse_wraps` / `parse_values`, `zk_endorse.add`). A login that is not a person never registers a passkey or steps up (`passkeys.stepup.require_a_person`), so it approves no device key or invitation.
 - **Its one other act: confirming its own page permission.** While on, the same login may also confirm its OWN waiting act-as-you permission on a host site's page without a passkey (`POST /api/me/host-grants/{id}/confirm-as-agent`, `login_test_key.may_confirm_own_host_grant`), so a headless test can run the page-agent flow as the agent itself → [access-confinement-and-act-as.md](access-confinement-and-act-as.md) § Acting as the person on a host site.
-- **Off deletes it:** turning the switch off deletes the key and every conversation-key copy wrapped to it, and stops every unexpired host grant the login holds (`login_test_key.disable`).
+- **Its own connection, for its own screens.** While on, the login connects a provider as itself, sealed to this key, the same connect as a person's (`connections.services.owner_keyset` takes a key only `login_test_key.may_hold_vault_key` allows), and shares it without a passkey only when the statement lends it to nobody (no agent, computer or endorser); it may name canopy-web, which a screen's `as: viewer` call needs (`login_test_key.may_share_own_connection`, from `PUT /api/connections/{id}/share`; 403 `share_too_broad` otherwise) → [vault-connections.md](vault-connections.md). So a headless test of a browser extension or app signs in to the provider as the agent and uses the screens exactly as a person does.
+- **Off deletes it:** turning the switch off deletes the key and every conversation-key copy wrapped to it, stops every unexpired host grant the login holds, and disconnects every connection the login owns (`login_test_key.disable`).
 
 ## Whose account an entry is
 

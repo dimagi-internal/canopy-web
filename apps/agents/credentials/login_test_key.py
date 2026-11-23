@@ -34,17 +34,30 @@ agent's own SENSITIVE conversations, which are sealed to their people's vault ke
   `_may_lend_to`). It lasts the usual window, 30 minutes at most (`host_grants.confirm`).
   It confirms no person's grant and acts as no person: the permission is to act as the
   agent's own login on that page.
+* **The other: its own connection, for its own screens.** While the test key is on, that
+  login may connect a provider as itself (a `user`-owned `Connection`, sealed to its
+  test key by `connections.services.owner_keyset`, the same connect as a person's) and
+  share it without a passkey (`PUT /api/connections/{id}/share`,
+  `may_share_own_connection`), with its own canopy credential, only when the statement
+  lends it to nobody: no agent, no computer, no endorser. At most it names canopy-web
+  (the "canopy-web can use this" switch), which is what a screen's `as: viewer` call
+  needs (`connections.call_service`). So a headless test signed in as an agent uses a
+  browser extension's or app's screens with its own provider login, exactly as a person
+  does. Anything broader needs a person's passkey, which the login has none of.
 * **It never** registers a passkey or steps up: the login has none, and both refuse it
   (`passkeys.stepup.require_a_person`).
-* **Turning it off** deletes the key and every conversation-key copy wrapped to it, and
-  stops every unexpired host grant the login holds (`host_grants.revoke`), so nothing
-  lingers (`disable`). A login cannot confirm a grant any other way, so every confirmed
+* **Turning it off** deletes the key and every conversation-key copy wrapped to it,
+  stops every unexpired host grant the login holds (`host_grants.revoke`) and
+  disconnects every connection the login owns (registered by `connections`, `on_disable`), so
+  nothing lingers (`disable`). A login cannot confirm a grant any other way, so every confirmed
   grant it holds came through the test key.
 
 Docs: `docs/architecture/vault.md` § An agent login's test vault key;
 `docs/architecture/access-confinement-and-act-as.md` § Acting as the person on a host site.
 """
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from django.db import transaction
 
@@ -155,10 +168,11 @@ def enable(agent: Agent) -> None:
 
 def disable(agent: Agent) -> int:
     """Turn it off: the login's vault key and every conversation-key copy wrapped to it
-    are deleted, and every unexpired host grant the login holds (confirmed or waiting)
-    is stopped, so nothing it was given outlives the switch. Returns the copies
-    deleted. Also clears any member wrap or endorsement a key of this login could have
-    reached, though none is ever written."""
+    are deleted, every unexpired host grant the login holds (confirmed or waiting) is
+    stopped, and every connection it owns is disconnected (revoked at the provider by
+    the sweep when canopy-web holds it), so nothing it was given outlives the switch.
+    Returns the copies deleted. Also clears any member wrap or endorsement a key of this
+    login could have reached, though none is ever written."""
     from apps.host_grants import host_grants  # noqa: PLC0415 — host_grants imports agents
     from apps.tokens.models import HostGrant  # noqa: PLC0415 — beside the host_grants import
 
@@ -174,7 +188,51 @@ def disable(agent: Agent) -> int:
             grants = host_grants.unexpired(HostGrant.objects.filter(user_id=agent.user_id))
             for grant in grants.order_by("pk"):
                 host_grants.revoke(grant)
+            for drop in _ON_DISABLE:
+                drop(agent.user)
     return n
+
+
+#: What else a login holds while its test key is on, each dropped by `disable` in its
+#: transaction: an app above this layer registers it (`on_disable`) from its `ready()`,
+#: as `connections` does to disconnect the login's own connections.
+_ON_DISABLE: list[Callable] = []
+
+
+def on_disable(drop: Callable) -> None:
+    """Register `drop(login)`, run by `disable` with the agent's login."""
+    if drop not in _ON_DISABLE:
+        _ON_DISABLE.append(drop)
+
+
+def may_share_own_connection(request, conn, statement) -> None:
+    """Raise `NotAPerson` unless `request` is an agent's own login, with its own
+    credential, whose agent's test vault key is on, sharing a connection it owns itself
+    with a statement that lends it to nobody (no agent, no computer, no endorser; it may
+    name canopy-web). What a person does with a passkey, narrowed to the one share a
+    test needs: the login's own account, for its own screens."""
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        raise NotAPerson(401, "not_signed_in", "sign in as the agent's own canopy login")
+    if is_person(user):
+        raise NotAPerson(403, "a_person", "a person shares a connection with their passkey")
+    agent = agent_of_login(user)
+    if agent is None or not agent.test_vault_key:
+        raise NotAPerson(403, "not_a_person",
+                         "sharing a connection is for a person; an agent's login may share only its own, "
+                         "while an admin of the agent has its agent test key on (agent Settings → Security "
+                         "→ Test vault key)")
+    kind = kinds.of_request(request)
+    if kind is None or kind.name not in OWN_CREDENTIALS or getattr(request, "host_grant_id", None):
+        raise NotAPerson(403, "not_own_credential",
+                         "share with the agent's own canopy login (its token or its own browser session)")
+    if conn.user_id != user.pk:
+        raise NotAPerson(404, "not_found", "no such connection")
+    st = statement if isinstance(statement, dict) else {}
+    if st.get("agents") or st.get("my_computers") or st.get("endorsers"):
+        raise NotAPerson(403, "share_too_broad",
+                         "an agent's test login shares its own connection with nobody: no agent, no "
+                         "computer, no endorser; it may only turn on \"canopy-web can use this\"")
 
 
 def _may_lend_to(agent, page_agent) -> bool:

@@ -446,10 +446,21 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
     `statement_missing_owner_agent`), that `expect` is what is stored (409
     `zk_value_changed`), that it is sealed only to the owner and allowed machines
     (422 `foreign_reader`) and that its writer MACs are the owner's (422
-    `bad_writer_sig`). From a browser this needs a fresh passkey check."""
+    `bad_writer_sig`). From a browser this needs a fresh passkey check. An agent's
+    own login, while its agent test key is on, shares only its own connection, lent to
+    nobody (it may name canopy-web), and with no passkey, from anywhere
+    (`login_test_key.may_share_own_connection`; 403 `not_a_person` /
+    `share_too_broad` otherwise)."""
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — beside the agents gates import
+
     conn = _visible(request, connection_id)
     # After the visibility check: someone who cannot see it gets 404, never a step-up prompt.
-    if stepup.is_browser(request):
+    if not login_test_key.is_person(request.user):
+        try:
+            login_test_key.may_share_own_connection(request, conn, payload.statement)
+        except login_test_key.NotAPerson as exc:
+            raise ProblemError(exc.status, "Not shared", detail=str(exc), members={"error": exc.code}) from exc
+    elif stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     try:
         conn = sharing.share(conn, user=request.user, **payload.model_dump())
