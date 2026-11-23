@@ -23,7 +23,7 @@ from apps.connections.models import Connection
 from apps.passkeys.models import UserVaultKeyset
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership
-from tests.fixtures.connections import ShareWorld, browser_share, sealed_to_owner, vault_key
+from tests.fixtures.connections import REVOKE_URL, FakeSF, ShareWorld, browser_share, sealed_to_owner, vault_key
 from tests.token_helpers import bearer_client
 
 pytestmark = pytest.mark.django_db
@@ -151,3 +151,15 @@ def test_turning_the_switch_off_disconnects_its_connections(w, key):
     assert left is None or left.state == Connection.REVOKING
     with pytest.raises(services.NotConnected):
         services.connection_for_person(w.login, "salesforce", workspace=w.ws.slug)
+
+
+def test_turning_the_switch_off_revokes_them_once_it_commits(w, key, django_capture_on_commit_callbacks):
+    """Not left `revoking` for the sweep: a row in that state refuses connecting the same account
+    again (`revoking`), which is exactly what a harness resetting its key does next."""
+    # As connect leaves it with "canopy-web can use this" on: canopy-web can open it, so it revokes it.
+    conn = sealed_to_owner({"user": w.login}, w.login, app=w.app, server_use=True)
+    assert _put(_browser(w.login), conn, _body(w, conn, canopy_web=server_key.thumbprint())).status_code == 200
+    with FakeSF() as sf, django_capture_on_commit_callbacks(execute=True):
+        login_test_key.disable(w.eva)
+    assert not Connection.objects.filter(pk=conn.pk).exists()
+    assert any(c[1] == REVOKE_URL for c in sf.calls), [c[:2] for c in sf.calls]  # ended at Salesforce
