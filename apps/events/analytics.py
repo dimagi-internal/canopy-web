@@ -18,6 +18,8 @@ from django.db.models import Case, Count, F, Max, Q, Sum, When
 from django.db.models.functions import Lower, TruncDate
 from django.utils import timezone
 
+from apps.workspaces.models import Workspace
+
 from . import activity
 from .models import Activity, SessionUsage
 
@@ -155,6 +157,13 @@ def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
                                              usage_field="user_id").items() if uid in emails),
                    key=_heaviest_first)
 
+    # Agents built here: every agent these workspaces own (`Agent.workspace`), and
+    # how many of them were created in the range. Read through the reverse relation,
+    # so this kit app does not import the agents app.
+    built = Workspace.objects.filter(slug__in=workspace_slugs).aggregate(
+        built=Count("agents", distinct=True),
+        new=Count("agents", filter=Q(agents__created_at__gte=since), distinct=True))
+
     surfaces = {row["surface"] or "other": row["n"] for row in (
         facts.filter(kind=activity.TURN_ENQUEUED).values("surface").annotate(n=Count("id")))}
     return {
@@ -167,6 +176,8 @@ def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
             "messages": facts.filter(kind=activity.CHAT_MESSAGE).count(),
             "active_users": people.values("actor").distinct().count(),
             "active_agents": facts.exclude(agent_slug="").values("agent_slug").distinct().count(),
+            "built_agents": built["built"] or 0,
+            "new_agents": built["new"] or 0,
             "active_repositories": facts.exclude(project="").values("project").distinct().count(),
             **_tokens(usage),
         },

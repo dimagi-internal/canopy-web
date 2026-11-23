@@ -41356,6 +41356,10 @@ export interface components {
             readonly active_users: number;
             /** Active Agents */
             readonly active_agents: number;
+            /** Built Agents */
+            readonly built_agents: number;
+            /** New Agents */
+            readonly new_agents: number;
             /** Active Repositories */
             readonly active_repositories: number;
             /** Input Tokens */

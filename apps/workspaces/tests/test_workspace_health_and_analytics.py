@@ -6,11 +6,13 @@ verdict, the analytics fact log — rather than keeping second opinions.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
+from django.utils import timezone
 
 from apps.agents.credentials.vault_health import vault_health
 from apps.agents.models import Agent, AgentCredential
@@ -569,3 +571,15 @@ def test_admin_user_ids_agrees_with_is_admin(tree):
     ids = agent.admin_user_ids()
     for u in (tree["ceo"], tree["staff"], tree["builder"], outsider):
         assert (u.pk in ids) == agent.is_admin(u), u.email
+
+
+def test_analytics_counts_the_agents_built_in_the_tree_and_the_new_ones(tree):
+    """Built agents: every agent the workspaces own, active or not; new: created in the range."""
+    Agent.objects.filter(slug="eva").update(created_at=timezone.now() - dt.timedelta(days=60))
+
+    body = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7").json()
+    assert (body["totals"]["built_agents"], body["totals"]["new_agents"]) == (2, 1)
+    assert body["totals"]["active_agents"] == 0  # built is not active: nothing ran
+
+    only_root = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=90&tree=false").json()
+    assert (only_root["totals"]["built_agents"], only_root["totals"]["new_agents"]) == (1, 1)
