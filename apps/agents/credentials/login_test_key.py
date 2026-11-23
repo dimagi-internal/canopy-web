@@ -5,13 +5,23 @@ An agent's own canopy login (`Agent.user`) is not a person
 agent's own SENSITIVE conversations, which are sealed to their people's vault keys
 (`apps/canopy_sessions/conversation_keys.py`). So, per agent and off by default:
 
-* **Who turns it on.** An admin of the agent, from a browser, behind a fresh passkey
-  step-up (`PUT /api/agents/{slug}/test-vault-key`, audited as a setting). A token
-  cannot turn it on. Anyone who may turn it on may turn it off, from anywhere.
-* **What it allows.** While it is on, that login may make ONE personal vault key, by
-  the passphrase path only (a `2skd` seal, optionally a recovery seal; never a passkey
-  seal) and without a step-up, since a login has no passkey (`check_keyset_write`).
-  Replacing it is refused: turn the flag off and on again.
+* **Who turns it on.** The agent's own login, for itself (`PUT /api/vault/test-key`,
+  `set_own`, with its own session, PAT or OAuth token: never a delegated, caller,
+  act-as, contact or runner token), or an admin of the agent from a browser behind a
+  passkey step-up (`PUT /api/agents/{slug}/test-vault-key`). Both are audited as a
+  setting. Anyone who may turn it on may turn it off, from anywhere; an admin's off is
+  the kill switch.
+* **Why no passkey for the login itself.** The key receives only copies of conversations
+  the agent is already IN, wrapped to it by a participant's browser, and the conversation's
+  people list marks it "agent test key": no reader is added that the conversation's people
+  did not add. Its connections are for provider logins its harness already holds. What
+  keeps an agent login from a person's powers is elsewhere and unchanged (below and
+  `passkeys.stepup.require_a_person`).
+* **What it allows.** While it is on, that login may make a personal vault key, by the
+  passphrase path only (a `2skd` seal, optionally a recovery seal; never a passkey seal)
+  and without a step-up, since a login has no passkey (`check_keyset_write`). A second key
+  is a `replace`: the old key's conversation copies, page permissions and connections are
+  dropped first (`drop_held`), so the new key starts with nothing.
 * **What the key may receive.** Only copies of conversation keys for sensitive
   conversations the login is itself IN (its creator or a participant,
   `conversation_keys.add_wrap`). Never a vault: it is not a vault member by any
@@ -49,7 +59,7 @@ agent's own SENSITIVE conversations, which are sealed to their people's vault ke
 * **Turning it off** deletes the key and every conversation-key copy wrapped to it,
   stops every unexpired host grant the login holds (`host_grants.revoke`) and
   disconnects every connection the login owns (registered by `connections`, `on_disable`), so
-  nothing lingers (`disable`). A login cannot confirm a grant any other way, so every confirmed
+  nothing lingers (`disable`, through `drop_held`). A login cannot confirm a grant any other way, so every confirmed
   grant it holds came through the test key.
 
 Docs: `docs/architecture/vault.md` § An agent login's test vault key;
@@ -126,23 +136,25 @@ def may_hold_vault_key(user_or_id) -> bool:
     return is_person(uid) or is_test_key_login(uid)
 
 
-def check_keyset_write(user, *, seals: list, exists: bool) -> None:
+def check_keyset_write(user, *, seals: list, exists: bool, replace: bool = False) -> None:
     """Whether `user` may write their own vault keyset (`zk.put_keyset`). A person:
-    always. An agent login: only while its agent's test vault key is on, a first key
-    only, and only passphrase (+ recovery) seals."""
+    always. An agent login: only while its agent's test vault key is on, and only
+    passphrase (+ recovery) seals; a second write must be a `replace`, which makes a
+    new key and drops what the old one held (`drop_held`, from `zk.put_keyset`)."""
     if is_person(user):
         return
     if not is_test_key_login(user):
         raise NotAPerson(403, "not_a_person",
-                         "an agent's login holds no vault key; an admin of the "
-                         "agent can turn on a test vault key for it (agent Settings → Test vault key)")
+                         "an agent's login holds no vault key until its test vault key is on "
+                         "(PUT /api/vault/test-key as the login, or agent Settings → Test vault key)")
     if any(isinstance(s, dict) and s.get("alg") == "prf" for s in seals):
         raise NotAPerson(422, "test_key_passphrase_only",
                          "an agent's test vault key is sealed with a passphrase only, never a passkey")
-    if exists:
+    if exists and not replace:
         raise NotAPerson(409, "test_key_exists",
-                         "this agent login already has a test vault key; an admin turns the test "
-                         "key off and on again to start over")
+                         "this agent login already has a test vault key; send replace: true to make a "
+                         "new one (the old key's conversation copies, page permissions and connections "
+                         "are dropped)")
 
 
 def state(agent: Agent) -> dict:
@@ -173,23 +185,32 @@ def disable(agent: Agent) -> int:
     the sweep when canopy-web holds it), so nothing it was given outlives the switch.
     Returns the copies deleted. Also clears any member wrap or endorsement a key of this
     login could have reached, though none is ever written."""
-    from apps.host_grants import host_grants  # noqa: PLC0415 — host_grants imports agents
-    from apps.tokens.models import HostGrant  # noqa: PLC0415 — beside the host_grants import
-
     n = 0
     with transaction.atomic():
         agent.test_vault_key = False
         agent.save(update_fields=["test_vault_key", "updated_at"])
         if agent.user_id is not None:
-            n = SessionKeyWrap.objects.filter(user_id=agent.user_id).delete()[0]
-            zk.forget_member_wraps(agent.user)
-            AgentVaultEndorsement.objects.filter(endorser_id=agent.user_id).delete()
+            n = drop_held(agent.user)
             UserVaultKeyset.objects.filter(user_id=agent.user_id).delete()
-            grants = host_grants.unexpired(HostGrant.objects.filter(user_id=agent.user_id))
-            for grant in grants.order_by("pk"):
-                host_grants.revoke(grant)
-            for drop in _ON_DISABLE:
-                drop(agent.user)
+    return n
+
+
+def drop_held(login) -> int:
+    """Everything a test key's login was given, gone: every conversation-key copy wrapped
+    to its key, any member wrap or endorsement (none is ever written), every unexpired host
+    grant it holds (confirmed or waiting), and every connection it owns (`on_disable`).
+    What turning the key off does, and what making a new key does to the old one, so a
+    new key starts with nothing. Returns the copies deleted. Run inside a transaction."""
+    from apps.host_grants import host_grants  # noqa: PLC0415 — host_grants imports agents
+    from apps.tokens.models import HostGrant  # noqa: PLC0415 — beside the host_grants import
+
+    n = SessionKeyWrap.objects.filter(user_id=login.pk).delete()[0]
+    zk.forget_member_wraps(login)
+    AgentVaultEndorsement.objects.filter(endorser_id=login.pk).delete()
+    for grant in host_grants.unexpired(HostGrant.objects.filter(user_id=login.pk)).order_by("pk"):
+        host_grants.revoke(grant)
+    for drop in _ON_DISABLE:
+        drop(login)
     return n
 
 
@@ -203,6 +224,37 @@ def on_disable(drop: Callable) -> None:
     """Register `drop(login)`, run by `disable` with the agent's login."""
     if drop not in _ON_DISABLE:
         _ON_DISABLE.append(drop)
+
+
+def own_agent(request) -> Agent:
+    """The agent whose own login `request` is, with its own credential (a session, PAT
+    or OAuth token: never a delegated panel token, a caller's, act-as, a contact's or a
+    runner's, nor a request carrying a host grant). `NotAPerson` otherwise."""
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        raise NotAPerson(401, "not_signed_in", "sign in as the agent's own canopy login")
+    if is_person(user):
+        raise NotAPerson(403, "a_person", "a person holds a vault key of their own, not an agent test key")
+    agent = agent_of_login(user)
+    if agent is None:
+        raise NotAPerson(403, "not_an_agent_login", "only an agent's own canopy login may use this route")
+    kind = kinds.of_request(request)
+    if kind is None or kind.name not in OWN_CREDENTIALS or getattr(request, "host_grant_id", None):
+        raise NotAPerson(403, "not_own_credential",
+                         "use the agent's own canopy login (its token or its own browser session)")
+    return agent
+
+
+def set_own(request, enabled: bool) -> Agent:
+    """The agent's own login turns its own test vault key on or off (`own_agent`). No
+    passkey: the key receives nothing its agent isn't already given (see the module
+    docstring), and turning it off only takes away."""
+    agent = own_agent(request)
+    if enabled:
+        enable(agent)
+    else:
+        disable(agent)
+    return agent
 
 
 def may_share_own_connection(request, conn, statement) -> None:
