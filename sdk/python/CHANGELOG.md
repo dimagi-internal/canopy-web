@@ -2,6 +2,18 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.39.0 — 2026-11-23
+
+**The site agents response has its own size cap.**
+
+- `contract.MAX_SITE_AGENTS_BYTES = 64 * 1024` (the most `canopy_sdk.fetch` reads at all).
+  `verify_site_agents` checks canopy's signed answer against it instead of `MAX_JWT_BYTES`.
+  That answer has one entry per agent allowed on the site, and six agents outgrew 8 KB: a host
+  then refused it as `malformed` ("not a compact JWS of acceptable size") and, once its cached
+  copy expired, showed no agent at all.
+- `jose.unverified_header(..., max_bytes=)` takes the cap; it defaults to `MAX_JWT_BYTES`, so
+  visitor assertions, ID-JAGs, DPoP proofs and every other token keep the 8 KB cap.
+
 ## 0.38.0 — 2026-11-23
 
 **A relay site declares its reply webhook in its signed `site.json`.**
