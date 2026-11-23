@@ -74,3 +74,19 @@ def test_a_claude_session_key_names_its_transcript(tmp_path):
     assert transcript_for_key("claude:abc-123", claude_home=projects) == projects / "-x-hal" / "abc-123.jsonl"
     assert transcript_for_key("emdash-task", claude_home=projects) is None
     assert transcript_for_key("claude:../etc", claude_home=projects) is None
+
+
+def test_a_sessions_subagents_count_as_its_own_spend(tmp_path):
+    projects = tmp_path / ".claude" / "projects"
+    main = projects / "-x-hal" / "s1.jsonl"
+    _write(main, [{"type": "user", "cwd": "/x/hal", "message": {"content": "go"}},
+                  _assistant("m1", "2026-10-01", 10)])
+    _write(projects / "-x-hal" / "s1" / "subagents" / "agent-a.jsonl", [_assistant("m2", "2026-10-01", 30)])
+    reports, seen = scan_usage(projects, home=tmp_path, repos={"hal"})
+    assert [r["claude_session"] for r in reports] == ["s1"]  # one session, not two
+    assert [(d["output_tokens"], d["messages"]) for d in reports[0]["days"]] == [(40, 2)]
+    assert scan_usage(projects, home=tmp_path, repos={"hal"}, seen=seen)[0] == []
+    # A new subagent re-sends the WHOLE session (the server replaces what it held).
+    _write(projects / "-x-hal" / "s1" / "subagents" / "agent-b.jsonl", [_assistant("m3", "2026-10-02", 5)])
+    reports, _ = scan_usage(projects, home=tmp_path, repos={"hal"}, seen=seen)
+    assert [(d["day"], d["output_tokens"]) for d in reports[0]["days"]] == [("2026-10-01", 40), ("2026-10-02", 5)]

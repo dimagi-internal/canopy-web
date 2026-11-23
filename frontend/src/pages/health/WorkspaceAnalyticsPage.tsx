@@ -60,12 +60,13 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         <Stat label="Chats opened" value={compact(t.sessions)} />
         <Stat label="Messages sent" value={compact(t.messages)} />
         <Stat label="Active people" value={compact(t.active_users)} />
-        <Stat label="Active agents" value={compact(t.active_agents)} />
+        <Stat label="Active agents" value={compact(t.active_agents)} hint="ran a turn in range" />
+        <Stat label="Built agents" value={compact(t.built_agents)} hint={`${compact(t.new_agents)} new in ${a.days} days`} />
         <Stat label="Active repositories" value={compact(t.active_repositories)} hint="work no agent ran" />
-        <Stat label="Tokens read from cache" value={compact(t.cache_read_tokens)}
-              hint={`${compact(t.cache_creation_tokens)} written to cache`} />
         <Stat label="Input · output tokens" value={`${compact(t.input_tokens)} · ${compact(t.output_tokens)}`}
-              hint={t.sessions_with_usage ? `from ${compact(t.sessions_with_usage)} sessions` : 'none reported yet'} />
+              hint={t.sessions_with_usage
+                ? `from ${compact(t.sessions_with_usage)} sessions · input excludes cached context`
+                : 'none reported yet'} />
       </section>
 
       <section aria-label="Over time" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -78,8 +79,6 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         ]} />
         <DailyBars title="Messages sent" days={days} layers={[{ key: 'messages', label: 'Messages', className: 'fill-primary' }]} />
         <DailyBars title="Active people" days={days} rangeTotal={t.active_users} layers={[{ key: 'active_users', label: 'People', className: 'fill-primary' }]} />
-        <DailyBars title="Tokens read from cache" days={days} format={compact}
-                   layers={[{ key: 'cache_read_tokens', label: 'From cache', className: 'fill-primary' }]} />
         <DailyBars title="Input and output tokens" days={days} format={compact} layers={[
           { key: 'input_tokens', label: 'Input', className: 'fill-primary' },
           { key: 'output_tokens', label: 'Output', className: 'fill-muted-foreground' },
