@@ -6019,6 +6019,8 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
                 _record_outcome(label, "dead", detail=_fault_line(text, _is_auth_required))
             _log(f"turn {turn_id[:8]}: {label} is not signed in")
             _notify_auth_required(label, turn_id)
+        _lifecycle(turn_id, "credential_failover", skipped=label,
+                   reason="no_credit" if broke else "capped" if label in capped_labels else "dead")
         if not _advance_claude_credential(turn_id=turn_id):
             # Before giving up: re-read the bundle. An operator who just ran
             # `canopy runner credential` to rescue a stuck box should not also
@@ -12763,6 +12765,37 @@ def _forked_chat_transcript(session_key: str) -> pathlib.Path | None:
     return found[0] if found else None
 
 
+#: The CLI's own `error` on a transcript record that a credential refused: a usage
+#: cap, a dead login, no credit. This box fails the turn over to its next credential
+#: on these (`execute_prompt`), or ends it with its own "[runner]" note when none is left.
+CREDENTIAL_REFUSAL_ERRORS = frozenset({"rate_limit", "authentication_failed", "billing_error"})
+
+
+def _is_credential_refusal(row) -> bool:
+    """A transcript row that is a Claude credential refusing the turn ("You've hit your
+    weekly limit · resets 9pm"), not anything the agent said."""
+    if not isinstance(row, dict) or row.get("role") != "assistant":
+        return False
+    content = row.get("content") if isinstance(row.get("content"), dict) else {}
+    if not content.get("api_error"):
+        return False
+    if content.get("api_error") in CREDENTIAL_REFUSAL_ERRORS or content.get("signed_out"):
+        return True
+    text = str(row.get("text") or "").strip()
+    return (0 < len(text) <= CREDENTIAL_NOTICE_MAX_CHARS
+            and (_is_usage_cap(text) or _is_auth_required(text) or _is_out_of_credit(text)))
+
+
+def _without_credential_refusals(rows: list) -> list:
+    """`rows` without a refusing credential's own line. That attempt's words are the
+    credential's, not the conversation's: the turn fails over and the next credential
+    answers, so its line is never stored, fanned out or relayed (Slack, email and the
+    panel all read the stored rows). The turn's ledger keeps the failover
+    (`credential_failover`), and a turn that ends with no credential left says so in
+    its own "[runner]" note."""
+    return [r for r in rows if not _is_credential_refusal(r)]
+
+
 def _post_stream_rows(runner_id: str, session_id: str, rows: list,
                       transcript_id: str = "") -> bool:
     """Ship conversational rows as live events. `seq == index` (the composite
@@ -12771,6 +12804,9 @@ def _post_stream_rows(runner_id: str, session_id: str, rows: list,
     ct = _transcript_core()
     if ct is None:
         return False
+    rows = _without_credential_refusals(rows)
+    if not rows:
+        return True
     events = [ct.stream_event(r) for r in rows]
     # Chunked: a first-sight ship now carries a session's whole history, which on
     # the longest transcripts blows past the server's 2.5 MB request ceiling and
@@ -12915,7 +12951,8 @@ def _drain_backfills(runner_id: str) -> None:
         if not (sid and path):
             continue  # unresolvable -> leave the request standing, server keeps the tail
         try:
-            messages = ct.conversational_messages(ct.read_records(path), -1)
+            messages = _without_credential_refusals(
+                ct.conversational_messages(ct.read_records(path), -1))
             # Chunked, and only the LAST chunk is `final` — an earlier one would
             # retire the request while the rest was still in flight, stranding a
             # permanently partial history behind a cleared flag.
