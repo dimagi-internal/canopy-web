@@ -919,6 +919,16 @@ def test_app_features_says_when_start_session_turns_on(tmp_path):
     assert "start_session ON" in line and "#1238" in line and "idle timeout 900s" in line
 
 
+def test_app_features_reads_a_newer_cache_format_version(tmp_path):
+    # Claude 6.28899 writes version byte 3 with the same body; acedimagi's gate line
+    # read "unknown" while its start_session gate was on.
+    p = _write_fcache(tmp_path / "fcache", {desktop.GATE_START_SESSION: {"value": True, "on": True}})
+    raw = bytearray(p.read_bytes())
+    raw[desktop.FCACHE_VERSION_AT] = 3
+    p.write_bytes(bytes(raw))
+    assert desktop.app_features(p)["start_session"] is True
+
+
 def test_app_features_missing_gates_are_unknown_not_off(tmp_path):
     f = desktop.app_features(_write_fcache(tmp_path / "fcache", {}))
     assert f["start_session"] is None and f["idle_timeout"] is None

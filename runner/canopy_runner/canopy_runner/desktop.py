@@ -667,7 +667,12 @@ def ensure_app() -> bool:
 # Reading it is what turns rechecking the gates from unpacking the app bundle and
 # probing from a mod into one `canopy-runner runtime`.
 
+# "CLF", a format-version byte, then four fixed bytes. The version moves with the
+# app (2 until late 2026, 3 on Claude 6.28899) while the gzip body after it keeps
+# its shape, so the version byte is not compared: pinning it made the gate line
+# read "unknown" on every account the moment the app bumped it.
 FCACHE_MAGIC = bytes([67, 76, 70, 2, 0, 154, 183, 226])
+FCACHE_VERSION_AT = 3
 GATE_START_SESSION = "2371478310"
 GATE_IDLE_TIMEOUT = "4041267332"
 
@@ -685,7 +690,9 @@ def app_features(path: Path | None = None) -> dict | None:
 
     try:
         raw = (path or fcache_path()).read_bytes()
-        if not raw.startswith(FCACHE_MAGIC):
+        head, magic = raw[:len(FCACHE_MAGIC)], FCACHE_MAGIC
+        if (len(head) < len(magic) or head[:FCACHE_VERSION_AT] != magic[:FCACHE_VERSION_AT]
+                or head[FCACHE_VERSION_AT + 1:] != magic[FCACHE_VERSION_AT + 1:]):
             return None
         data = json.loads(gzip.decompress(raw[len(FCACHE_MAGIC):]))
         features = data.get("features") or {}
