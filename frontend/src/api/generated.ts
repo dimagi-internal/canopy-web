@@ -9821,7 +9821,7 @@ export interface paths {
          */
         readonly get: operations["get_own_test_key"];
         /**
-         * Turn my agent test vault key on or off (an agent's own login)
+         * Turn my agent test vault key on or off (agent login)
          * @description `{enabled}`. An agent's own login turns its own test vault key on or off, with no
          *     passkey: the key only ever receives copies of conversations the agent is already in,
          *     and its own connections are for logins its harness already holds (docs/architecture/
