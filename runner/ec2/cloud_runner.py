@@ -13232,8 +13232,17 @@ _MAIL_RULE = re.compile(r"^(?:canopy\s+email\s|(?:\./)?bin/[A-Za-z0-9_-]+-email(
 _CONFINED_EXTRA_DENY = frozenset({*_GITHUB_ENV_KEYS, "CANOPY_CHAT_KEY"})
 
 
+#: A bash rule of canopy's `doc_comment` profile (apps/agents/published_profiles.py
+#: `doc_comment_profile`): gog reading one Doc or replying on its comments, as the
+#: agent's own Google account. The same keyring as mail, so the same gate.
+_DOC_RULE = re.compile(r"^gog\s+(?:docs\s+cat|drive\s+comments\s+(?:list|reply))\s")
+
+
 def _profile_uses_mail(cap: dict) -> bool:
-    return any(_MAIL_RULE.match(str(rule).strip()) for rule in (cap.get("bash") or []))
+    """Whether the profile's own bash allowlist runs the agent's Google account: the mail
+    path, or a Docs-comment profile's gog rules."""
+    return any(_MAIL_RULE.match(str(rule).strip()) or _DOC_RULE.match(str(rule).strip())
+               for rule in (cap.get("bash") or []))
 
 
 def _confined_env(slug: str | None, cap: dict, extra: dict) -> dict:
