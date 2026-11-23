@@ -32063,6 +32063,11 @@ export interface components {
              * @default
              */
             readonly page_model: string;
+            /**
+             * Page Guidance
+             * @default
+             */
+            readonly page_guidance: string;
         };
         /**
          * AgentLoginRequestOut
@@ -33232,6 +33237,11 @@ export interface components {
              * @default
              */
             readonly page_model: string;
+            /**
+             * Page Guidance
+             * @default
+             */
+            readonly page_guidance: string;
         };
         /** AgentHostSiteIn */
         readonly AgentHostSiteIn: {
@@ -33266,6 +33276,8 @@ export interface components {
             readonly page_lean?: boolean | null;
             /** Page Model */
             readonly page_model?: string | null;
+            /** Page Guidance */
+            readonly page_guidance?: string | null;
         };
         /** AgentAppEntriesOut */
         readonly AgentAppEntriesOut: {

@@ -177,9 +177,14 @@ def test_the_brief_is_the_page_and_the_sites_tools_as_the_person(w, host):
     assert [(c.turn_id, c.scope) for c in seen] == [(str(w["owner_turn"].pk), grant.scope)]
     assert out["refused"] == "" and out["site"] == "connect-labs" and out["tools"] == 2
     assert "labs-run://kmc/1" in out["text"] and "marketplace_orgs_get" in out["text"]
-    # The page's own backing tool keeps its whole description; another gets one line.
-    assert "x" * 400 in out["text"] and "y" * 400 not in out["text"]
-    assert '"required":["sql"]' in out["text"] and "which org" not in out["text"]
+    # Every tool keeps its whole description and its arguments' own descriptions: that is
+    # where a site says what format an argument takes.
+    assert "x" * 400 in out["text"] and "y" * 400 in out["text"]
+    assert '"required":["sql"]' in out["text"] and "which org" in out["text"]
+    # The page's own backing tool comes first.
+    assert out["text"].index("marketplace_orgs_get:") < out["text"].index("data_query:")
+    # And how to call them from this page: its scope and its ids, as given.
+    assert page_brief.SCOPE_RULE in out["text"] and "filters.drilled" in out["text"]
     # A long selection is cut, and says so.
     assert "id-39" in out["text"] and "id-40\"" not in out["text"] and "visible_ids_total" in out["text"]
     assert host.calls == []
@@ -326,3 +331,48 @@ def test_an_agent_the_site_does_not_offer_is_not_found(w, client):
     assert r.status_code == 404
     assert client.post("/api/embed/prepare", {"agent_slug": "ace"},
                        content_type="application/json").status_code in (401, 403, 404)
+
+
+
+def test_a_long_tool_list_shortens_tool_descriptions_never_argument_formats():
+    tools = [{"name": f"t{n}", "description": "Does a thing. " + "z" * 5000,
+              "input_schema": {"type": "object", "properties": {
+                  "worker_keys": {"type": "array", "description": "<opportunity_id>::<username>"}}}}
+             for n in range(30)]
+    lines = page_brief.tools_text(tools, backing="t7")
+    text = "\n".join(lines)
+    assert lines[0].startswith("- t7:") and "z" * 5000 in lines[0]  # the backing tool, whole
+    assert text.count("<opportunity_id>::<username>") >= 20
+    assert "z" * 5000 not in "\n".join(lines[1:])
+
+
+def test_the_agents_own_page_guidance_rides_the_brief(w, host):
+    from apps.host_grants import host_gateway
+
+    declare(w["agent"], {"connect": {**LEAN["connect"],
+                                     "page_guidance": "Call every workflow tool with the page's scope."}})
+    with mock.patch.object(host_gateway, "resolve", side_effect=host_gateway.GatewayRefusal("no", "no grant")):
+        out = page_brief.build(Turn.objects.get(pk=w["owner_turn"].pk))
+    assert '<agent_guidance for="connect-labs">' in out["text"]
+    assert "Call every workflow tool with the page's scope." in out["text"]
+
+
+def test_page_guidance_is_short_text_with_sites():
+    with pytest.raises(InterfaceError, match="at most 4000"):
+        parse({"capabilities": {"x": {"sites": ["s"], "page_guidance": "a" * 4001}}})
+    with pytest.raises(InterfaceError, match="needs `sites:`"):
+        parse({"capabilities": {"x": {"page_guidance": "hi"}}})
+    out = parse({"capabilities": {"x": {"sites": ["s"], "page_guidance": "  hi  "}}})["capabilities"]["x"]
+    assert out["page_guidance"] == "hi"
+    assert "page_guidance" not in parse({"capabilities": {"x": {"sites": ["s"]}}})["capabilities"]["x"]
+
+
+def test_the_settings_write_and_clear_page_guidance(w):
+    profile_settings.set_site(w["agent"], "connect-labs", {"page_guidance": "Use visible_ids."}, by=w["owner"])
+    w["agent"].refresh_from_db()
+    row = next(r for r in profile_settings.host_sites_of(w["agent"]) if r["site"] == "connect-labs")
+    assert row["page_guidance"] == "Use visible_ids."
+    profile_settings.set_site(w["agent"], "connect-labs", {"page_guidance": ""}, by=w["owner"])
+    w["agent"].refresh_from_db()
+    row = next(r for r in profile_settings.host_sites_of(w["agent"]) if r["site"] == "connect-labs")
+    assert row["page_guidance"] == ""

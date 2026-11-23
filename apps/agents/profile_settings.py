@@ -47,6 +47,7 @@ def new_site_defaults() -> dict:
         "surface": "",
         "page_lean": False,
         "page_model": "",
+        "page_guidance": "",
     }
 
 
@@ -78,7 +79,8 @@ def _row(name: str, entry: dict, site: str) -> dict:
             "contact_scoped": entry.get("contact_scoped") is True,
             "surface": entry.get("surface") or "",
             "page_lean": entry.get("page_lean") is True,
-            "page_model": str(entry.get("page_model") or "")}
+            "page_model": str(entry.get("page_model") or ""),
+            "page_guidance": str(entry.get("page_guidance") or "")}
 
 
 def host_sites_of(agent) -> list[dict]:
@@ -251,6 +253,8 @@ def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
             entry["page_lean"] = True
         if merged.get("page_model"):
             entry["page_model"] = merged["page_model"]
+        if (merged.get("page_guidance") or "").strip():
+            entry["page_guidance"] = merged["page_guidance"]
         caps[name] = _validated(name, entry)
     return _edit(agent, change, by=by, dry_run=dry_run)
 
