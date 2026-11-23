@@ -19,6 +19,8 @@ export function rhythmLabel(rec: Recurrence, long = false): string {
   switch (rec.every) {
     case 'day':
       return long ? 'every day' : 'Daily'
+    case 'weekdays':
+      return long ? 'every weekday' : 'Weekdays'
     case 'week':
       return day ? `${long ? 'every' : 'Every'} ${day}` : long ? 'every week' : 'Weekly'
     case '2weeks':

@@ -7,7 +7,8 @@ same period returns the first, and moving an instance's `due` changes neither. `
 is the tick (`AgentsConfig.ready`): each `auto` template gets its current period's instance
 once that period has begun, in the workspace's timezone (`TaskSettings.timezone`).
 
-A period begins: every day (`day`), on Monday (`week`, and `2weeks` on alternate Mondays
+A period begins: every day (`day`), every Monday to Friday (`weekdays`: the tick skips Saturday
+and Sunday, a spawn by hand may still make one), on Monday (`week`, and `2weeks` on alternate Mondays
 counted from the template's first instance, else from the week it was made), on the 1st
 (`month`). `as_needed` has no rhythm: it is spawned by hand, one instance per date, and
 never by the tick. A template made part-way through a period gets its first automatic
@@ -30,8 +31,8 @@ from .tasks import _refuse_outsiders
 
 logger = logging.getLogger(__name__)
 
-DAY, WEEK, TWO_WEEKS, MONTH, AS_NEEDED = "day", "week", "2weeks", "month", "as_needed"
-EVERY = (DAY, WEEK, TWO_WEEKS, MONTH, AS_NEEDED)
+DAY, WEEKDAYS_ONLY, WEEK, TWO_WEEKS, MONTH, AS_NEEDED = "day", "weekdays", "week", "2weeks", "month", "as_needed"
+EVERY = (DAY, WEEKDAYS_ONLY, WEEK, TWO_WEEKS, MONTH, AS_NEEDED)
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
@@ -104,7 +105,7 @@ def period_of(template: AgentTask, day: dt.date, *, anchor: dt.date | None = Non
         return monday - dt.timedelta(weeks=((monday - base).days // 7) % 2)
     if every == MONTH:
         return day.replace(day=1)
-    return day  # day, as_needed
+    return day  # day, weekdays, as_needed
 
 
 def due_in(template: AgentTask, period: dt.date) -> dt.date:
@@ -188,6 +189,8 @@ def _due_now(template: AgentTask, now: dt.datetime) -> dt.date | None:
     anchor = None
     if template.recurrence["every"] == TWO_WEEKS:
         anchor = _anchor(template) or _created_monday(template, tz)
+    if template.recurrence["every"] == WEEKDAYS_ONLY and today.weekday() >= 5:
+        return None  # Saturday and Sunday have no instance of a weekdays task
     period = period_of(template, today, anchor=anchor)
     if period < timezone.localtime(template.created_at, tz).date():
         return None
