@@ -10,6 +10,7 @@ describe('rhythmLabel', () => {
     [{ every: 'week', auto: false }, 'Weekly', 'every week'],
     [{ every: '2weeks', weekday: 'sun', auto: true }, 'Every other Sun', 'every other Sunday'],
     [{ every: 'day', auto: false }, 'Daily', 'every day'],
+    [{ every: 'weekdays', auto: true }, 'Weekdays', 'every weekday'],
     [{ every: 'month', auto: true }, 'Monthly', 'every month'],
     [{ every: 'as_needed', auto: false }, 'As needed', 'as needed'],
   ] as const)('%o reads %s', (rec, chip, sentence) => {

@@ -28421,7 +28421,7 @@ export interface components {
              * Every
              * @enum {string}
              */
-            readonly every: "day" | "week" | "2weeks" | "month" | "as_needed";
+            readonly every: "day" | "weekdays" | "week" | "2weeks" | "month" | "as_needed";
             /** Weekday */
             readonly weekday?: ("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun") | null;
             /**
