@@ -46214,6 +46214,11 @@ export interface components {
              * @default 0
              */
             readonly isolated: number;
+            /**
+             * Stored Projects
+             * @default 0
+             */
+            readonly stored_projects: number;
             /** Clis */
             readonly clis?: {
                 readonly [key: string]: unknown;

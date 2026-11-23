@@ -530,7 +530,8 @@ def heartbeat(
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
-    envelope: int = 0, midturn: int = 0, isolated: int = 0, agents_unprepared: list[str] | None = None,
+    envelope: int = 0, midturn: int = 0, isolated: int = 0, stored_projects: int = 0,
+    agents_unprepared: list[str] | None = None,
     data_mode: str = "", data_mode_hash: str = "", claude_model: str = "",
     clis: dict | None = None,
 ) -> Runner:
@@ -642,6 +643,13 @@ def heartbeat(
     # handed one.
     if int(runner.capabilities.get("isolated") or 0) != int(isolated or 0):
         runner.capabilities = {**runner.capabilities, "isolated": int(isolated or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # Whether this runner's CODE makes a stored agent's checkout its emdash project, so a
+    # laptop may be handed that agent's confined turns (`clis.laptop_cannot_confine_stored`).
+    # Reported, same contract as `isolated`: absent = 0.
+    if int(runner.capabilities.get("stored_projects") or 0) != int(stored_projects or 0):
+        runner.capabilities = {**runner.capabilities, "stored_projects": int(stored_projects or 0)}
         if "capabilities" not in fields:
             fields.append("capabilities")
     # Which agent CLIs the box has (`harness.clis`). A level, like `envelope`:

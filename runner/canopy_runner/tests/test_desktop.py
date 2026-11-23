@@ -988,9 +988,18 @@ def test_a_stored_agents_new_thread_on_an_emdash_box_runs_headless(cfg, monkeypa
 def test_a_stored_agent_on_an_emdash_box_without_the_adapter_is_left_to_say_why(cfg, monkeypatch):
     monkeypatch.setattr(desktop, "_adapter_missing", lambda: True)
     assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
-    from canopy_runner.execute import _stored_on_emdash
-    assert "stored agent" in _stored_on_emdash(_stored_turn())
-    assert _stored_on_emdash(_turn(agent_slug="hal")) == ""
+    from canopy_runner.execute import _stored_project
+    assert "ACP adapter" in _stored_project(cfg, _stored_turn())
+    assert _stored_project(cfg, _turn(agent_slug="hal")) == ""
+
+
+def test_a_stored_agents_new_thread_on_a_box_with_emdash_goes_to_emdash(cfg, tmp_path, monkeypatch):
+    """With emdash here the checkout is the agent's emdash project, so nothing runs headless."""
+    db = tmp_path / "emdash.db"
+    db.write_text("")
+    cfg.emdash_db = str(db)
+    monkeypatch.setattr(desktop, "_adapter_missing", lambda: False)
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
 
 
 def test_a_stored_agent_without_the_adapter_starts_installing_it(cfg, monkeypatch):
@@ -1019,11 +1028,12 @@ def test_an_emdash_box_installs_the_adapter_once_on_its_first_heartbeat(monkeypa
     assert seen == ["adapter"]
 
 
-def test_a_stored_agents_confined_turn_says_where_it_can_run(cfg, monkeypatch):
+def test_a_stored_agents_confined_turn_goes_to_emdash(cfg, monkeypatch):
     monkeypatch.setattr(desktop.caller, "confined_profile", lambda turn: {"name": "read"})
     assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
-    from canopy_runner.execute import _stored_on_emdash
-    assert "cloud runner" in _stored_on_emdash(_stored_turn())
+    from canopy_runner.execute import _stored_project
+    # Without emdash on the box it says so: a confined turn never runs headless.
+    assert "only through emdash" in _stored_project(cfg, _stored_turn())
 
 
 def test_a_stored_agent_that_cannot_be_fetched_fails_its_turn_with_the_reason(cfg, monkeypatch):

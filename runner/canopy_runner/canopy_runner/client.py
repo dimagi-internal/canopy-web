@@ -236,6 +236,10 @@ class Client:
         # Delivers a follow-up into a running chat turn.
         from .chat_bridge import MIDTURN_VERSION
         body["midturn"] = MIDTURN_VERSION
+        # Makes a stored agent's checkout its emdash project, so it may be handed the
+        # agent's confined turns (`stored_agents.ensure_emdash_project`).
+        from .stored_agents import STORED_PROJECTS_VERSION
+        body["stored_projects"] = STORED_PROJECTS_VERSION
         # The model this box's sessions start on (`claude_model.configured`), so
         # the chat can size a session's context window. Every beat, absent = "".
         from . import claude_model
