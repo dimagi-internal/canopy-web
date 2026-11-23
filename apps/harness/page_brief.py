@@ -24,8 +24,10 @@ from asgiref.sync import async_to_sync
 MAX_VISIBLE_IDS = 40
 #: The longest one-line description a non-backing tool keeps.
 SHORT_DESCRIPTION = 240
-#: Above this the brief stops adding tools (the agent can still call `site_tools`).
-MAX_BRIEF_CHARS = 40_000
+#: Above this the tools' own descriptions are shortened (never their argument descriptions),
+#: and past it the rest are only counted (the agent can still call `site_tools`). About 20k
+#: tokens: Connect Labs' run pages list ~20 tools in about 50k characters.
+MAX_BRIEF_CHARS = 80_000
 
 
 def _page_state(session) -> dict:
@@ -49,14 +51,16 @@ def _one_line(text: str) -> str:
 
 
 def _compact_schema(schema) -> dict:
-    """The schema's properties and required list, descriptions dropped: enough to call."""
+    """The schema's properties and required list, with each property's own description
+    kept: that is where a site states an argument's format (`worker_keys` is
+    `<opportunity_id>::<username>`), and a call made without it is a guess. Only titles,
+    examples and defaults are dropped."""
     if not isinstance(schema, dict):
         return {}
 
     def strip(node):
         if isinstance(node, dict):
-            return {k: strip(v) for k, v in node.items()
-                    if k not in ("description", "title", "examples", "default")}
+            return {k: strip(v) for k, v in node.items() if k not in ("title", "examples", "default")}
         if isinstance(node, list):
             return [strip(v) for v in node]
         return node
@@ -67,24 +71,47 @@ def _compact_schema(schema) -> dict:
     return out
 
 
+def _tool_line(t: dict, *, short: bool) -> str:
+    desc = " ".join(str(t.get("description") or "").split())
+    desc = _one_line(desc) if short else desc
+    schema = json.dumps(_compact_schema(t.get("input_schema")), separators=(",", ":"))
+    return f"- {t.get('name')}: {desc} input: {schema}"
+
+
 def tools_text(tools: list[dict], *, backing: str = "") -> list[str]:
-    """One line per tool: its name, a one-line description (the whole description for
-    the page's own backing tool) and its compact input schema."""
-    lines = []
-    size = 0
-    for t in tools:
-        name = str(t.get("name") or "")
-        if not name:
-            continue
-        full = name == backing
-        desc = " ".join(str(t.get("description") or "").split()) if full else _one_line(t.get("description"))
-        line = f"- {name}: {desc} input: {json.dumps(_compact_schema(t.get('input_schema')), separators=(',', ':'))}"
+    """One entry per tool: its name, its whole description and its input schema with the
+    property descriptions. Only when the whole list would pass `MAX_BRIEF_CHARS` do the
+    tools after the page's own backing tool get one-line descriptions, and past it the
+    rest are only counted (the agent can still call `site_tools`)."""
+    named = [t for t in tools if str(t.get("name") or "")]
+    # The page's own backing tool first: it is the one the page is about.
+    named.sort(key=lambda t: 0 if t.get("name") == backing else 1)
+    full = [_tool_line(t, short=False) for t in named]
+    if sum(len(line) for line in full) <= MAX_BRIEF_CHARS:
+        return full
+    lines, size = [], 0
+    for i, t in enumerate(named):
+        line = full[i] if t.get("name") == backing else _tool_line(t, short=True)
         size += len(line)
         if size > MAX_BRIEF_CHARS:
-            lines.append(f"- … {len(tools) - len(lines)} more: call site_tools for the full list")
+            lines.append(f"- … {len(named) - len(lines)} more: call site_tools for the full list")
             break
         lines.append(line)
     return lines
+
+
+#: How to call a site's tools from its page, for every site: the page's own scope and ids,
+#: as given. A tool asked for a wider or a different scope than the page shows refuses
+#: (the site keeps an agent to what the person is looking at), and an id rebuilt from a
+#: fragment of one is a guess.
+SCOPE_RULE = (
+    "Call the site's tools with exactly the scope the page's `filters` give (for example its "
+    "run, and its program OR its opportunity, whichever the page names), not a wider or a "
+    "narrower one of your own. When the question is about \"this\" or \"these\", use the ids "
+    "the page gives, as given: `filters.drilled` and `visible_ids` are already in the format the "
+    "tools take, so pass them unchanged rather than taking them apart. If a tool refuses, read "
+    "its error, fix the call it points to, and say what you could not read rather than guessing "
+    "at an answer.")
 
 
 def build(turn) -> dict:
@@ -107,6 +134,9 @@ def build(turn) -> dict:
         scope = ctx.scope
     except host_gateway.GatewayRefusal as exc:
         refused = exc.message
+    from apps.agents import published_profiles as pp  # noqa: PLC0415 — as above
+
+    guidance = pp.page_guidance_of(turn.acting_agent, site)
     parts = [
         f"<page_context site=\"{site}\">",
         f"You are answering in the agent panel on a {site} page, for the person who sends the "
@@ -117,7 +147,13 @@ def build(turn) -> dict:
         "",
         "The page (current_page):",
         json.dumps(state, separators=(",", ":"), default=str),
+        "",
+        SCOPE_RULE,
     ]
+    if guidance:
+        # The agent's own words for this site's pages (`page_guidance:` on its entry), in
+        # place of the CLAUDE.md and skills a lean turn does not load.
+        parts += ["", f"<agent_guidance for=\"{site}\">", guidance, "</agent_guidance>"]
     if refused:
         parts += ["", f"{site}'s tools could not be listed for them yet: {refused}"]
     else:

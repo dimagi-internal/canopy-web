@@ -239,7 +239,7 @@ def parse(doc) -> dict:
             continue
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
                           "write_paths", "input", "sites", "ceiling", "own_login", "data",
-                          "contact_scoped", "surface", "page_lean", "page_model"}
+                          "contact_scoped", "surface", "page_lean", "page_model", "page_guidance"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         entry = cap.get("entry")
@@ -374,13 +374,19 @@ _CREDENTIAL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
 _MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}$")
 
 
+#: The longest `page_guidance:` an entry may carry: a few KB, read on every lean page turn.
+PAGE_GUIDANCE_MAX = 4000
+
+
 def _page_turn_settings(cap: dict, name: str, sites: list[str]) -> dict:
     """`page_lean:` and `page_model:` — how a turn held on one of the entry's sites' pages
     runs, for everyone there (the owner included): `page_lean` starts it with only what a
     page needs (canopy's plugin, the page and gateway tools, the page's context in its
     opening message: `page_turn`), and `page_model` is the model it starts on
-    (`claim_payload.conversation_model`). Both only change how fast and how big a page
-    turn is; neither widens what it may do. Written only when set, so an interface
+    (`claim_payload.conversation_model`). `page_guidance:` is the agent's own short brief for
+    those pages (how to call the site's tools, what to read first), which a lean turn gets in
+    its page brief instead of the agent's CLAUDE.md and skills (`harness.page_brief`). None
+    of them widens what a turn may do. Written only when set, so an interface
     published before the keys existed parses to exactly what it did."""
     out: dict = {}
     lean = cap.get("page_lean", False)
@@ -393,10 +399,19 @@ def _page_turn_settings(cap: dict, name: str, sites: list[str]) -> dict:
     if (lean or model) and not sites:
         raise InterfaceError(f"{name}.page_lean / page_model need `sites:` — they say how a turn on "
                              "those sites' pages runs", f"{name}.page_lean")
+    guidance = cap.get("page_guidance") or ""
+    if not isinstance(guidance, str) or len(guidance) > PAGE_GUIDANCE_MAX:
+        raise InterfaceError(f"{name}.page_guidance must be text of at most {PAGE_GUIDANCE_MAX} "
+                             "characters", f"{name}.page_guidance")
+    if guidance and not sites:
+        raise InterfaceError(f"{name}.page_guidance needs `sites:` — it is how the agent works on "
+                             "those sites' pages", f"{name}.page_guidance")
     if lean:
         out["page_lean"] = True
     if model:
         out["page_model"] = model
+    if guidance.strip():
+        out["page_guidance"] = guidance.strip()
     return out
 
 
@@ -545,6 +560,11 @@ def page_lean_of(agent, site: str) -> bool:
     """Whether the agent's owner asked for turns on `site`'s pages to start lean
     (`page_lean:` of the entry that lists it)."""
     return bool(site) and _cap_for_site(agent, site).get("page_lean") is True
+
+
+def page_guidance_of(agent, site: str) -> str:
+    """The agent's own guidance for `site`'s pages (`page_guidance:`), or ""."""
+    return str(_cap_for_site(agent, site).get("page_guidance") or "") if site else ""
 
 
 def page_model_of(agent, site: str) -> str:

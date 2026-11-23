@@ -795,6 +795,8 @@ class AgentHostSiteOut(AnsweringProfile):
     page_lean: bool = False
     # The model turns held on this site's pages start on; "" is the agent's own.
     page_model: str = ""
+    # The agent's own short brief for this site's pages, given to every lean page turn.
+    page_guidance: str = ""
 
 
 class NewSiteDefaults(AnsweringProfile):
@@ -805,6 +807,7 @@ class NewSiteDefaults(AnsweringProfile):
     surface: str = ""
     page_lean: bool = False
     page_model: str = ""
+    page_guidance: str = ""
 
 
 class AgentHostSitesOut(StrictModel):
@@ -828,6 +831,9 @@ class AgentHostSiteIn(ReadModeIn):
     # its context in the opening message), on `page_model` when set ("" = the agent's own model).
     page_lean: bool | None = None
     page_model: Annotated[str, Field(max_length=64)] | None = None
+    # The agent's own short brief for this site's pages (how to call its tools, what to read
+    # first), given to every lean page turn in place of its CLAUDE.md and skills. "" clears it.
+    page_guidance: Annotated[str, Field(max_length=4000)] | None = None
 
 
 class AgentAppEntryOut(StrictModel):
