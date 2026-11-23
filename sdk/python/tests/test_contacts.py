@@ -177,7 +177,7 @@ def test_site_json_carries_person_scheme_and_retention_days():
                            "person_scheme": "labs-worker", "retention_days": 90}
     needs = site.SiteNeeds.from_claims(doc)
     assert needs.site.person_scheme == "labs-worker" and needs.site.retention_days == 90
-    assert site.SITE_FACTS[-2:] == ("person_scheme", "retention_days")
+    assert {"person_scheme", "retention_days"} <= set(site.SITE_FACTS)
 
 
 def test_a_site_that_declares_neither_reads_as_before():
@@ -190,6 +190,27 @@ def test_a_site_that_declares_neither_reads_as_before():
                                    {"retention_days": 3651}, {"retention_days": "30"},
                                    {"retention_days": True}])
 def test_a_bad_fact_makes_the_document_malformed(facts):
+    with pytest.raises(site.SiteDocumentError) as exc:
+        site.site_document("s", site=facts)
+    assert exc.value.code == "malformed"
+
+
+# --- site.json: reply_url and reply_mode ------------------------------------------
+
+
+def test_site_json_carries_the_reply_webhook():
+    doc = site.site_document("connect-labs", site={"reply_url": "https://labs.org/replies/",
+                                                   "reply_mode": "stream"})
+    assert doc["site"]["reply_url"] == "https://labs.org/replies/" and doc["site"]["reply_mode"] == "stream"
+    needs = site.SiteNeeds.from_claims(doc)
+    assert (needs.site.reply_url, needs.site.reply_mode) == ("https://labs.org/replies/", "stream")
+    plain = site.SiteNeeds.from_claims(site.site_document("s", site={"origins": ["https://a.org"]}))
+    assert (plain.site.reply_url, plain.site.reply_mode) == ("", "")
+
+
+@pytest.mark.parametrize("facts", [{"reply_url": "not a url"}, {"reply_url": "ftp://a.org/r"},
+                                   {"reply_mode": "sometimes"}, {"reply_mode": 1}])
+def test_a_bad_reply_fact_makes_the_document_malformed(facts):
     with pytest.raises(site.SiteDocumentError) as exc:
         site.site_document("s", site=facts)
     assert exc.value.code == "malformed"

@@ -18,6 +18,7 @@ never disagree about an agent.
 """
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -356,6 +357,69 @@ def is_site_tool(session, tool: str) -> bool:
         return "canopy" in server.lower()
     app = site_app(session) if session is not None else None
     return app is not None and mcp_apps.indexed_tool(app, name) is not None
+
+
+# --- the site's own reply webhook ----
+
+
+@dataclass(frozen=True)
+class DeclaredReply:
+    """The reply webhook the site declares (`site.reply_url` / `site.reply_mode`), and
+    whether canopy adopts it."""
+
+    #: What the site declares ("" when it declares none, or canopy holds no verified document).
+    url: str = ""
+    #: `final` or `stream` (`final` when the site declares no mode).
+    mode: str = "final"
+    #: canopy pushes the site's replies to `url` when no person has set a webhook.
+    adopted: bool = False
+    #: Why a declared URL is not adopted ("" when it is, or when there is none).
+    reason: str = ""
+
+
+def _refusal(app, url: str) -> str:
+    """Why canopy will not push to the declared `url`, or "". It must be https, on exactly
+    one of the site's REGISTERED origins (never one its own document lists), and pass the
+    outbound checks every reply POST passes (`outbound.check_url`)."""
+    from . import outbound  # noqa: PLC0415 — as the rest of this module's late imports
+
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname:
+        return f"it is not an https URL ({url})"
+    origin = f"{parts.scheme}://{parts.netloc}".lower()
+    registered = {o.rstrip("/").lower() for o in app.frame_origins()}
+    if origin not in registered:
+        return (f"its origin {origin} is not one of this site's registered origins; set the "
+                "webhook here instead, or add the origin")
+    try:
+        outbound.check_url(url, what="reply webhook URL")
+    except outbound.OutboundError as exc:
+        return str(exc)
+    return ""
+
+
+def declared_reply(app) -> DeclaredReply:
+    """The site's declared reply webhook, read LIVE from its verified, cached `site.json`
+    (as `resource_schemes_for`), with no owner typing it. canopy adopts it only when the
+    document verifies against the site's registered keys (`needs_for`, fail-closed) and the
+    URL passes `_refusal`: the site can name only an address it is already registered at, so
+    publishing a document never sends its contacts' conversations anywhere new. A webhook a
+    person set (`AppCredential.reply_webhook_url`) wins (`reply_relay.push_for`)."""
+    if app is None:
+        return DeclaredReply()
+    document = needs_for(app).document
+    facts = document.site if document is not None else None
+    if facts is None or not facts.reply_url:
+        return DeclaredReply()
+    mode = facts.reply_mode or "final"
+    scope = f"{app.signer()}|{','.join(app.frame_origins())}|{facts.reply_url}"
+    key = f"site-reply:{app.pk}:{hashlib.sha256(scope.encode()).hexdigest()}"
+    reason = cache.get(key)
+    if reason is None:
+        # The address check resolves the host: once per `FRESH_SECONDS`, not per reply.
+        reason = _refusal(app, facts.reply_url)
+        cache.set(key, reason, FRESH_SECONDS)
+    return DeclaredReply(url=facts.reply_url, mode=mode, adopted=not reason, reason=reason)
 
 
 # --- the site as the system of record for its people ----

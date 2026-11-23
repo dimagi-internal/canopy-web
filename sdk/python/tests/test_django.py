@@ -837,6 +837,34 @@ def test_site_json_declares_the_hosts_surfaces(host):
     assert got.surface("workers").sensitive is False
 
 
+def test_site_json_declares_the_hosts_reply_webhook(host):
+    """REPLY_URL (the reply push's `aud`) and REPLY_MODE reach site.reply_url / reply_mode, so
+    canopy can adopt the webhook without a person typing it."""
+    from canopy_sdk import site as site_mod
+
+    url = "https://labs.example.org/messaging/canopy/replies/"
+    with override_settings(CANOPY_HOST={**conf.raw(), "REPLY_URL": url, "REPLY_MODE": "final"}):
+        response = Client().get("/canopy/site.json")
+    got = site_mod.verify_site_document(response.content.decode(), [host.host_key.public_key()],
+                                        site_name="connect-labs")
+    assert (got.site.reply_url, got.site.reply_mode) == (url, "final")
+    with override_settings(CANOPY_HOST={**conf.raw(), "REPLY_URL": "", "REPLY_MODE": ""}):
+        response = Client().get("/canopy/site.json")
+    got = site_mod.verify_site_document(response.content.decode(), [host.host_key.public_key()],
+                                        site_name="connect-labs")
+    assert (got.site.reply_url, got.site.reply_mode) == ("", "")
+    assert "reply_url" not in got.claims["site"], "left out when the host declares none"
+
+
+def test_a_bad_reply_mode_fails_the_hosts_system_check(host):
+    from django.core import checks
+
+    with override_settings(CANOPY_HOST={**conf.raw(), "REPLY_MODE": "sometimes"}):
+        assert [e for e in checks.run_checks() if e.id == "canopy_host.E012"]
+    with override_settings(CANOPY_HOST={**conf.raw(), "REPLY_MODE": "stream"}):
+        assert not [e for e in checks.run_checks() if e.id == "canopy_host.E012"]
+
+
 def test_a_bad_person_scheme_or_retention_fails_the_hosts_system_check(host):
     from django.core import checks
 

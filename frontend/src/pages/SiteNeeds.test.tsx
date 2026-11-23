@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { SiteNeeds } from '@/api/hostSites'
 
-const { SiteNeedsTable } = await import('./hostSites/SiteNeedsTable')
+const { SiteNeedsTable, ReplyPushSource } = await import('./hostSites/SiteNeedsTable')
 
 afterEach(cleanup)
 
@@ -124,5 +124,31 @@ describe('SiteNeedsTable', () => {
   it('marks a stale copy', () => {
     render(<SiteNeedsTable needs={{ ...NEEDS, stale: true, reason: 'unreachable: timeout' }} />)
     expect(screen.getByText(/last copy canopy could verify/)).toBeTruthy()
+  })
+})
+
+describe('ReplyPushSource', () => {
+  const base = { url: '', mode: '', source: '', set_by: '', declared_url: '', declared_mode: '', declared_reason: '' }
+
+  it('says a webhook is the site\'s own when canopy adopted its declaration', () => {
+    const url = 'https://labs.test/messaging/canopy/replies/'
+    render(<ReplyPushSource push={{ ...base, url, mode: 'final', source: 'site', declared_url: url, declared_mode: 'final' }} />)
+    expect(screen.getByText(/declared by the site/)).toBeTruthy()
+  })
+
+  it('names the person whose webhook wins', () => {
+    render(
+      <ReplyPushSource
+        push={{ ...base, url: 'https://labs.test/r/', mode: 'stream', source: 'person', set_by: 'jj@dimagi.com',
+                declared_url: 'https://labs.test/messaging/canopy/replies/' }}
+      />,
+    )
+    expect(screen.getByText(/set by jj@dimagi.com/)).toBeTruthy()
+    expect(screen.getByText(/wins over the one the site declares/)).toBeTruthy()
+  })
+
+  it('says why a declared webhook is not used', () => {
+    render(<ReplyPushSource push={{ ...base, declared_url: 'https://elsewhere.test/r/', declared_reason: 'not on its origin' }} />)
+    expect(screen.getByText(/not on its origin/)).toBeTruthy()
   })
 })

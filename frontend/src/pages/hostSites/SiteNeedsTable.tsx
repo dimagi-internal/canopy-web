@@ -6,6 +6,7 @@ import {
   type SiteNeeds,
   type AgentFit,
   type SiteSurface,
+  type ReplyPush,
 } from '@/api/hostSites'
 import { Td, Th, Tr } from '@/components/DataTable'
 
@@ -125,6 +126,7 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
         </p>
       )}
       {needs.surfaces.length > 0 && <SurfacesTable surfaces={needs.surfaces} />}
+      {needs.reply_push && <ReplyPushSource push={needs.reply_push} />}
       {needs.pages.length > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground">
@@ -202,6 +204,35 @@ export function SurfacesTable({ surfaces }: { surfaces: readonly SiteSurface[] }
         own contacts reach it only on a surface without sensitive data.
       </p>
     </div>
+  )
+}
+
+/**
+ * Where canopy pushes the agent's replies in the conversations this site relays, and on whose
+ * word: declared by the site in its signed `site.json` (adopted only on one of the site's
+ * registered origins), or set by a person on this page, which wins.
+ */
+export function ReplyPushSource({ push }: { push: ReplyPush }): JSX.Element | null {
+  if (!push.url && !push.declared_url) return null
+  return (
+    <p className="text-xs text-muted-foreground">
+      Reply webhook:{' '}
+      {push.url ? (
+        <>
+          <span className="font-mono text-foreground">{push.url}</span> ({push.mode}),{' '}
+          {push.source === 'site' ? 'declared by the site' : `set by ${push.set_by || 'a person'}`}
+          {push.source === 'person' && push.declared_url && push.declared_url !== push.url && (
+            <> — it wins over the one the site declares ({push.declared_url})</>
+          )}
+          .
+        </>
+      ) : (
+        <>
+          the site declares <span className="font-mono text-foreground">{push.declared_url}</span>, which canopy
+          does not use: <span className="text-warning">{push.declared_reason}</span>.
+        </>
+      )}
+    </p>
   )
 }
 

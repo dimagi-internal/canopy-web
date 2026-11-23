@@ -7,9 +7,12 @@ canopy POSTs it there as a JWS signed with canopy's OAuth client key
 (`canopy_sdk.host.replies`: `typ: canopy-reply+jwt`, five minutes, the host verifies
 with `verify_reply`).
 
+* **Where.** The site's reply webhook (`push_for`): the `reply_webhook_url` a person set on
+  its host site, else the one the site declares in its signed `site.json` (`site.reply_url`),
+  which canopy adopts only on the site's own registered origin (`site_needs.declared_reply`).
 * **Which turns.** A turn on a RELAY session (`metadata["relay_channel"]`, stamped from the
   relay token that started it) whose contact came from a site (`Contact.app`) that is live,
-  has a `reply_webhook_url`, and whose conversation the session is (`metadata["embed_app"]`).
+  has a reply webhook, and whose conversation the session is (`metadata["embed_app"]`).
   The webhook is the site's, one per site whatever its surfaces: the host routes a reply by its
   `session`, and only a relay needs one, since a widget's visitor reads the reply in the panel.
   A sensitive conversation's words are never pushed (the same rule as Slack's mirror): its
@@ -34,6 +37,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import threading
+from dataclasses import dataclass
 
 import requests
 from canopy_sdk.host import replies as wire
@@ -46,7 +50,7 @@ from apps.harness import sensitivity
 from apps.harness.models import Turn, TurnEvent
 from apps.tokens.models import AppCredential, HostReplyDelivery
 
-from . import client_identity, outbound
+from . import client_identity, outbound, site_needs
 
 logger = logging.getLogger(__name__)
 
@@ -62,19 +66,53 @@ TICK_SECONDS = 15
 _ERRORS = {"failed", "cancelled", "lost", "missed"}
 
 
+# --- where ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReplyPush:
+    """Where and how canopy pushes a site's replies, and who said so."""
+
+    url: str
+    #: `final` or `stream`.
+    mode: str
+    #: `person`: set on the host site by `set_by`; `site`: declared in its `site.json`.
+    source: str
+    set_by: str = ""
+
+
+def push_for(app) -> ReplyPush | None:
+    """The site's reply webhook: a person's setting wins, else what the site declares and
+    canopy adopts (`site_needs.declared_reply`). None when it has neither."""
+    if app is None:
+        return None
+    if app.reply_webhook_url:
+        who = app.reply_webhook_set_by
+        return ReplyPush(app.reply_webhook_url, app.reply_mode, "person",
+                         set_by=(who.email or who.get_username()) if who is not None else "")
+    declared = site_needs.declared_reply(app)
+    return ReplyPush(declared.url, declared.mode, "site") if declared.adopted else None
+
+
+def _url_of(app) -> str:
+    push = push_for(app)
+    return push.url if push is not None else ""
+
+
 # --- which turns ------------------------------------------------------------------
 
 
-def _target(turn) -> AppCredential | None:
-    """The site to push `turn`'s replies to, or None."""
+def _target(turn) -> tuple[AppCredential, ReplyPush] | None:
+    """The site to push `turn`'s replies to, and where, or None."""
     session = getattr(turn, "chat_session", None)
     if session is None or not session.contact_id:
         return None
     contact = session.contact
     if not contact.app_id:
         return None
-    app = AppCredential.objects.filter(pk=contact.app_id, revoked_at__isnull=True).first()
-    if app is None or not app.reply_webhook_url:
+    app = (AppCredential.objects.select_related("reply_webhook_set_by")
+           .filter(pk=contact.app_id, revoked_at__isnull=True).first())
+    if app is None:
         return None
     if (session.metadata or {}).get(EMBED_APP_KEY) != app.name:
         return None
@@ -82,7 +120,9 @@ def _target(turn) -> AppCredential | None:
         return None
     if sensitivity.is_sensitive(turn):
         return None
-    return app
+    # Last: a site with no webhook of a person's reads its declared one, which may fetch.
+    push = push_for(app)
+    return (app, push) if push is not None else None
 
 
 def _prose(row) -> str:
@@ -93,9 +133,10 @@ def on_rows(turn, rows) -> int:
     """`stream` mode: one post per assistant row. Returns how many were queued."""
     if not getattr(turn, "chat_session_id", None):
         return 0
-    app = _target(turn)
-    if app is None or app.reply_mode != AppCredential.REPLY_STREAM:
+    target = _target(turn)
+    if target is None or target[1].mode != AppCredential.REPLY_STREAM:
         return 0
+    app = target[0]
     queued = 0
     for row in rows:
         text = _prose(row)
@@ -109,14 +150,15 @@ def on_finished(turn) -> HostReplyDelivery | None:
     turn = Turn.objects.select_related("chat_session__contact").filter(pk=turn.pk).first()
     if turn is None or turn.status not in Turn.TERMINAL:
         return None
-    app = _target(turn)
-    if app is None:
+    target = _target(turn)
+    if target is None:
         return None
+    app, push = target
     rows = TurnEvent.objects.filter(turn=turn)
     last = rows.aggregate(m=Max("seq"))["m"] or 0
     taken = HostReplyDelivery.objects.filter(turn=turn).aggregate(m=Max("seq"))["m"]
     seq = max(last, (taken + 1) if taken is not None else 0)
-    text = "" if app.reply_mode == AppCredential.REPLY_STREAM else \
+    text = "" if push.mode == AppCredential.REPLY_STREAM else \
         "\n\n".join(t for t in (_prose(r) for r in rows.filter(kind="assistant").order_by("seq")) if t)
     error = turn.status if turn.status in _ERRORS else ""
     return _record(app, turn, seq=seq, text=text, ended=True, error=error)
@@ -152,12 +194,13 @@ def _attempt_by_id(delivery_id: int) -> None:
 # --- one attempt --------------------------------------------------------------------
 
 
-def sign(row: HostReplyDelivery, *, now: float | None = None) -> str:
-    """The reply as canopy's signed statement, for this attempt."""
+def sign(row: HostReplyDelivery, *, now: float | None = None, url: str | None = None) -> str:
+    """The reply as canopy's signed statement, for this attempt, addressed (`aud`) to `url`
+    (default: the site's reply webhook now)."""
     turn = row.turn
     session = turn.chat_session
     return client_identity.sign_reply(
-        row.app.reply_webhook_url, sub=session.contact.external_id, site=row.app.name,
+        _url_of(row.app) if url is None else url, sub=session.contact.external_id, site=row.app.name,
         session=str(session.pk), turn=str(turn.pk), seq=row.seq, text=row.text, ended=row.ended,
         error=row.error, now=now)
 
@@ -175,14 +218,14 @@ def attempt(row: HostReplyDelivery, *, now: dt.datetime | None = None, post=None
     now = now or timezone.now()
     with transaction.atomic():
         row = (HostReplyDelivery.objects.select_for_update(of=("self",))
-               .select_related("app", "turn__chat_session__contact").get(pk=row.pk))
+               .select_related("app__reply_webhook_set_by", "turn__chat_session__contact").get(pk=row.pk))
         if row.delivered_at or row.abandoned_at or row.next_attempt_at > now:
             return
-        url = row.app.reply_webhook_url or ""
+        url = _url_of(row.app) if row.app.revoked_at is None else ""
         try:
-            if not url or row.app.revoked_at is not None:
+            if not url:
                 raise outbound.OutboundError("the site no longer takes reply push")
-            status = (post or _post)(url, sign(row, now=now.timestamp()))
+            status = (post or _post)(url, sign(row, now=now.timestamp(), url=url))
             ok, note = 200 <= status < 300, f"HTTP {status}"
         except Exception as exc:  # noqa: BLE001 — any failure is a retry
             ok, note = False, f"{type(exc).__name__}: {exc}"[:200]

@@ -181,6 +181,25 @@ class SiteSurfaceOut(Schema):
     agents: list[str] = []
 
 
+class ReplyPushOut(Schema):
+    """Where canopy pushes the agent's replies in the conversations this site relays, and
+    who said so: a person on the Host sites page, or the site in its signed `site.json`."""
+
+    #: Where replies go now ("" = nowhere: a relay has to poll).
+    url: str
+    #: `final` or `stream`.
+    mode: str
+    #: `person` (set on the host site; wins), `site` (declared and adopted), or "" (none).
+    source: str
+    #: The person who set it (their email), when `source` is `person`.
+    set_by: str = ""
+    #: What the site declares (`site.reply_url` / `site.reply_mode`; "" for none).
+    declared_url: str = ""
+    declared_mode: str = ""
+    #: Why canopy does not adopt the declared URL ("" when it does, or there is none).
+    declared_reason: str = ""
+
+
 class SiteNeedsOut(Schema):
     """What a host site asks of canopy's agents (its signed `site.json`)."""
 
@@ -202,6 +221,8 @@ class SiteNeedsOut(Schema):
     not_allowed: list[str]
     #: The site's surfaces; empty when it declares none (the site is one surface, itself).
     surfaces: list[SiteSurfaceOut] = []
+    #: Where its relayed conversations' replies are pushed, and on whose word.
+    reply_push: ReplyPushOut | None = None
 
 
 def _iso(ts: float | None) -> str | None:
@@ -242,7 +263,18 @@ def host_site_needs(request: HttpRequest, slug: str, app_id: int) -> SiteNeedsOu
         uses_version=document.uses_version if document else "",
         site_agents_version=wire.content_version(content),
         agents=[AgentFitOut(**r) for r in rows], not_allowed=not_allowed,
-        surfaces=_surfaces_out(app, document))
+        surfaces=_surfaces_out(app, document), reply_push=_reply_push_out(app))
+
+
+def _reply_push_out(app) -> ReplyPushOut:
+    from . import reply_relay  # noqa: PLC0415 — the relay loads the harness
+
+    declared = site_needs.declared_reply(app)
+    push = reply_relay.push_for(app)
+    return ReplyPushOut(
+        url=push.url if push else "", mode=push.mode if push else "", source=push.source if push else "",
+        set_by=push.set_by if push else "", declared_url=declared.url,
+        declared_mode=declared.mode if declared.url else "", declared_reason=declared.reason)
 
 
 def _surfaces_out(app, document) -> list[SiteSurfaceOut]:

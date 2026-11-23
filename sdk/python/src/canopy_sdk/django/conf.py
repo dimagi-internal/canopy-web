@@ -9,9 +9,11 @@
         "APP_NAME": "connect-labs",                       # your host-site name
         "WORKSPACE": "connect",     # the canopy workspace (tenant) the site is registered in
         "AGENT_SLUG": "ace",        # the default agent; also names the tenant when WORKSPACE is unset
-        # A relay host's reply push (canopy_sdk.host.replies): the URL registered as the
-        # host site's reply_webhook_url, which verify_reply requires as `aud`.
+        # A relay host's reply push (canopy_sdk.host.replies): the URL canopy POSTs replies
+        # to, which verify_reply requires as `aud`. site.json declares it (site.reply_url),
+        # and canopy adopts it when its origin is one of the site's registered origins.
         "REPLY_URL": "https://labs.connect.dimagi.com/canopy/replies/",
+        "REPLY_MODE": "final",      # site.reply_mode: "final" (one post a turn) or "stream"
         # The grant. All four present turns it on; any missing turns it off.
         "CLIENT_ID": "https://labs.connect.dimagi.com/canopy/oauth/client.json",
         "ISSUER": "https://labs.connect.dimagi.com",
@@ -320,6 +322,11 @@ def retention_days():
     """``RETENTION_DAYS`` as set (None when unset), declared as ``site.retention_days``."""
     value = raw().get("RETENTION_DAYS")
     return None if value in (None, "") else value
+
+
+def reply_mode() -> str:
+    """``REPLY_MODE`` as set ("" when unset), declared as ``site.reply_mode``."""
+    return str(raw().get("REPLY_MODE") or "").strip()
 
 
 def surfaces() -> dict:

@@ -2,6 +2,22 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.38.0 — 2026-11-23
+
+**A relay site declares its reply webhook in its signed `site.json`.**
+
+- `site.json`'s `site` block takes optional `reply_url` (where canopy POSTs the agent's
+  replies in the conversations the site relays, `canopy_sdk.host.replies`) and `reply_mode`
+  (`final` | `stream`, `canopy_sdk.site.REPLY_MODES`). `SiteFacts.reply_url` / `reply_mode`
+  read them back.
+- Django hosts declare them from settings they already have: `CANOPY_HOST["REPLY_URL"]`
+  (the `aud` `verify_reply` requires) and the new `CANOPY_HOST["REPLY_MODE"]`; a bad
+  `REPLY_MODE` fails `canopy_host.E012`.
+- canopy adopts a declared `reply_url` as the host site's reply webhook only when the
+  document verifies against the site's registered keys, the URL is https, its origin is one of
+  the site's registered origins and it passes canopy's outbound checks; a webhook a person set
+  in canopy wins. Additive under contract v1.
+
 ## 0.37.0 — 2026-11-22
 
 **A site may declare surfaces: parts of it that serve different people.**

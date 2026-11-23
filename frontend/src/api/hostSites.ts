@@ -100,6 +100,7 @@ export async function revokeHostSite(slug: string, appId: number): Promise<void>
 export type SiteNeeds = components['schemas']['SiteNeedsOut']
 export type AgentFit = components['schemas']['AgentFitOut']
 export type SiteSurface = components['schemas']['SiteSurfaceOut']
+export type ReplyPush = components['schemas']['ReplyPushOut']
 
 /** What the site asks of agents (its signed `site.json`), and per agent canopy
  *  allows there whether it meets it. Fail-closed: `available: false` + reason. */

@@ -169,14 +169,16 @@ export function HostGrantEditor({
  * Reply push: where canopy POSTs the agent's replies in the conversations this site relays over
  * its own channel (a relay never polls). One webhook per site, whatever its surfaces: only relay
  * conversations are pushed, and the site routes each reply by its conversation. It receives
- * those conversations' words, so changing the URL asks for the person's passkey.
+ * those conversations' words, so changing the URL asks for the person's passkey. A site may
+ * declare its own webhook in its signed `site.json` instead (shown under what the site asks); one
+ * set here wins over it.
  */
 export function ReplyPushEditor({
   app,
   busy,
   onSave,
 }: {
-  app: Pick<HostSite, 'reply_webhook_url' | 'reply_mode'>
+  app: Pick<HostSite, 'reply_webhook_url' | 'reply_mode'> & Partial<Pick<HostSite, 'reply_webhook_set_by'>>
   busy: boolean
   onSave: (url: string, mode: 'final' | 'stream') => void
 }): JSX.Element {
@@ -189,8 +191,8 @@ export function ReplyPushEditor({
     <div className="space-y-2 border-t border-border pt-2">
       <p className="text-xs text-muted-foreground">
         {savedUrl
-          ? 'canopy pushes the agent\'s replies in this site\'s relayed conversations to it.'
-          : 'This site takes no reply push: a relay has to poll for replies.'}
+          ? `Set by ${app.reply_webhook_set_by || 'a person'}: canopy pushes the agent's replies in this site's relayed conversations to it, over any webhook the site declares.`
+          : "No webhook set here. canopy uses the one the site declares in its site.json, when it is on one of the site's origins; without one, a relay has to poll for replies."}
       </p>
       <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
         <label className="block space-y-1">
