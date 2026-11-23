@@ -17,8 +17,10 @@ const setOutputStatus = vi.fn()
 const setTargetBudget = vi.fn()
 const whyNotRead = vi.fn()
 const getBrainScorecard = vi.fn()
+const getFixPlan = vi.fn()
+const askFix = vi.fn()
 vi.mock('@/api/brain', () => ({
-  getBrainScorecard,
+  getBrainScorecard, getFixPlan, askFix,
   getBrainState, getBrainLinks, getBrainRuns, listBrainOutputs, runTargetNow, addTarget, removeTarget, setLearningReads,
   configureLearner, acknowledgeFlag, setOutputStatus, setTargetBudget, whyNotRead,
 }))
@@ -121,6 +123,13 @@ const OUTPUTS = [
   finding(4, { title: 'An old dismissed one', status: 'dismissed', body: { severity: 'high', fix_belongs: { repo: 'ace' } } }),
 ]
 
+/** A finding's row, opened. */
+async function openFinding(title: string): Promise<HTMLElement> {
+  const card = await screen.findByRole('listitem', { name: title })
+  fireEvent.click(within(card).getByRole('button', { name: new RegExp(title) }))
+  return card
+}
+
 function setup(owner = false, url = '/w/dimagi/brain?tab=setup') {
   getBrainState.mockResolvedValue(STATE(owner))
   getBrainLinks.mockResolvedValue({ links: [{ id: 9, project: 'supply', name: 'Supply', workspace: 'dimagi', tier: 'core',
@@ -191,24 +200,47 @@ describe('BrainPage', () => {
     listBrainOutputs.mockResolvedValueOnce([{ ...OUTPUTS[0], sessions_seen: 3, people_seen: 2, breadth: 'pattern',
       came_back: true, recurs_of: 99, sightings: [ago(20), ago(6), ago(1)] }])
     setup(true, '/w/dimagi/brain')
-    const card = await screen.findByRole('listitem', { name: 'The runner idles without a delegation' })
+    const card = await openFinding('The runner idles without a delegation')
+    expect(within(card).getByText(/canopy · 3 sessions · 2 people · last seen/)).toBeTruthy()
+    expect(within(card).getByText('Came back')).toBeTruthy()
     expect(within(card).getByRole('group', { name: 'Seen in 3 sessions with 2 people' })).toBeTruthy()
-    expect(within(card).getByText('a pattern')).toBeTruthy()
-    expect(within(card).getByText('Came back after done')).toBeTruthy()
     expect(within(card).getByRole('img', { name: /^Seen 3 times, first / })).toBeTruthy()
     expect(within(card).queryByText('fourth quote')).toBeNull()
     fireEvent.click(within(card).getByRole('button', { name: '3 sessions' }))
     expect(within(card).getByText('fourth quote')).toBeTruthy()
   })
 
-  it('moves a finding along its lifecycle and shows how often it was seen', async () => {
+  it('asks the operator to fix a finding, saying first exactly what that starts and the message it sends', async () => {
+    listBrainOutputs.mockResolvedValueOnce([{ ...OUTPUTS[0], fixer: { slug: 'ada', name: 'Ada' } }, ...OUTPUTS.slice(1)])
+    getFixPlan.mockResolvedValue({ agent: { slug: 'ada', name: 'Ada' }, label: 'Ask Ada to fix this', continues: false,
+      what_happens: 'Starts a conversation between you and Ada, with this finding as the brief.',
+      brief: 'Jonathan asked you to fix finding 1.' })
     setup(true, '/w/dimagi/brain')
-    expect(await screen.findByText(/seen 3 times/)).toBeTruthy()
-    const card = screen.getByRole('listitem', { name: 'The runner idles without a delegation' })
-    setOutputStatus.mockResolvedValue({ ...OUTPUTS[0], status: 'accepted' })
-    fireEvent.click(within(card).getByRole('button', { name: 'Accept' }))
-    await waitFor(() => expect(setOutputStatus).toHaveBeenCalledWith('dimagi', 1, 'accepted'))
-    expect(await within(card).findByRole('button', { name: 'Done' })).toBeTruthy()
+    const card = await openFinding('The runner idles without a delegation')
+    expect(within(card).queryByRole('button', { name: 'Accept' })).toBeNull()
+    const ask = await within(card).findByRole('button', { name: 'Ask Ada to fix this' })
+    expect(getFixPlan).toHaveBeenCalledWith('dimagi', 1)
+    expect(within(card).getByText(/Starts a conversation between you and Ada/)).toBeTruthy()
+    expect(within(card).getByText('Jonathan asked you to fix finding 1.')).toBeTruthy()
+    askFix.mockResolvedValue({ output: { ...OUTPUTS[0], status: 'accepted', fixer: { slug: 'ada', name: 'Ada' },
+      fix_session: '/w/dimagi/sessions/f1' }, session_id: 'f1', session_url: 'https://x/w/dimagi/sessions/f1' })
+    fireEvent.click(ask)
+    await waitFor(() => expect(askFix).toHaveBeenCalledWith('dimagi', 1))
+    expect(await within(card).findByText(/Ada is fixing this/)).toBeTruthy()
+    expect(within(card).getByRole('link', { name: 'the conversation' }).getAttribute('href')).toBe('/w/dimagi/sessions/f1')
+    expect(within(card).getByText('Fixing')).toBeTruthy()
+    setOutputStatus.mockResolvedValue({ ...OUTPUTS[0], status: 'done' })
+    fireEvent.click(within(card).getByRole('button', { name: 'Mark done' }))
+    await waitFor(() => expect(setOutputStatus).toHaveBeenCalledWith('dimagi', 1, 'done'))
+  })
+
+  it('says a finding is already fixed or not worth fixing, each choice saying what it does', async () => {
+    setup(true, '/w/dimagi/brain')
+    const card = await openFinding('A medium one seen lately')
+    expect(within(card).getByText(/Dismisses it\. Learning folds repeats into it/)).toBeTruthy()
+    setOutputStatus.mockResolvedValue({ ...OUTPUTS[1], status: 'dismissed' })
+    fireEvent.click(within(card).getByRole('button', { name: 'Not worth fixing' }))
+    await waitFor(() => expect(setOutputStatus).toHaveBeenCalledWith('dimagi', 2, 'dismissed'))
   })
 
   it('says why a session is not read, naming no one', async () => {
@@ -263,12 +295,12 @@ describe('BrainPage', () => {
     expect(getBrainState).toHaveBeenCalledWith('dimagi')
   })
 
-  it('reads a finding top to bottom: chips, where the fix belongs, the fix, quoted evidence linked to its session', async () => {
+  it('reads an opened finding as what is wrong, the fix, how to tell, and quoted evidence linked to its session', async () => {
+    listBrainOutputs.mockResolvedValueOnce([{ ...OUTPUTS[0], may_set_status: false }, ...OUTPUTS.slice(1)])
     setup(false, '/w/dimagi/brain')
-    const card = await screen.findByRole('listitem', { name: 'The runner idles without a delegation' })
-    for (const chip of ['High severity', 'Open', 'Provision', 'Over claim']) expect(within(card).getByText(chip)).toBeTruthy()
-    expect(within(card).getByText('canopy · ada · turn')).toBeTruthy()
+    const card = await openFinding('The runner idles without a delegation')
     expect(within(card).getByText('surface the 409')).toBeTruthy()
+    expect(within(card).getByText('Belongs in canopy · ada · turn')).toBeTruthy()
     expect(card.textContent).not.toContain('[object Object]')
     expect(card.textContent).not.toMatch(/fix_belongs|suggested_fix|not_checked/)
     // A quote is text, linked to the session its source is, when the viewer reads it; otherwise said plainly.
@@ -277,21 +309,23 @@ describe('BrainPage', () => {
     expect(links[0].getAttribute('href')).toBe('/w/dimagi/sessions/s1')
     expect(within(card).getByText('a session you do not read')).toBeTruthy()
     expect(card.textContent).not.toMatch(/at message \d/)
-    // Beyond three quotes, the rest are collapsed.
-    expect(within(card).queryByText('fourth quote')).toBeNull()
-    fireEvent.click(within(card).getByRole('button', { name: 'Show 1 more quote' }))
+    // Beyond two quotes, the rest are collapsed.
+    expect(within(card).queryByText('third quote')).toBeNull()
+    fireEvent.click(within(card).getByRole('button', { name: 'Show 2 more quotes' }))
     expect(within(card).getByText('fourth quote')).toBeTruthy()
+    // The rest is behind one disclosure, in words: never a raw record.
     expect(within(card).getByText('How sure: proven')).toBeTruthy()
-    // A merged finding is named by its title, never as a raw record; the sources are a count with the list behind it.
-    expect(within(card).getByText('An earlier duplicate')).toBeTruthy()
+    expect(within(card).getByText('Merged from: An earlier duplicate')).toBeTruthy()
     expect(card.textContent).not.toMatch(/Key: canopy:x|Id: 8/)
     expect(within(card).getByText(/Found by system-learning in 3 sessions/)).toBeTruthy()
     expect(within(card).getByText('Not checked: whether it is fixed on main')).toBeTruthy()
-    // Unknown fields fall back to plain words; an object reads as key: value.
     expect(within(card).getByText('Nested')).toBeTruthy()
     expect(within(card).getByText('X: 1')).toBeTruthy()
     expect(within(card).getByText('a, b')).toBeTruthy()
     expect(card.textContent).toContain('2 sessions you do not read')
+    // Not one of its owners or admins: no buttons, and who decides.
+    expect(within(card).queryByRole('button', { name: 'Not worth fixing' })).toBeNull()
+    expect(within(card).getByText(/owners and admins decide/)).toBeTruthy()
   })
 
   it('collapses faded findings in their own group, offers Keep, and never lists a merged duplicate', async () => {
@@ -307,32 +341,36 @@ describe('BrainPage', () => {
     const group = within(findings).getByText('Faded: not seen again lately (1)').closest('details')!
     expect(group.open).toBe(false)
     const card = within(group).getByRole('listitem', { name: 'Nobody saw this lately' })
+    fireEvent.click(within(card).getByRole('button', { name: /Nobody saw this lately/ }))
     setOutputStatus.mockResolvedValue({ ...finding(5), faded: false })
     fireEvent.click(within(card).getByRole('button', { name: 'Keep' }))
     await waitFor(() => expect(setOutputStatus).toHaveBeenCalledWith('dimagi', 5, 'open'))
   })
 
-  it('filters by status, severity and repo with counts, and sorts by severity then last seen', async () => {
+  it('filters with dropdowns for status, severity and repo, counted, plus a search, sorted by severity then last seen', async () => {
     setup(false, '/w/dimagi/brain')
     const findings = await screen.findByRole('region', { name: 'Findings' })
     await within(findings).findByText('The runner idles without a delegation')
     const titles = () => within(findings).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
-    // Open and accepted by default: the dismissed one is hidden. High before medium; within high, newest seen first.
+    // Open and fixing by default: the dismissed one is hidden. High before medium; within high, newest seen first.
     expect(titles()).toEqual(['The runner idles without a delegation', 'A high one seen long ago', 'A medium one seen lately'])
-    const status = within(findings).getByRole('group', { name: 'Status' })
-    expect(within(status).getByRole('button', { name: 'Open 3' }).getAttribute('aria-pressed')).toBe('true')
-    expect(within(status).getByRole('button', { name: 'Dismissed 1' }).getAttribute('aria-pressed')).toBe('false')
-    fireEvent.click(within(status).getByRole('button', { name: 'Dismissed 1' }))
+    const status = within(findings).getByLabelText('Status') as HTMLSelectElement
+    expect(status.value).toBe('working')
+    expect(within(status).getByRole('option', { name: 'Dismissed (1)' })).toBeTruthy()
+    fireEvent.change(status, { target: { value: 'all' } })
     expect(titles()).toContain('An old dismissed one')
-    const repo = within(findings).getByRole('group', { name: 'Fix belongs in' })
-    expect(within(repo).getByRole('button', { name: 'canopy-web 2' })).toBeTruthy()
-    fireEvent.click(within(repo).getByRole('button', { name: 'canopy 1' }))   // turn canopy off
-    fireEvent.click(within(repo).getByRole('button', { name: 'ace 1' }))      // and ace
+    fireEvent.change(status, { target: { value: 'working' } })
+    const repo = within(findings).getByLabelText('Fix belongs in') as HTMLSelectElement
+    expect(within(repo).getByRole('option', { name: 'canopy-web (2)' })).toBeTruthy()
+    fireEvent.change(repo, { target: { value: 'canopy-web' } })
     expect(titles()).toEqual(['A high one seen long ago', 'A medium one seen lately'])
-    const severity = within(findings).getByRole('group', { name: 'Severity' })
-    expect(within(severity).getByRole('button', { name: 'High 1' })).toBeTruthy()   // counted under the other filters
-    fireEvent.click(within(severity).getByRole('button', { name: 'High 1' }))
+    const severity = within(findings).getByLabelText('Severity') as HTMLSelectElement
+    expect(within(severity).getByRole('option', { name: 'High (1)' })).toBeTruthy()   // counted under the other filters
+    fireEvent.change(severity, { target: { value: 'medium' } })
     expect(titles()).toEqual(['A medium one seen lately'])
+    fireEvent.change(severity, { target: { value: '' } })
+    fireEvent.change(within(findings).getByLabelText('Search'), { target: { value: 'long ago' } })
+    expect(titles()).toEqual(['A high one seen long ago'])
   })
 
   it('lets its owners and admins run a target now, add one and take one away', async () => {

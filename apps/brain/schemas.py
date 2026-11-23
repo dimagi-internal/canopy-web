@@ -141,6 +141,19 @@ class BrainOutputSourceSession(BrainOutputSession):
     source: int = Field(description="The source id its body's evidence names (`evidence[].source`).")
 
 
+class BrainOutputAgent(StrictModel):
+    slug: str
+    name: str
+
+
+class BrainOutputFixPlanOut(StrictModel):
+    agent: BrainOutputAgent | None = Field(None, description="Who is asked: the learner's operator, if it has one.")
+    label: str = Field("", description="The words on the button.")
+    what_happens: str = Field(description="Exactly what asking does, in one or two sentences.")
+    brief: str = Field("", description="The message the agent gets, word for word.")
+    continues: bool = Field(False, description="You already have a conversation fixing it: asking continues it.")
+
+
 class BrainOutputOut(StrictModel):
     id: int
     learner: str = Field(description="The slug of the learning feature that produced it.")
@@ -171,6 +184,9 @@ class BrainOutputOut(StrictModel):
                          "more).")
     sightings: list[str] = Field(default_factory=list, description="When it was seen, oldest first (ISO times).")
     may_set_status: bool = Field(False, description="Whether you may change its status.")
+    fixer: BrainOutputAgent | None = Field(None, description="The agent a fix is asked of: its learner's operator.")
+    fix_session: str | None = Field(None, description="The address of a conversation fixing it that you read (`/fix`), "
+                                     "if any.")
     created_at: dt.datetime
     sessions: list[BrainOutputSession] = Field(default_factory=list,
                                                description="The sessions it cites that you read yourself.")
@@ -178,6 +194,13 @@ class BrainOutputOut(StrictModel):
     source_sessions: list[BrainOutputSourceSession] = Field(
         default_factory=list, description="Which of `sessions` each cited source is, by source id, so a quote in its "
         "evidence links to its session. Only sessions you read yourself; a source not listed is one you do not read.")
+
+
+class BrainOutputFixOut(StrictModel):
+    output: BrainOutputOut
+    session_id: str
+    session_url: str
+    turn_id: str | None = None
 
 
 class BrainReadMessage(StrictModel):

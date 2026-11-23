@@ -108,6 +108,21 @@ export async function setOutputStatus(ws: string, id: number, status: BrainOutpu
   return unwrap(res, 'Could not change its status') as BrainOutput
 }
 
+export type BrainFixPlan = components['schemas']['BrainOutputFixPlanOut']
+export type BrainFixStarted = components['schemas']['BrainOutputFixOut']
+
+/** What asking for a finding's fix would do: who is asked, the button's words, what happens, the brief. */
+export async function getFixPlan(ws: string, id: number): Promise<BrainFixPlan> {
+  const res = await apiV2.GET('/api/brain/outputs/{output_id}/fix', { params: { path: { output_id: id } }, headers: pin(ws) })
+  return unwrap(res, 'Could not load what fixing it does') as BrainFixPlan
+}
+
+/** Ask the learner's operator agent to fix a finding: your conversation with it, and the finding set to Fixing. */
+export async function askFix(ws: string, id: number): Promise<BrainFixStarted> {
+  const res = await apiV2.POST('/api/brain/outputs/{output_id}/fix', { params: { path: { output_id: id } }, headers: pin(ws) })
+  return unwrap(res, 'Could not ask for the fix') as BrainFixStarted
+}
+
 export type BrainTargetBudgetIn = components['schemas']['BrainTargetBudgetIn']
 
 /** Change a target's budget (its workspace's owners and admins). */
