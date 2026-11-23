@@ -28,9 +28,10 @@ agent's own SENSITIVE conversations, which are sealed to their people's vault ke
   its own canopy credential: a PAT or OAuth token, or its own browser session; never a
   delegated (panel) token, which the host site holds, a caller, act-as, contact or runner
   token, or a request carrying a host grant id. The grant must be the login's own (user =
-  the login, no contact), unexpired, still unconfirmed, and for the login's own agent or
-  for no agent in particular. It lasts the usual window, 30 minutes at most
-  (`host_grants.confirm`). It confirms no person's grant and acts as no person: the
+  the login, no contact), unexpired, still unconfirmed, and for the login's own agent, for
+  no agent in particular, or for a sibling agent: another agent in the same workspace
+  whose own test key is also on (the login lends only its own identity to that page,
+  `_may_lend_to`). It lasts the usual window, 30 minutes at most (`host_grants.confirm`). It confirms no person's grant and acts as no person: the
   permission is to act as the agent's own login on that page.
 * **It never** registers a passkey or steps up: the login has none, and both refuse it
   (`passkeys.stepup.require_a_person`).
@@ -175,6 +176,13 @@ def disable(agent: Agent) -> int:
     return n
 
 
+def _may_lend_to(agent, page_agent) -> bool:
+    """May `agent`'s own login confirm its OWN permission on `page_agent`'s page? Only when
+    both agents have their test key on and share a workspace: the login lends only its own
+    identity to a sibling agent's page under test, never anyone else's."""
+    return bool(page_agent.test_vault_key) and page_agent.workspace_id == agent.workspace_id
+
+
 def may_confirm_own_host_grant(request, grant) -> None:
     """Raise `NotAPerson` unless `request` is an agent's own login, with its own
     credential, whose agent's test vault key is on, confirming its own waiting grant."""
@@ -198,9 +206,10 @@ def may_confirm_own_host_grant(request, grant) -> None:
                          "session), never a site's panel token")
     if grant.user_id != user.pk or grant.contact_id is not None:
         raise NotAPerson(404, "not_found", "no such permission")
-    if grant.agent_id is not None and grant.agent_id != agent.pk:
+    if grant.agent_id is not None and grant.agent_id != agent.pk and not _may_lend_to(agent, grant.agent):
         raise NotAPerson(403, "another_agents_page",
-                         "this page's permission is for another agent; only the login's own agent's "
-                         "page is confirmed this way")
+                         f"this page's permission is for another agent ({grant.agent.slug}); the login "
+                         "confirms it only when that agent also has its agent test key on and is in "
+                         f"{agent.slug}'s own workspace")
     if grant.confirmed_at is not None:
         raise NotAPerson(409, "already_confirmed", "this permission is already confirmed")
