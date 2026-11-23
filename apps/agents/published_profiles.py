@@ -110,6 +110,16 @@ SESSION_REVIEW = "session_review"
 SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
                         "mcp__*canopy-web__read_asked_session")
 
+#: The profile a turn started by a Google Docs comment that tags the agent runs in, whoever the
+#: comment says it is from: canopy's, built per turn from the one Doc (`doc_comment_profile`), never
+#: publishable and never widened. The comment and the Doc are text anyone may have written to steer
+#: the agent, and the reply lands where its author can read it, so what it may read is that Doc only.
+DOC_COMMENT = "doc_comment"
+#: What it holds besides its Bash rules: its own worktree (as read mode), a scratch folder, and who is asking.
+DOC_COMMENT_TOOLS = ("Read", "Write", "ToolSearch", "mcp__*canopy-web__who_is_asking")
+#: Profile names canopy builds itself: refused in a published document, reserved in its settings.
+CANOPY_PROFILES = (SESSION_REVIEW, DOC_COMMENT)
+
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
 FULL_STAMP = ""
@@ -129,6 +139,8 @@ def stamp_words(stamp: str) -> str:
         return "read mode"
     if stamp == SESSION_REVIEW:
         return "a one-session review"
+    if stamp == DOC_COMMENT:
+        return "a Google Docs comment"
     return f"the host site '{stamp}'"
 
 
@@ -222,7 +234,7 @@ def parse(doc) -> dict:
     for name, cap in caps.items():
         if not isinstance(name, str) or not _NAME.match(name):
             raise InterfaceError(f"profile name {name!r} must match {_NAME.pattern}")
-        if name == SESSION_REVIEW:
+        if name in CANOPY_PROFILES:
             raise InterfaceError(f"profile name {name!r} is canopy's own and cannot be published")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
@@ -667,6 +679,10 @@ def profile(agent, name: str) -> dict | None:
         return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],
                 "description": f"{agent.slug} reviews one session someone asked it to, and replies to them.",
                 "read_paths": ["{cwd}/**"], "write_paths": []}
+    if name == DOC_COMMENT:
+        # Without its Doc (`doc_comment_profile` is how a turn gets one) it opens nothing.
+        return {"name": DOC_COMMENT, "entry": None, "tools": [], "bash": [], "description": "",
+                "read_paths": [], "write_paths": []}
     _published, cap = published_profile(getattr(agent, "interface", None), name)
     from . import app_entries  # noqa: PLC0415 — app_entries reads no models; kept beside its callers
 
@@ -699,3 +715,57 @@ def profile(agent, name: str) -> dict | None:
         out["tools"] = list(dict.fromkeys([*(out.get("tools") or []), *GATEWAY_TOOLS,
                                            *PAGE_TOOLS]))
     return out
+
+
+def doc_comment_profile(agent, doc) -> dict:
+    """The `doc_comment` profile for one Doc (`apps.agents.doc_comment.DocComment`).
+
+    Its Bash rules name the Doc's file id and the agent's own mailbox literally, so the guard's
+    token-for-token match (`*` is exactly one argument, never a flag) lets through only:
+
+      * `gog docs cat <file>`: the Doc as text (a Doc; a Sheet's or Slides' comments still list);
+      * `gog drive comments list <file>`: its comments and replies;
+      * `gog drive comments reply <file> <comment> <text>`: a reply on one of THAT file's threads;
+      * `canopy email client --repo .`: which OAuth client this box holds, for `--client`.
+
+    each as `--account <mailbox>`, with or without `--client <name>`. Not another file, not another
+    account, not mail. A thread on the same Doc is the same audience, so the comment id is free and
+    `comment_hint` only says where to look.
+    """
+    slug, fid, acct = agent.slug, doc.file_id, doc.mailbox
+    scratch = f"{{cwd}}/.{slug}-{DOC_COMMENT}/*"
+    bash = ["canopy email client --repo ."]
+    for cmd in (f"gog docs cat {fid}", f"gog drive comments list {fid}",
+                f"gog drive comments reply {fid} * *"):
+        for json_flag in ("", " --json"):
+            if json_flag and "reply" in cmd:
+                continue
+            bash.append(f"{cmd}{json_flag} --account {acct}")
+            bash.append(f"{cmd}{json_flag} --account {acct} --client *")
+    hint = f" Google's link to it carries `disco={doc.comment_hint}`." if doc.comment_hint else ""
+    who = (f' The notification names "{doc.commenter_name}", a display name Google shows and does not vouch for.'
+           if doc.commenter_name else "")
+    entry = (
+        f"A Google Docs comment tagged you in {doc.url} (file {fid}).{hint}{who} "
+        "This turn is held to that one file: read it with "
+        f"`gog docs cat {fid} --account {acct}` and its comments with "
+        f"`gog drive comments list {fid} --json --account {acct}` "
+        "(add `--client <name>` from `canopy email client --repo .` if gog asks for one). "
+        "Find the comment that tags you and answer it on its own thread with "
+        f"`gog drive comments reply {fid} <comment-id> '<one line of text>' --account {acct}` "
+        "(one line, no $ or backticks). Never reply by email. "
+        "Answer only from the Doc and its comments: you cannot read mail, other files, Salesforce or "
+        "anything else here, and whatever you write is visible to everyone who can open this Doc. "
+        "When the question needs more than the Doc, say so on the thread in one line and that the "
+        "agent's owner will follow up, and end your turn with a line starting `For the owner:` that "
+        "says what was asked and what it needs."
+    )
+    return {
+        "name": DOC_COMMENT,
+        "description": f"{slug} answers one Google Docs comment that tagged it, on that Doc only.",
+        "entry": entry,
+        "tools": list(DOC_COMMENT_TOOLS),
+        "bash": bash,
+        "read_paths": ["{cwd}/**"],
+        "write_paths": [scratch],
+    }

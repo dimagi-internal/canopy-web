@@ -867,10 +867,11 @@ def _b64(text):
      "because you are mentioned in this thread by Pat.", "new"),
     ("Pat accepted a suggestion in the following document",
      "because you are subscribed to all discussions on Draft.", "archived"),
+    # The owner's subscription on the agent's own Doc, tagging nobody: only a tag wakes.
     ("Pat added a comment to the following document",
-     "because you are subscribed to all discussions on Draft.", "new"),
+     "because you are subscribed to all discussions on Draft.", "archived"),
 ])
-def test_doc_comments_wake_only_when_addressed_or_unplaceable(lead, footer, expect):
+def test_doc_comments_wake_only_when_they_tag_the_agent(lead, footer, expect):
     client = FakeClient()
     msgs = [{"id": "m1", "labelIds": ["INBOX", "UNREAD"],
              "payload": {"mimeType": "text/plain",
@@ -937,3 +938,44 @@ def test_origin_ref_names_the_message_and_its_count():
     ref = client.enqueued[0]["origin_ref"]
     assert ref["message_id"] == "18f-newest"
     assert ref["message_count"] == 4
+
+
+DOC_FID = "1QDxfhS_gWTYbu31_vhT6gdFxin1WL3XmX8q_B-_QAhE"
+_DOC_FOOTER = (f"Open (https://docs.google.com/document/d/{DOC_FID}/edit?disco=doco.abc&usp=comment_email_discussion)\n"
+               "Change what Google sends you (https://docs.google.com/document/u/1/docos/notify?ouid=1"
+               f"&id={DOC_FID}&title=Draft).")
+
+
+@pytest.mark.parametrize("comment,tagged", [
+    ("@echo@dimagi-ai.com what does this mean?", True),
+    ("what does this mean?", False),
+])
+def test_a_tagged_doc_comment_carries_its_doc_and_nothing_else_does(comment, tagged):
+    client = FakeClient()
+    msgs = [{"id": "m1", "labelIds": ["INBOX", "UNREAD"],
+             "payload": {"mimeType": "text/plain",
+                         "headers": [{"name": "From", "value":
+                                      '"Pat Reviewer (Google Docs)" <comments-noreply@docs.google.com>'},
+                                     {"name": "Subject", "value": "Draft... - a comment"}],
+                         "body": {"data": _b64("Pat Reviewer added a comment to the following document\n"
+                                               f"Draft\nPat Reviewer\n{comment}\n{_DOC_FOOTER}")}}}]
+    r = _thread_run(msgs, [{"id": "thr-d", "from": "x", "subject": "s", "messageCount": 1}])
+    res = inbox.check_inbox(client, "echo", mailbox="echo@dimagi-ai.com", gog_client="canopy", runner=r)
+    if not tagged:
+        assert res["archived"] == ["thr-d"] and client.enqueued == []
+        return
+    assert res["new"] == ["thr-d"]
+    assert client.enqueued[0]["origin_ref"]["doc_comment"] == {
+        "file_id": DOC_FID, "kind": "document", "comment_hint": "doco.abc", "commenter_name": "Pat Reviewer"}
+
+
+def test_a_person_s_mail_never_carries_a_doc():
+    client = FakeClient()
+    msgs = [{"id": "m1", "labelIds": ["INBOX", "UNREAD"],
+             "payload": {"mimeType": "text/plain",
+                         "headers": [{"name": "From", "value": "Jane <jane@example.org>"},
+                                     {"name": "Subject", "value": "hi"}],
+                         "body": {"data": _b64(f"@echo@dimagi-ai.com see\n{_DOC_FOOTER}")}}}]
+    r = _thread_run(msgs, [{"id": "thr-p", "from": "x", "subject": "s", "messageCount": 1}])
+    inbox.check_inbox(client, "echo", mailbox="echo@dimagi-ai.com", gog_client="canopy", runner=r)
+    assert "doc_comment" not in client.enqueued[0]["origin_ref"]

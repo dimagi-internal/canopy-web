@@ -12,7 +12,7 @@ from pathlib import Path
 from canopy_runner import inbox_rules
 
 #: Must equal canopy's tests/test_inbox_rules.py::VENDORED_SHA256.
-CANOPY_SHA256 = "69a23cb125fd4b7b882248e40d2ce5d4a0477a72dc8facdb4f94897ff90b8b9a"
+CANOPY_SHA256 = "b62bd1343ed04941edf33dee62acc97efdc93a117bf2aa645577f4e5e03702ce"
 
 
 def test_vendored_table_is_byte_identical_to_canopys():

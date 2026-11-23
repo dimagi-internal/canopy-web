@@ -454,6 +454,10 @@ def build(turn, *, reader_user=None) -> dict:
         # The one session this conversation's asker asked this agent to review from its
         # page, while that ask is live (`read_asked_session`). Null otherwise. Additive.
         "session_review": _session_review(turn, agent),
+        # The one Google Doc a turn a Docs comment started may read and answer in
+        # (`apps.agents.doc_comment`), with Google's display name for the commenter as a
+        # label only (`commenter_verified: false`). Null otherwise. Additive.
+        "doc_comment": _doc_comment(turn),
         # The one person a turn nobody asked for was dispatched for (`turn_asker.READS_FOR`):
         # who it answers to, and all it may read or write to. Null otherwise. Additive.
         "reads_for": _reads_for(turn),
@@ -664,6 +668,13 @@ def _reads_for(turn) -> dict | None:
     who_id = stamp.get("user_id") if isinstance(stamp, dict) else None
     person = get_user_model().objects.filter(pk=who_id).first() if isinstance(who_id, int) else None
     return {"user_id": person.pk, "email": person.email} if person is not None else None
+
+
+def _doc_comment(turn) -> dict | None:
+    from apps.agents import doc_comment  # noqa: PLC0415 — it reads the contacts and harness models
+
+    doc = doc_comment.of_turn(turn)
+    return doc.envelope() if doc is not None else None
 
 
 def _session_review(turn, agent) -> dict | None:
