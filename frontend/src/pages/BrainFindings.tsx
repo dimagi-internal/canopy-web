@@ -3,18 +3,19 @@ import { Link } from 'react-router-dom'
 import { Button, StatusBadge } from 'canopy-ui/ui'
 import type { StatusTone } from 'canopy-ui/lib'
 
-import { listBrainOutputs, setOutputStatus, type BrainOutput, type BrainOutputStatus } from '@/api/brain'
+import {
+  askFix, getFixPlan, listBrainOutputs, setOutputStatus, type BrainFixPlan, type BrainOutput, type BrainOutputStatus,
+} from '@/api/brain'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import { LineageStrip, Sightings } from './BrainFindingViz'
 
-// The Findings tab of the brain page: what learning found, written for the person who has to act on it. A finding
-// reads top to bottom as what it is (chips), where the fix belongs, the fix, the quoted evidence (each quote linked to
-// its session when the viewer reads that session, `source_sessions` from the server), then how sure it is and what it
-// did not check, then the status buttons. Under the chips, what it reaches (`LineageStrip`: sessions and people across
-// every repeat, opening the evidence) and when it was seen (`Sightings`). A finding that repeats one already done says
-// it came back; a dismissed one seen again since says so. A body's fields are free-form per learner: the known ones (`brain-learn`'s
-// system finding) are drawn on purpose and anything else falls through to a plain "label: value" list.
+// The Findings tab of the brain page: what learning found, as a list to scan and a finding to act on. Each finding is
+// one row (severity, title, where the fix belongs, how widely it was seen); opening it shows what is wrong, the fix,
+// how to tell it is fixed and the quoted evidence, beside the one thing to do with it: ask the learner's operator agent
+// to fix it (`brain.fixes`, the button saying exactly what that starts and the brief it sends), or say it is already
+// fixed or not worth fixing. Everything else a run wrote is behind "More about this finding". The filters are
+// dropdowns over status, severity and where the fix belongs, plus a text search.
 
 const sessionHref = (workspace: string, id: string) => scopedPath(workspace, `/sessions/${id}`)
 
@@ -27,28 +28,35 @@ export function plain(key: string): string {
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '')
 
 const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 }
-const SEVERITY_TONE: Record<string, StatusTone> = { high: 'destructive', medium: 'warning', low: 'neutral' }
+const SEVERITY_DOT: Record<string, string> = { high: 'bg-destructive', medium: 'bg-warning', low: 'bg-muted-foreground' }
+/** A status in words: `accepted` is a finding someone asked to be fixed. */
+const STATUS_WORD: Record<string, string> = { open: 'Open', accepted: 'Fixing', done: 'Done', dismissed: 'Dismissed' }
 const STATUS_TONE: Record<string, StatusTone> = { open: 'info', accepted: 'special', done: 'success', dismissed: 'neutral' }
-/** The statuses a person picks between, in lifecycle order; any other the server sends is listed after them. */
-const STATUSES = ['open', 'accepted', 'done', 'dismissed']
-/** What each status can move to, as the buttons say it. */
-const NEXT: Record<string, [BrainOutputStatus, string][]> = {
-  open: [['accepted', 'Accept'], ['dismissed', 'Dismiss']],
-  accepted: [['done', 'Done'], ['open', 'Reopen']],
-  dismissed: [['open', 'Reopen']],
-  done: [['open', 'Reopen']],
-}
+/** The status filter's choices: the working set (open and fixing) first. */
+const STATUS_VIEWS: [string, string, (s: string) => boolean][] = [
+  ['working', 'Open and fixing', (s) => s === 'open' || s === 'accepted'],
+  ['open', 'Open', (s) => s === 'open'],
+  ['accepted', 'Fixing', (s) => s === 'accepted'],
+  ['done', 'Done', (s) => s === 'done'],
+  ['dismissed', 'Dismissed', (s) => s === 'dismissed'],
+  ['all', 'Everything', () => true],
+]
 /** How many quotes show before "Show N more". */
-const QUOTES_SHOWN = 3
-/** The body fields drawn on purpose; every other one is in the fallback list. */
+const QUOTES_SHOWN = 2
+/** The body fields drawn on purpose; every other one is under "More about this finding". */
 const KNOWN = new Set(['severity', 'type', 'signal', 'fix_belongs', 'what_happened', 'suggested_fix', 'evidence', 'proof',
   'not_checked', 'success_measure', 'merged_from'])
 
 const statusOf = (o: BrainOutput) => o.status || 'open'
 const severityOf = (o: BrainOutput) => str(o.body?.severity).toLowerCase()
-const repoOf = (o: BrainOutput) => {
+const fixBelongs = (o: BrainOutput): Record<string, unknown> => {
   const fb = o.body?.fix_belongs
-  return fb && typeof fb === 'object' && !Array.isArray(fb) ? str((fb as Record<string, unknown>).repo) : ''
+  return fb && typeof fb === 'object' && !Array.isArray(fb) ? (fb as Record<string, unknown>) : {}
+}
+const repoOf = (o: BrainOutput) => str(fixBelongs(o).repo)
+const whereOf = (o: BrainOutput) => {
+  const fb = fixBelongs(o)
+  return [str(fb.repo), str(fb.agent), str(fb.skill)].filter((v, i, all) => v && !all.slice(0, i).includes(v)).join(' · ')
 }
 const lastSeen = (o: BrainOutput) => o.last_seen_at || o.created_at
 
@@ -64,75 +72,73 @@ function compare(a: BrainOutput, b: BrainOutput): number {
   return s || Date.parse(lastSeen(b)) - Date.parse(lastSeen(a))
 }
 
-type Facet = 'status' | 'severity' | 'repo'
-const facetOf: Record<Facet, (o: BrainOutput) => string> = { status: statusOf, severity: severityOf, repo: repoOf }
-type Filters = Record<Facet, Set<string> | null> // null: every value
+type Filters = { status: string; severity: string; repo: string; q: string }
+const ANY = ''
 
-function matches(o: BrainOutput, f: Filters, skip?: Facet): boolean {
-  return (Object.keys(facetOf) as Facet[]).every((k) => k === skip || f[k] === null || f[k]!.has(facetOf[k](o)))
+function matches(o: BrainOutput, f: Filters, skip?: keyof Filters): boolean {
+  const view = STATUS_VIEWS.find(([k]) => k === f.status)
+  if (skip !== 'status' && view && !view[2](statusOf(o))) return false
+  if (skip !== 'severity' && f.severity !== ANY && severityOf(o) !== f.severity) return false
+  if (skip !== 'repo' && f.repo !== ANY && repoOf(o) !== f.repo) return false
+  if (f.q.trim()) {
+    const words = f.q.trim().toLowerCase().split(/\s+/)
+    const text = `${o.title} ${str(o.body?.what_happened)} ${str(o.body?.suggested_fix)} ${whereOf(o)}`.toLowerCase()
+    if (!words.every((w) => text.includes(w))) return false
+  }
+  return true
 }
 
 export function Findings({ ws }: { ws: string }): JSX.Element {
   const [rows, setRows] = useState<BrainOutput[] | null>(null)
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(0)
-  const [filters, setFilters] = useState<Filters>({ status: new Set(['open', 'accepted']), severity: null, repo: null })
+  const [filters, setFilters] = useState<Filters>({ status: 'working', severity: ANY, repo: ANY, q: '' })
+  const [openId, setOpenId] = useState(0)
   useEffect(() => {
     listBrainOutputs(ws).then(setRows, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
   }, [ws])
-  const move = async (id: number, status: BrainOutputStatus) => {
-    setBusy(id)
-    setError('')
-    try {
-      const got = await setOutputStatus(ws, id, status)
-      setRows((rs) => (rs ?? []).map((o) => (o.id === id ? got : o)))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not change it')
-    } finally {
-      setBusy(0)
-    }
-  }
+  const replace = (got: BrainOutput) => setRows((rs) => (rs ?? []).map((o) => (o.id === got.id ? got : o)))
   const all = useMemo(() => (rows ?? []).filter((o) => !isDuplicate(o)), [rows])
   const shown = useMemo(() => all.filter((o) => matches(o, filters)).sort(compare), [all, filters])
   const live = shown.filter((o) => !isFaded(o))
   const faded = shown.filter(isFaded)
-
-  /** Every value a facet takes, with how many findings have it under the other facets' filters. */
-  const facet = (k: Facet, order: string[] = []): [string, number][] => {
-    const n = new Map<string, number>()
-    for (const v of order) n.set(v, 0)
-    for (const o of all) if (matches(o, filters, k)) n.set(facetOf[k](o), (n.get(facetOf[k](o)) ?? 0) + 1)
-    for (const o of all) if (!n.has(facetOf[k](o))) n.set(facetOf[k](o), 0)
-    const rest = [...n.keys()].filter((v) => !order.includes(v)).sort((a, b) => (n.get(b)! - n.get(a)!) || a.localeCompare(b))
-    return [...order, ...rest].map((v) => [v, n.get(v) ?? 0])
-  }
-  const toggle = (k: Facet, v: string, values: string[]) => setFilters((f) => {
-    const cur = new Set(f[k] ?? values)
-    if (cur.has(v)) cur.delete(v)
-    else cur.add(v)
-    return { ...f, [k]: cur.size === values.length ? null : cur }
-  })
+  const count = (skip: keyof Filters, test: (o: BrainOutput) => boolean) =>
+    all.filter((o) => matches(o, filters, skip) && test(o)).length
+  const repos = useMemo(() => [...new Set(all.map(repoOf))].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b))),
+    [all])
+  const set = (k: keyof Filters) => (v: string) => setFilters((f) => ({ ...f, [k]: v }))
+  const row = (o: BrainOutput) => (
+    <FindingRow key={o.id} ws={ws} o={o} open={openId === o.id} onToggle={() => setOpenId(openId === o.id ? 0 : o.id)}
+                onChange={replace} onError={setError} />
+  )
 
   return (
     <section className="space-y-3" aria-label="Findings">
       <p className="text-xs text-muted-foreground">
-        What learning found that you may see. A finding changes nothing by itself: accept one when someone takes it up,
-        mark it done once the fix ships, or dismiss it.
+        What learning found that you may see. Open one to read it and decide: ask for it to be fixed, or say it is
+        already fixed or not worth fixing.
       </p>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
       {!rows ? (
         error ? null : <p className="text-xs text-muted-foreground">Loading…</p>
       ) : all.length === 0 ? (
         <p className="text-xs text-muted-foreground">Nothing yet.</p>
       ) : (
         <>
-          <div className="space-y-1.5 rounded-xl border border-border bg-card p-3">
-            <FacetRow label="Status" k="status" values={facet('status', STATUSES)} filters={filters} toggle={toggle}
-                      name={plain} />
-            <FacetRow label="Severity" k="severity" values={facet('severity', ['high', 'medium', 'low'])} filters={filters}
-                      toggle={toggle} name={(v) => (v ? plain(v) : 'Not given')} />
-            <FacetRow label="Fix belongs in" k="repo" values={facet('repo')} filters={filters} toggle={toggle}
-                      name={(v) => v || 'Not named'} />
+          <div role="search" aria-label="Filter findings" className="flex flex-wrap items-end gap-2">
+            <label className="flex min-w-[12rem] flex-1 flex-col gap-0.5 text-xs text-muted-foreground">
+              Search
+              <input type="search" value={filters.q} onChange={(e) => set('q')(e.target.value)} placeholder="Words in a finding"
+                     className="rounded-md border border-input bg-background px-2 py-1 text-[13px] text-foreground" />
+            </label>
+            <Select label="Status" value={filters.status} onChange={set('status')}
+                    options={STATUS_VIEWS.map(([k, word, test]) => [k, `${word} (${count('status', (o) => test(statusOf(o)))})`])} />
+            <Select label="Severity" value={filters.severity} onChange={set('severity')}
+                    options={[[ANY, `Any (${count('severity', () => true)})`],
+                      ...['high', 'medium', 'low'].map((s): [string, string] =>
+                        [s, `${plain(s)} (${count('severity', (o) => severityOf(o) === s)})`])]} />
+            <Select label="Fix belongs in" value={filters.repo} onChange={set('repo')}
+                    options={[[ANY, `Anywhere (${count('repo', () => true)})`],
+                      ...repos.map((r): [string, string] => [r, `${r || 'Not named'} (${count('repo', (o) => repoOf(o) === r)})`])]} />
           </div>
           <p className="text-xs text-muted-foreground" role="status">
             {shown.length} of {all.length} shown, most severe first, then the most recently seen.
@@ -140,17 +146,15 @@ export function Findings({ ws }: { ws: string }): JSX.Element {
           {live.length === 0 && faded.length === 0 ? (
             <p className="text-xs text-muted-foreground">None match these filters.</p>
           ) : (
-            <ul className="space-y-3">
-              {live.map((o) => <FindingCard key={o.id} o={o} busy={busy === o.id} onMove={(s) => void move(o.id, s)} />)}
-            </ul>
+            <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">{live.map(row)}</ul>
           )}
           {faded.length > 0 && (
             <details className="rounded-xl border border-border p-3">
               <summary className="cursor-pointer text-[13px] text-muted-foreground">
                 Faded: not seen again lately ({faded.length})
               </summary>
-              <ul className="mt-3 space-y-3">
-                {faded.map((o) => <FindingCard key={o.id} o={o} busy={busy === o.id} onMove={(s) => void move(o.id, s)} />)}
+              <ul className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+                {faded.map(row)}
               </ul>
             </details>
           )}
@@ -160,38 +164,68 @@ export function Findings({ ws }: { ws: string }): JSX.Element {
   )
 }
 
-function FacetRow({ label, k, values, filters, toggle, name }: {
-  label: string; k: Facet; values: [string, number][]; filters: Filters
-  toggle: (k: Facet, v: string, values: string[]) => void; name: (v: string) => string
-}): JSX.Element | null {
-  if (values.length < 2 && k !== 'status') return null
-  const keys = values.map(([v]) => v)
+function Select({ label, value, onChange, options }: {
+  label: string; value: string; onChange: (v: string) => void; options: [string, string][]
+}): JSX.Element {
   return (
-    <div role="group" aria-label={label} className="flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="w-24 shrink-0 text-muted-foreground">{label}</span>
-      {values.map(([v, n]) => {
-        const on = filters[k] === null || filters[k]!.has(v)
-        return (
-          <button key={v || '-'} type="button" aria-pressed={on} onClick={() => toggle(k, v, keys)}
-                  className={`rounded-full border px-2 py-0.5 ${on ? 'border-primary/40 bg-primary/10 text-foreground'
-                    : 'border-border bg-background text-muted-foreground hover:text-foreground'}`}>
-            {name(v)} <span className="tabular-nums text-muted-foreground">{n}</span>
-          </button>
-        )
-      })}
-    </div>
+    <label className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+      {label}
+      <select value={value} onChange={(e) => onChange(e.target.value)}
+              className="rounded-md border border-input bg-background px-2 py-1 text-[13px] text-foreground">
+        {options.map(([v, text]) => <option key={v || '-'} value={v}>{text}</option>)}
+      </select>
+    </label>
   )
 }
 
 type Session = NonNullable<BrainOutput['sessions']>[number]
 
-function FindingCard({ o, busy, onMove }: { o: BrainOutput; busy: boolean; onMove: (s: BrainOutputStatus) => void }): JSX.Element {
-  const body = (o.body ?? {}) as Record<string, unknown>
+function FindingRow({ ws, o, open, onToggle, onChange, onError }: {
+  ws: string; o: BrainOutput; open: boolean; onToggle: () => void; onChange: (o: BrainOutput) => void
+  onError: (e: string) => void
+}): JSX.Element {
   const severity = severityOf(o)
   const status = statusOf(o)
-  const fb = body.fix_belongs && typeof body.fix_belongs === 'object' && !Array.isArray(body.fix_belongs)
-    ? (body.fix_belongs as Record<string, unknown>) : {}
-  const where = [str(fb.repo), str(fb.agent), str(fb.skill)].filter((v, i, all) => v && v !== all[i - 1])
+  const title = o.title || plain(o.kind)
+  const where = repoOf(o)
+  const sessions = o.sessions_seen ?? 0
+  const people = o.people_seen ?? 0
+  const meta = [
+    where,
+    sessions > 0 ? `${sessions} session${sessions === 1 ? '' : 's'}` : '',
+    people > 0 ? `${people} ${people === 1 ? 'person' : 'people'}` : '',
+    `last seen ${relativeAge(lastSeen(o), undefined, { seconds: false })}`,
+  ].filter(Boolean).join(' · ')
+  const detailId = `finding-${o.id}`
+  return (
+    <li aria-label={title} className="text-[13px]">
+      <button type="button" aria-expanded={open} aria-controls={detailId} onClick={onToggle}
+              className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/40">
+        <span className="mt-1.5 flex w-16 shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span aria-hidden className={`h-2 w-2 rounded-full ${SEVERITY_DOT[severity] ?? 'bg-border'}`} />
+          {severity ? plain(severity) : '—'}
+        </span>
+        <span className="min-w-0 flex-1 space-y-0.5">
+          <h3 className={`text-sm font-medium text-foreground ${open ? '' : 'line-clamp-2'}`}>{title}</h3>
+          <span className="block text-xs text-muted-foreground">{meta}</span>
+        </span>
+        <span className="flex shrink-0 flex-wrap justify-end gap-1">
+          {status !== 'open' && <StatusBadge tone={STATUS_TONE[status] ?? 'neutral'}>{STATUS_WORD[status] ?? plain(status)}</StatusBadge>}
+          {o.came_back && <StatusBadge tone="warning">Came back</StatusBadge>}
+        </span>
+      </button>
+      {open && (
+        <div id={detailId} className="grid gap-5 border-t border-border bg-background/40 px-4 py-4 md:grid-cols-[minmax(0,1fr)_17rem]">
+          <FindingDetail o={o} />
+          <Decide ws={ws} o={o} onChange={onChange} onError={onError} />
+        </div>
+      )}
+    </li>
+  )
+}
+
+function FindingDetail({ o }: { o: BrainOutput }): JSX.Element {
+  const body = (o.body ?? {}) as Record<string, unknown>
   const bySource = new Map<number, Session>((o.source_sessions ?? []).map((s) => [s.source, s]))
   const evidence = Array.isArray(body.evidence) ? body.evidence : []
   const [allQuotes, setAllQuotes] = useState(false)
@@ -200,88 +234,162 @@ function FindingCard({ o, busy, onMove }: { o: BrainOutput; busy: boolean; onMov
     setAllQuotes(true)
     evidenceRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
   }
+  const status = statusOf(o)
   const seenSinceDismissed = status === 'dismissed' && !!o.status_at && !!o.last_seen_at &&
     Date.parse(o.last_seen_at) > Date.parse(o.status_at)
   const rest = Object.entries(body).filter(([k, v]) => !KNOWN.has(k) && v !== null && v !== '' &&
     !(Array.isArray(v) && v.length === 0))
+  const merged = mergedTitles(body.merged_from)
+  const where = whereOf(o)
   return (
-    <li className="space-y-2 rounded-xl border border-border bg-card p-4 text-[13px]" aria-label={o.title || plain(o.kind)}>
-      <h3 className="text-sm font-semibold text-foreground">{o.title || plain(o.kind)}</h3>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {severity && <StatusBadge tone={SEVERITY_TONE[severity] ?? 'neutral'}>{plain(severity)} severity</StatusBadge>}
-        <StatusBadge tone={STATUS_TONE[status] ?? 'neutral'}>{plain(status)}</StatusBadge>
-        {str(body.type) && <StatusBadge tone="neutral">{plain(str(body.type))}</StatusBadge>}
-        {str(body.signal) && <StatusBadge tone="neutral">{plain(str(body.signal))}</StatusBadge>}
-        {o.kind !== 'finding' && <StatusBadge tone="neutral">{plain(o.kind)}</StatusBadge>}
-        {isFaded(o) && <StatusBadge tone="neutral">Faded</StatusBadge>}
-        {o.came_back && <StatusBadge tone="warning">Came back after done</StatusBadge>}
-        {seenSinceDismissed && <StatusBadge tone="neutral">Seen again since dismissed</StatusBadge>}
-        <span className="text-xs text-muted-foreground">
-          {(o.seen ?? 1) > 1 ? `seen ${o.seen} times` : 'seen once'} · last seen{' '}
-          {relativeAge(lastSeen(o), undefined, { seconds: false })}
-        </span>
-      </div>
-      {((o.sessions_seen ?? 0) > 0 || (o.sightings ?? []).length > 0) && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <LineageStrip o={o} onEvidence={evidence.length > 0 ? showEvidence : undefined} />
-          <Sightings times={o.sightings ?? []} />
-        </div>
+    <div className="min-w-0 space-y-4">
+      {str(body.what_happened) && <Field label="What's wrong">{str(body.what_happened)}</Field>}
+      {(str(body.suggested_fix) || where) && (
+        <Field label="The fix">
+          {str(body.suggested_fix)}
+          {where && <span className="mt-1 block text-xs text-muted-foreground">Belongs in {where}</span>}
+        </Field>
       )}
-      {where.length > 0 && (
-        <p className="text-foreground">
-          <span className="text-muted-foreground">Fix belongs in: </span>
-          <span className="font-medium">{where.join(' · ')}</span>
-        </p>
-      )}
-      {str(body.what_happened) && <Field label="What happened">{str(body.what_happened)}</Field>}
-      {str(body.suggested_fix) && <Field label="Suggested fix">{str(body.suggested_fix)}</Field>}
+      {str(body.success_measure) && <Field label="Fixed when">{str(body.success_measure)}</Field>}
       {evidence.length > 0 && (
         <div ref={evidenceRef}>
           <Evidence items={evidence} bySource={bySource} open={allQuotes} setOpen={setAllQuotes} />
         </div>
       )}
-      {str(body.success_measure) && <Field label="How to tell it is fixed">{str(body.success_measure)}</Field>}
-      {mergedTitles(body.merged_from).length > 0 && (
-        <Field label="Merged from">{mergedTitles(body.merged_from).join('\n')}</Field>
-      )}
-      {rest.length > 0 && (
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-xs">
-          {rest.map(([k, v]) => (
-            <Fragment key={k}>
-              <dt className="text-muted-foreground">{plain(k)}</dt>
-              <dd className="whitespace-pre-wrap break-words text-foreground">{shown(v)}</dd>
-            </Fragment>
-          ))}
-        </dl>
-      )}
-      {(str(body.proof) || str(body.not_checked)) && (
-        <div className="space-y-0.5 text-xs text-muted-foreground">
+      <details className="text-xs text-muted-foreground">
+        <summary className="cursor-pointer">More about this finding</summary>
+        <div className="mt-2 space-y-2">
+          {((o.sessions_seen ?? 0) > 0 || (o.sightings ?? []).length > 0) && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <LineageStrip o={o} onEvidence={evidence.length > 0 ? showEvidence : undefined} />
+              <Sightings times={o.sightings ?? []} />
+            </div>
+          )}
+          <p>
+            {(o.seen ?? 1) > 1 ? `Seen ${o.seen} times` : 'Seen once'}
+            {str(body.type) && ` · ${plain(str(body.type))}`}
+            {str(body.signal) && ` · ${plain(str(body.signal))}`}
+            {o.kind !== 'finding' && ` · ${plain(o.kind)}`}
+            {o.came_back && ' · came back after it was done'}
+            {seenSinceDismissed && ' · seen again since it was dismissed'}
+          </p>
           {str(body.proof) && <p>How sure: {str(body.proof)}</p>}
           {str(body.not_checked) && <p>Not checked: {str(body.not_checked)}</p>}
-        </div>
-      )}
-      <Sources o={o} />
-      {o.may_set_status && (NEXT[status] ?? []).length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          {isFaded(o) && (
-            <Button size="sm" variant="outline" disabled={busy} title="No run has seen it lately; keep it open anyway"
-                    onClick={() => onMove(status as BrainOutputStatus)}>Keep</Button>
+          {merged.length > 0 && <p className="whitespace-pre-wrap">Merged from: {merged.join('\n')}</p>}
+          {rest.length > 0 && (
+            <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5">
+              {rest.map(([k, v]) => (
+                <Fragment key={k}>
+                  <dt>{plain(k)}</dt>
+                  <dd className="whitespace-pre-wrap break-words text-foreground">{shown(v)}</dd>
+                </Fragment>
+              ))}
+            </dl>
           )}
-          {(NEXT[status] ?? []).map(([to, label]) => (
-            <Button key={to} size="sm" variant={to === 'accepted' || to === 'done' ? 'outline' : 'ghost'} disabled={busy}
-                    onClick={() => onMove(to)}>{label}</Button>
-          ))}
+          <Sources o={o} />
         </div>
+      </details>
+    </div>
+  )
+}
+
+/** The one decision a finding asks for, each choice saying what it does. */
+function Decide({ ws, o, onChange, onError }: {
+  ws: string; o: BrainOutput; onChange: (o: BrainOutput) => void; onError: (e: string) => void
+}): JSX.Element {
+  const status = statusOf(o)
+  const [plan, setPlan] = useState<BrainFixPlan | null>(null)
+  const [busy, setBusy] = useState(false)
+  const may = Boolean(o.may_set_status)
+  const fixer = o.fixer?.name ?? ''
+  useEffect(() => {
+    if (!may || status !== 'open' || !o.fixer) return
+    let live = true
+    getFixPlan(ws, o.id).then((p) => { if (live) setPlan(p) }, () => { if (live) setPlan(null) })
+    return () => { live = false }
+  }, [ws, o.id, o.fixer, may, status])
+  const run = async (work: () => Promise<BrainOutput>) => {
+    setBusy(true)
+    onError('')
+    try {
+      onChange(await work())
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not do that')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const move = (to: BrainOutputStatus) => void run(() => setOutputStatus(ws, o.id, to))
+  const fix = () => void run(async () => (await askFix(ws, o.id)).output as BrainOutput)
+  const conversation = o.fix_session ? <Link className="underline" to={o.fix_session}>the conversation</Link> : null
+
+  return (
+    <aside aria-label="What to do with it" className="space-y-3 md:border-l md:border-border md:pl-5">
+      {status === 'accepted' && (
+        <p className="text-foreground">
+          {fixer ? `${fixer} is fixing this` : 'Someone is fixing this'}{conversation ? <>: {conversation}.</> : '.'}
+        </p>
       )}
-    </li>
+      {status === 'done' && <p className="text-foreground">Done{o.status_by ? `, marked by ${o.status_by}` : ''}.</p>}
+      {status === 'dismissed' && <p className="text-foreground">Dismissed{o.status_by ? ` by ${o.status_by}` : ''}.</p>}
+      {!may ? (
+        status === 'open' && <p className="text-xs text-muted-foreground">Its workspace's owners and admins decide what happens to it.</p>
+      ) : status === 'open' ? (
+        <>
+          {o.fixer && (
+            <Choice label={plan?.label || `Ask ${fixer} to fix this`} primary disabled={busy || !plan} onClick={fix}
+                    note={plan?.what_happens ?? 'Loading what this starts…'}>
+              {plan?.brief && (
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">Read the message {fixer} gets</summary>
+                  <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-2 text-[11px] text-foreground">
+                    {plan.brief}
+                  </pre>
+                </details>
+              )}
+            </Choice>
+          )}
+          <Choice label="Already fixed" disabled={busy} onClick={() => move('done')}
+                  note="Marks it done. If learning sees it again, it comes back flagged as a repeat." />
+          <Choice label="Not worth fixing" disabled={busy} onClick={() => move('dismissed')}
+                  note="Dismisses it. Learning folds repeats into it for a while instead of raising it again." />
+          {isFaded(o) && (
+            <Choice label="Keep" disabled={busy} onClick={() => move('open')}
+                    note="No run has seen it lately. Keeps it in the list anyway." />
+          )}
+        </>
+      ) : status === 'accepted' ? (
+        <>
+          <Choice label="Mark done" disabled={busy} onClick={() => move('done')}
+                  note={`Once the fix has shipped. ${fixer || 'The agent'} is asked to do this itself when it does.`} />
+          <Choice label="Stop fixing" disabled={busy} onClick={() => move('open')}
+                  note="Back to open. It does not stop the conversation: tell the agent there." />
+        </>
+      ) : (
+        <Choice label="Reopen" disabled={busy} onClick={() => move('open')} note="Back to open, to decide again." />
+      )}
+    </aside>
+  )
+}
+
+function Choice({ label, note, onClick, disabled, primary, children }: {
+  label: string; note: string; onClick: () => void; disabled?: boolean; primary?: boolean; children?: ReactNode
+}): JSX.Element {
+  return (
+    <div className="space-y-1">
+      <Button size="sm" variant={primary ? 'default' : 'outline'} disabled={disabled} onClick={onClick}
+              className="w-full justify-center">{label}</Button>
+      <p className="text-xs text-muted-foreground">{note}</p>
+      {children}
+    </div>
   )
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }): JSX.Element {
   return (
-    <div>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="whitespace-pre-wrap break-words text-foreground">{children}</p>
+    <div className="space-y-0.5">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <div className="whitespace-pre-wrap break-words leading-relaxed text-foreground">{children}</div>
     </div>
   )
 }
@@ -293,7 +401,7 @@ function Evidence({ items, bySource, open, setOpen }: {
   const list = open ? items : items.slice(0, QUOTES_SHOWN)
   return (
     <div className="space-y-1">
-      <p className="text-xs text-muted-foreground">Evidence</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Evidence</p>
       <ul className="space-y-1.5">
         {list.map((e, i) => {
           if (!e || typeof e !== 'object' || Array.isArray(e)) {
@@ -305,11 +413,8 @@ function Evidence({ items, bySource, open, setOpen }: {
             <li key={i} className="border-l-2 border-border pl-2">
               <q className="whitespace-pre-wrap break-words text-foreground">{str(q.quote) || '(no quote)'}</q>
               <span className="block text-xs text-muted-foreground">
-                {s ? (
-                  <>
-                    <Link className="underline" to={sessionHref(s.workspace, s.session_id)}>{s.title || 'untitled session'}</Link>
-                  </>
-                ) : 'a session you do not read'}
+                {s ? <Link className="underline" to={sessionHref(s.workspace, s.session_id)}>{s.title || 'untitled session'}</Link>
+                  : 'a session you do not read'}
               </span>
             </li>
           )
@@ -324,15 +429,15 @@ function Evidence({ items, bySource, open, setOpen }: {
   )
 }
 
-/** The learner that found it and how many sessions it came from, in the footer; the sessions behind a disclosure. */
+/** The learner that found it and how many sessions it came from; the sessions behind a disclosure. */
 function Sources({ o }: { o: BrainOutput }): JSX.Element {
   const sessions = o.sessions ?? []
   const hidden = o.hidden_sessions ?? 0
   const total = sessions.length + hidden
   const age = <>{' · first seen '}{relativeAge(o.created_at, undefined, { seconds: false })}</>
-  if (total === 0) return <p className="text-xs text-muted-foreground">Found by {o.learner}{age}</p>
+  if (total === 0) return <p>Found by {o.learner}{age}</p>
   return (
-    <details className="text-xs text-muted-foreground">
+    <details>
       <summary className="cursor-pointer">
         Found by {o.learner} in {total} session{total === 1 ? '' : 's'}{age}
       </summary>

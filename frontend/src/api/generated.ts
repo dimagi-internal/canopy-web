@@ -20424,6 +20424,33 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/brain/outputs/{output_id}/fix": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What asking for a finding's fix would do
+         * @description Before the button is pressed: which agent is asked (the learner's operator), the words on the button, exactly
+         *     what happens, and the brief it sends word for word. Changes nothing.
+         */
+        readonly get: operations["get_output_fix_plan"];
+        readonly put?: never;
+        /**
+         * Ask the learner's operator agent to fix a finding
+         * @description Starts your conversation with the learner's operator agent (or continues the one you have about this finding)
+         *     with the brief `GET …/fix` shows; the agent fixes it, opens a pull request and sets the finding done once it ships.
+         *     The finding becomes `accepted` (Fixing). Only a person asks: an agent would be starting itself.
+         */
+        readonly post: operations["ask_output_fix"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/brain/outputs/{output_id}/merge": {
         readonly parameters: {
             readonly query?: never;
@@ -53781,6 +53808,13 @@ export interface components {
              */
             readonly started_at: string;
         };
+        /** BrainOutputAgent */
+        readonly BrainOutputAgent: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
         /** BrainOutputOut */
         readonly BrainOutputOut: {
             /** Id */
@@ -53888,6 +53922,13 @@ export interface components {
              * @default false
              */
             readonly may_set_status: boolean;
+            /** @description The agent a fix is asked of: its learner's operator. */
+            readonly fixer?: components["schemas"]["BrainOutputAgent"] | null;
+            /**
+             * Fix Session
+             * @description The address of a conversation fixing it that you read (`/fix`), if any.
+             */
+            readonly fix_session?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -53952,6 +53993,44 @@ export interface components {
              * @description open | accepted | dismissed | done
              */
             readonly status: string;
+        };
+        /** BrainOutputFixPlanOut */
+        readonly BrainOutputFixPlanOut: {
+            /** @description Who is asked: the learner's operator, if it has one. */
+            readonly agent?: components["schemas"]["BrainOutputAgent"] | null;
+            /**
+             * Label
+             * @description The words on the button.
+             * @default
+             */
+            readonly label: string;
+            /**
+             * What Happens
+             * @description Exactly what asking does, in one or two sentences.
+             */
+            readonly what_happens: string;
+            /**
+             * Brief
+             * @description The message the agent gets, word for word.
+             * @default
+             */
+            readonly brief: string;
+            /**
+             * Continues
+             * @description You already have a conversation fixing it: asking continues it.
+             * @default false
+             */
+            readonly continues: boolean;
+        };
+        /** BrainOutputFixOut */
+        readonly BrainOutputFixOut: {
+            readonly output: components["schemas"]["BrainOutputOut"];
+            /** Session Id */
+            readonly session_id: string;
+            /** Session Url */
+            readonly session_url: string;
+            /** Turn Id */
+            readonly turn_id?: string | null;
         };
         /** BrainOutputMergeIn */
         readonly BrainOutputMergeIn: {
@@ -82678,6 +82757,95 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["BrainOutputOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly get_output_fix_plan: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputFixPlanOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly ask_output_fix: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputFixOut"];
                 };
             };
             /** @description Forbidden */

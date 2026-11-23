@@ -14,15 +14,19 @@ from apps.api.route_gates import gate
 from apps.canopy_sessions import access
 from apps.canopy_sessions.models import Session
 from apps.common import redact
+from apps.harness import initiator as who
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.gates import membership_or_404
 from apps.workspaces.gates import require as require_role
+from apps.workspaces.links import scoped_url
 
 from . import actor as actor_mod
-from . import cascade, findings, outputs, person, registry, reporting, scope, targets
+from . import cascade, findings, fixes, outputs, person, registry, reporting, scope, targets
 from .models import BrainCapability, BrainOutput, OutputLineage, SourceLink
 from .schemas import (
+    BrainOutputFixOut,
+    BrainOutputFixPlanOut,
     BrainOutputMergeIn,
     BrainOutputOut,
     BrainOutputStatusIn,
@@ -229,7 +233,7 @@ def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = ""
     acting = None if as_person else actor_mod.resolve(request)[0]
     acting = acting if acting is not None and acting.is_agent else None
     qs = (outputs.visible_to(request.user, as_person=as_person, acting=acting)
-          .select_related("capability", "status_by", "run")
+          .select_related("capability", "capability__operator", "status_by", "run")
           .filter(workspace_id__in=scope.of_request(request)).order_by("-created_at", "-pk"))
     if subject_type:
         qs = qs.filter(subject_type=subject_type)
@@ -245,6 +249,7 @@ def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
     memo: dict = {}
     fades: dict = {}
     reach = findings.breadth(rows)
+    fixing = fixes.sessions_of(user, rows)
 
     def may_set(o) -> bool:
         if acting is not None:
@@ -262,6 +267,9 @@ def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
              "breadth": findings.breadth_label(o, reach[o.pk]["sessions"]),
              "sightings": findings.sighting_times(o),
              "may_set_status": may_set(o),
+             "fixer": ({"slug": o.capability.operator.slug, "name": o.capability.operator.name or
+                        o.capability.operator.slug} if o.capability.operator_id else None),
+             "fix_session": fixing.get(o.pk),
              "sessions": [named[s] for s in cited.get(str(o.pk), []) if s in named],
              "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named),
              "source_sessions": [{"source": src, **named[s]} for src, s in by_source.get(str(o.pk), []) if s in named]}
@@ -293,6 +301,49 @@ def set_output_status(request: HttpRequest, output_id: int, payload: BrainOutput
     except ValueError as e:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
     return _outputs_out(user, [out], as_person=not actor.is_agent, acting=acting)[0]
+
+
+def _fixable_or_404(request: HttpRequest, output_id: int) -> BrainOutput:
+    """A finding the person themselves reads and acts for; anything else is the same 404 or a 403."""
+    user = person.the_person(request)
+    out = (BrainOutput.objects.select_related("capability", "capability__operator", "status_by", "run")
+           .filter(pk=output_id, state=BrainOutput.ACTIVE, workspace_id__in=wsvc.request_member_slugs(request))
+           .first())
+    if out is None or not outputs.visible_to(user, as_person=True).filter(pk=out.pk).exists():
+        raise ProblemError(404, "No such output", type_=TYPE_NOT_FOUND)
+    if not findings.acts_for(user, out):
+        raise ProblemError(403, "Only the people who act for its audience ask for a fix", type_=TYPE_FORBIDDEN)
+    return out
+
+
+@router.get("/brain/outputs/{output_id}/fix", response={200: BrainOutputFixPlanOut, **refusals(403, 404)},
+            summary="What asking for a finding's fix would do")
+@gate("brain.manage", "self")  # the person themselves, who acts for its audience (findings.acts_for)
+def get_output_fix_plan(request: HttpRequest, output_id: int) -> dict:
+    """Before the button is pressed: which agent is asked (the learner's operator), the words on the button, exactly
+    what happens, and the brief it sends word for word. Changes nothing."""
+    out = _fixable_or_404(request, output_id)
+    return fixes.plan(out, request.user)
+
+
+@router.post("/brain/outputs/{output_id}/fix", response={200: BrainOutputFixOut, **refusals(403, 404, 422)},
+             summary="Ask the learner's operator agent to fix a finding")
+@gate("brain.manage", "self", kind="action")  # the person themselves, who acts for its audience (findings.acts_for)
+def ask_output_fix(request: HttpRequest, output_id: int) -> dict:
+    """Starts your conversation with the learner's operator agent (or continues the one you have about this finding)
+    with the brief `GET …/fix` shows; the agent fixes it, opens a pull request and sets the finding done once it ships.
+    The finding becomes `accepted` (Fixing). Only a person asks: an agent would be starting itself."""
+    out = _fixable_or_404(request, output_id)
+    try:
+        session, turn = fixes.start(out, user=request.user, initiator=who.for_request(request, via="brain-fix"))
+    except fixes.FixRefusedError as e:
+        kind = TYPE_FORBIDDEN if e.status == 403 else TYPE_VALIDATION
+        raise ProblemError(e.status, "Refused" if e.status == 403 else "Invalid request", type_=kind,
+                           detail=str(e)) from e
+    out.refresh_from_db()
+    return {"output": _outputs_out(request.user, [out], as_person=True)[0], "session_id": str(session.pk),
+            "session_url": scoped_url(session.workspace_id, f"/sessions/{session.pk}"),
+            "turn_id": str(turn.pk) if turn else None}
 
 
 @router.post("/brain/outputs/{output_id}/merge", response={200: BrainOutputOut, **refusals(403, 404, 422)},

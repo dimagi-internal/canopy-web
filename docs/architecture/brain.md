@@ -485,14 +485,14 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   an output's citation of it, is a count (`state.run_page`, `api_admin._cited`). A sub-workspace's owner never sees a
   sibling's or a parent's aggregate, runs or findings; a canopy admin also sees the unscoped runs. The runs list reads
   again while one is open.
-- **Two tabs.** Findings, the default (`frontend/src/pages/BrainFindings.tsx`), is written for whoever acts on them:
-  filtered by status (open and accepted at first), severity and the repo the fix belongs in, most severe first then the
-  most recently seen; a body's known fields (`brain-learn`'s system finding) drawn in plain words, any other as
-  "label: value". Each evidence quote names a source id; the outputs list maps it to a session only through
-  `source_sessions`, which lists the cited sources whose session the viewer already reads (`api_admin._cited`), so a
-  quote from any other says "a session you do not read". A faded finding sits in its own collapsed group with Keep; a
-  merged duplicate is never listed. Each card draws what the finding reaches (`frontend/src/pages/BrainFindingViz.tsx::LineageStrip`:
-  finding → sessions → people, the sessions node opening the evidence) and when it was seen (`Sightings`), and says
+- **Two tabs.** Findings, the default (`frontend/src/pages/BrainFindings.tsx`): one row per finding (severity, title,
+  repo, reach), dropdown filters (status, open and fixing at first; severity; repo) and a search, most severe then most
+  recently seen. Opened: what's wrong, the fix, fixed when, quotes; the rest behind one disclosure. A quote names a
+  source id, mapped to a session only through `source_sessions` (sessions the viewer reads, `api_admin._cited`), else
+  "a session you do not read". The decision: **ask the learner's operator to fix it** (`apps/brain/fixes.py`, `GET`
+  then `POST /api/w/<ws>/brain/outputs/<id>/fix`: the person's own conversation with the operator, brief shown first,
+  status `accepted` shown as Fixing and linked), already fixed (done) or not worth fixing (dismissed). Faded findings
+  sit in a collapsed group with Keep; a merged duplicate is never listed. `LineageStrip`, `Sightings` draw reach; it says
   when it came back after done or was seen again since it was dismissed. Everything else is "Setup and audit"
   (`?tab=setup`), whose **learner scorecard** (`GET /api/w/<ws>/brain/scorecard`, `apps/brain/scorecard.py`) gives
   each target its findings of the last eight weeks by week and where each stands now, precision (accepted and done
