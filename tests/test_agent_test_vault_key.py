@@ -27,14 +27,12 @@ from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership
+from tests.fixtures.agent_test_key import passphrase_keyset as _passphrase_keyset
 from tests.fixtures.sensitive import SENSITIVE, rewrap_for, unwrap, world
 from tests.fixtures.vault_zk import ref
 from tests.token_helpers import bearer_headers
 
 pytestmark = pytest.mark.django_db
-
-PASSPHRASE = "a test passphrase for a harness"
-
 
 @pytest.fixture()
 def w():
@@ -57,19 +55,6 @@ def _turn_on(w):
     r = w["c"].put(_url(w), {"enabled": True}, content_type="application/json")
     assert r.status_code == 200, r.content
     return r.json()
-
-
-def _passphrase_keyset(user, *, prf=False):
-    """What a harness's browser (or the CLI) makes: a key pair, its private scalar sealed
-    with a passphrase + Secret Key (2SKD). Returns (body, private key)."""
-    priv = ec.generate_private_key(ec.SECP256R1())
-    scalar = priv.private_numbers().private_value.to_bytes(32, "big")
-    seals = [ref.seal_user_key_2skd(scalar, str(user.pk), PASSPHRASE, os.urandom(16), os.urandom(16),
-                                    os.urandom(12))]
-    if prf:
-        seals.append(ref.seal_user_key(scalar, str(user.pk), ref.b64u(b"cred"), os.urandom(32),
-                                       os.urandom(16), os.urandom(12)))
-    return {"public_jwk": ref.jwk(priv.public_key()), "seals": seals}, priv
 
 
 def _make_key(w, **kw):

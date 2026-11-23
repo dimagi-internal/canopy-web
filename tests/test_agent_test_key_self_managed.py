@@ -27,9 +27,9 @@ from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import DelegatedToken, PersonalToken
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures import site_gateway as sg
+from tests.fixtures.agent_test_key import passphrase_keyset as _passphrase_keyset
 from tests.fixtures.connections import sealed_to_owner, sf_app
 from tests.fixtures.sensitive import SENSITIVE, world
-from tests.test_agent_test_vault_key import _passphrase_keyset
 from tests.token_helpers import bearer_client
 
 pytestmark = pytest.mark.django_db
