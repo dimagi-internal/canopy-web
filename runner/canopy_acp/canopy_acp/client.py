@@ -384,6 +384,10 @@ class AcpConnection:
 # installs both at bootstrap.
 ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp"
 ADAPTER_BIN = "claude-agent-acp"
+#: The one adapter version every runner runs: the signed bundle installs it
+#: (`runner/packaging/versions.json`, which the build checks against this), and
+#: `install_adapter` installs it and replaces any other version under its prefix.
+ADAPTER_VERSION = "0.109.1"
 
 
 #: Install prefixes searched after PATH: the cloud box's (`npm i -g --prefix
@@ -434,24 +438,42 @@ def find_adapter(explicit: str | None = None, prefixes=None) -> list[str] | None
     return None
 
 
-def install_adapter(prefix: pathlib.Path) -> str:
-    """Install the adapter under `prefix` unless one is already found there or on
-    PATH. `npm install -g --prefix`: a bare `-g` is EACCES for a service user.
+def installed_version(prefix: pathlib.Path) -> str | None:
+    """The adapter version installed under `prefix`, or None when there is none."""
+    for entry in _entry_points(pathlib.Path(prefix)):
+        try:
+            return str(json.loads((entry.parent.parent / "package.json").read_text())["version"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
 
-    Returns "present", "installed", "no-node" (nothing attempted) or
-    "failed: <why>" — the caller words its own log line."""
-    if shutil.which(ADAPTER_BIN) or find_adapter(prefixes=[prefix]):
+
+def install_adapter(prefix: pathlib.Path) -> str:
+    """Put ADAPTER_VERSION under `prefix`. `npm install -g --prefix`: a bare `-g` is
+    EACCES for a service user.
+
+    An install of another version under `prefix` is replaced, so a runner that
+    installed the adapter once keeps up with the pin. An adapter on PATH that is
+    not under `prefix` is someone else's to manage, and is left alone.
+
+    Returns "present", "installed", "upgraded from <version>", "no-node" (nothing
+    attempted) or "failed: <why>" — the caller words its own log line."""
+    have = installed_version(prefix)
+    if have == ADAPTER_VERSION:
+        return "present"
+    if have is None and shutil.which(ADAPTER_BIN):
         return "present"
     npm = shutil.which("npm")
     if not npm or not shutil.which("node"):
         return "no-node"
     try:
-        subprocess.run([npm, "install", "-g", "--prefix", str(prefix), ADAPTER_PACKAGE],
+        subprocess.run([npm, "install", "-g", "--prefix", str(prefix),
+                        f"{ADAPTER_PACKAGE}@{ADAPTER_VERSION}"],
                        check=True, timeout=600,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as exc:  # noqa: BLE001
         return f"failed: {exc}"
-    return "installed"
+    return f"upgraded from {have}" if have else "installed"
 
 
 class AcpAgent:

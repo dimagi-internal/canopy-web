@@ -9168,18 +9168,13 @@ def _install_acp_adapter() -> None:
       (EACCES). `$HOME/.local/bin` is already first on the unit's PATH
       (runner.cfn.yaml), so `--prefix "$HOME/.local"` installs somewhere the
       adapter is actually found.
-    * **It never asked whether the adapter was already installed.** With one
-      present at /usr/bin/claude-agent-acp it still ran the doomed install and
-      logged "could not install the ACP adapter … the ACP executor will fall
-      back to claude -p" — on a boot that then executed every turn over ACP
-      perfectly well. A warning that names the wrong outcome is worse than
+    * **An adapter that is already there is not reinstalled.** One on PATH
+      outside the prefix (e.g. /usr/bin/claude-agent-acp) is left alone, and
+      one under the prefix is replaced only when it is not the pinned
+      `ADAPTER_VERSION`. A warning that names the wrong outcome is worse than
       silence: it sends the next person debugging in the opposite direction.
     """
     if not isinstance(_executor(), AcpExecutor):
-        return
-    existing = shutil.which(ACP_ADAPTER_BIN)
-    if existing:
-        _log(f"ACP adapter already on PATH ({existing})")
         return
     core = _acp_core()
     if core is None:
@@ -9188,10 +9183,10 @@ def _install_acp_adapter() -> None:
     # The install itself is canopy_acp's, shared with the laptop runner.
     prefix = pathlib.Path.home() / ".local"
     outcome = core.install_adapter(prefix)
-    if outcome == "installed":
-        _log(f"installed {ACP_ADAPTER_PACKAGE} into {prefix}")
+    if outcome == "installed" or outcome.startswith("upgraded"):
+        _log(f"{outcome}: {ACP_ADAPTER_PACKAGE}@{core.ADAPTER_VERSION} into {prefix}")
     elif outcome == "present":
-        _log(f"ACP adapter already installed under {prefix}")
+        _log(f"ACP adapter already present ({shutil.which(ACP_ADAPTER_BIN) or prefix})")
     elif outcome == "no-node":
         _log("warn: node/npm not on PATH; the ACP executor will fall back to claude -p")
     else:

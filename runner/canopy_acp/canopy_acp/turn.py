@@ -112,7 +112,8 @@ def stop_origin(stop: str, canopy_cancelled: bool, init) -> str:
 
     A "turn ended: cancelled" with no stop requested must say whether canopy sent
     the cancel or the adapter ended the turn on its own, and which
-    claude-agent-acp the box runs (cloud boxes install it unpinned). Both decide
+    claude-agent-acp the box runs (a box can still run another version than the
+    pin until its next install). Both decide
     where the fix goes."""
     info = (init or {}).get("agentInfo") if isinstance(init, dict) else None
     version = info.get("version") if isinstance(info, dict) else ""

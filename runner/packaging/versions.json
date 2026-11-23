@@ -39,6 +39,6 @@
   },
   "acp_adapter": {
     "package": "@agentclientprotocol/claude-agent-acp",
-    "version": "0.93.0"
+    "version": "0.109.1"
   }
 }
