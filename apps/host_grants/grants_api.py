@@ -25,6 +25,13 @@ passkey (the Canopy Runner app) has the person confirm the same grant in their
 browser instead: `/api/me/host-grants/{id}/confirm/begin|finish`, on their own
 browser session (the section at the end).
 
+**An agent's own login** has no passkey, so it never confirms one of the ways above.
+While an admin of its agent has turned on the agent test key (`Agent.test_vault_key`,
+`apps/agents/credentials/login_test_key.py`), that login confirms its OWN waiting
+grant with its own canopy credential, without a passkey:
+`POST /api/me/host-grants/{id}/confirm-as-agent`, finding the id with
+`GET /api/me/host-grants/waiting` (the section at the end).
+
 Stopping a grant stops the page's whole permission (`host_grants.same_page`: the
 panel re-mints while its tab is open, so one page's permission is several rows),
 at once: the gateway and Views refuse it from the next call.
@@ -37,7 +44,7 @@ from django.http import HttpRequest
 from ninja import Router, Schema, Status
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_CONFLICT, TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.passkeys import services as passkeys
@@ -269,18 +276,24 @@ def _confirm(request: HttpRequest, grant, credential: dict, window_seconds: int 
         raise ProblemError(400, "Passkey verification failed", type_=TYPE_VALIDATION,
                            detail=str(exc)) from exc
     if grant.confirmed_at is None:
-        host_grants.confirm(grant, window_seconds=window_seconds)
-        audit.note_change(scope="host_grant",
-                          before={"site": grant.app.name, "scope": grant.scope, "confirmed": False},
-                          after={"site": grant.app.name, "scope": grant.scope, "confirmed": True,
-                                 "until": grant.expires_at.isoformat()},
-                          summary=f"confirmed with a passkey: {grant.app.name} may be read as them "
-                                  f"({grant.scope or '-'})")
-        # MCP Apps: list the site's tools as the person now that they may be, so a
-        # result from the agent's own login (path D) finds its View.
-        from apps.mcp_apps_host import mcp_apps_views  # noqa: PLC0415 — as contact_api's: loads at the confirm only
+        _mark_confirmed(grant, window_seconds,
+                        summary=f"confirmed with a passkey: {grant.app.name} may be read as them "
+                                f"({grant.scope or '-'})")
 
-        mcp_apps_views.refresh_index_soon(grant.app, grant)
+
+def _mark_confirmed(grant, window_seconds: int | None, *, summary: str) -> None:
+    """Confirm `grant` and record it — the one write every confirm path ends in."""
+    host_grants.confirm(grant, window_seconds=window_seconds)
+    audit.note_change(scope="host_grant",
+                      before={"site": grant.app.name, "scope": grant.scope, "confirmed": False},
+                      after={"site": grant.app.name, "scope": grant.scope, "confirmed": True,
+                             "until": grant.expires_at.isoformat()},
+                      summary=summary)
+    # MCP Apps: list the site's tools as the person now that they may be, so a
+    # result from the agent's own login (path D) finds its View.
+    from apps.mcp_apps_host import mcp_apps_views  # noqa: PLC0415 — as contact_api's: loads at the confirm only
+
+    mcp_apps_views.refresh_index_soon(grant.app, grant)
 
 
 # --- in the person's browser ------------------------------------------------------------
@@ -336,4 +349,66 @@ def finish_confirm_my_host_grant(request: HttpRequest, grant_id: int,
     minutes, the agent may act as you on that page. The page's panel sees it at once."""
     grant = _my_waiting_grant(request, grant_id)
     _confirm(request, grant, payload.credential, payload.window_seconds)
+    return _out(grant)
+
+
+# --- an agent's own login, under its agent test key ----------------------------------
+# An agent's login has no passkey (`stepup.require_a_person`), so a headless test signed in
+# to a host site AS the agent never gets past the panel's prompt. While an admin of the
+# agent has turned on its agent test key, the login confirms its OWN waiting grant here,
+# with its own canopy credential, never the panel's token (which the host site holds):
+# `login_test_key.may_confirm_own_host_grant` is the whole rule.
+
+
+class AgentConfirmIn(Schema):
+    """Optionally a SHORTER window than the usual 30 minutes (`host_grants.window_for`)."""
+
+    window_seconds: int | None = None
+
+
+@me_router.get("/me/host-grants/waiting", response=list[HostGrantOut],
+               summary="The pages whose act-as-you permission is waiting for me to confirm it")
+@gate("self")
+def list_my_waiting_host_grants(request: HttpRequest) -> list[HostGrantOut]:
+    """Your unexpired act-as-you permissions that no one has confirmed yet, one per page,
+    newest first: what a page's panel is waiting on. `requested` says an agent's turn
+    already needs it. An agent's own login uses this to find the id it confirms with
+    `confirm-as-agent`."""
+    rows = HostGrant.objects.filter(user=request.user, contact__isnull=True)
+    out, seen = [], set()
+    for grant in host_grants.pending(rows).select_related("app", "agent").order_by("-created_at", "-pk"):
+        key = (grant.app_id, grant.agent_id, grant.scope)
+        if key not in seen:
+            seen.add(key)
+            out.append(grant)
+    words: dict = {}
+    return [_out(g, words.setdefault((g.app_id, g.scope), site_words(g.app, g.scope))) for g in out]
+
+
+@me_router.post("/me/host-grants/{int:grant_id}/confirm-as-agent", response=HostGrantOut,
+                summary="As an agent's own login, confirm my own page's act-as-you permission "
+                        "without a passkey (agent test key)")
+@gate("self", setting=True)
+def confirm_my_host_grant_as_agent(request: HttpRequest, grant_id: int,
+                                   payload: AgentConfirmIn) -> HostGrantOut:
+    """FOR TESTING. Only an agent's own canopy login, with its own token or browser
+    session (never a site's panel token), while an admin of the agent has turned on its
+    agent test key (`PUT /api/agents/{slug}/test-vault-key`), confirms its
+    OWN waiting permission on a host site's page — for its own agent's page or one for
+    any agent — without a passkey. From then, for the usual 30 minutes, the agent may act
+    as its own login on that page. A person confirms with their passkey and is refused
+    here; no one confirms anyone else's permission."""
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports host_grants
+
+    grant = _my_grant(request, grant_id)
+    try:
+        login_test_key.may_confirm_own_host_grant(request, grant)
+    except login_test_key.NotAPerson as exc:
+        type_ = {404: TYPE_NOT_FOUND, 409: TYPE_CONFLICT}.get(exc.status, TYPE_FORBIDDEN)
+        raise ProblemError(exc.status, "Not confirmed", type_=type_, detail=str(exc),
+                           members={"error": exc.code}) from exc
+    _mark_confirmed(grant, payload.window_seconds,
+                    summary=f"confirmed WITHOUT a passkey by the agent's own test login "
+                            f"(agent test key): {grant.app.name} may be read as that login "
+                            f"({grant.scope or '-'})")
     return _out(grant)

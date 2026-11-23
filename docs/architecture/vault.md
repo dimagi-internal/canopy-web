@@ -33,7 +33,8 @@ An agent's own login may hold a personal vault key so a headless harness signed 
 - **The key:** while on, the login makes ONE key as itself: passphrase seals only, never replaced (`login_test_key.check_keyset_write`). With the switch off, or for any other system account, a keyset write is refused (`not_a_person`).
 - **What it receives:** only copies of the keys of sensitive conversations the login is itself in, and only while the switch is on (`conversation_keys._keyset`, `conversation_keys.add_wrap`).
 - **What it never receives:** a copy of any vault's key or a value sealed to it, or an endorsement, whatever eligibility says (`vault_engine.parse_wraps` / `parse_values`, `zk_endorse.add`). A login that is not a person never registers a passkey or steps up (`passkeys.stepup.require_a_person`), so it approves no device key or invitation.
-- **Off deletes it:** turning the switch off deletes the key and every conversation-key copy wrapped to it (`login_test_key.disable`).
+- **Its one other act: confirming its own page permission.** While on, the same login may also confirm its OWN waiting act-as-you permission on a host site's page without a passkey (`POST /api/me/host-grants/{id}/confirm-as-agent`, `login_test_key.may_confirm_own_host_grant`), so a headless test can run the page-agent flow as the agent itself → [access-confinement-and-act-as.md](access-confinement-and-act-as.md) § Acting as the person on a host site.
+- **Off deletes it:** turning the switch off deletes the key and every conversation-key copy wrapped to it, and stops every unexpired host grant the login holds (`login_test_key.disable`).
 
 ## Whose account an entry is
 
