@@ -13,7 +13,7 @@ Every mechanism below is additive within `canopy_sdk.contract.CONTRACT_VERSION`,
 
 ## The site declares where its records live
 
-`site.json`'s `site` block carries `person_scheme` (`canopy_sdk.site::SITE_FACTS`; the Django host fills it from `CANOPY_HOST["PERSON_SCHEME"]`). canopy reads it LIVE from the verified, cached document, like `resource_schemes`, with no owner adopting it (`site_needs.person_scheme_for`): it widens nothing. No verifiable document, no scheme, and a `record_uri` is refused.
+`site.json`'s `site` block carries `person_scheme` (`canopy_sdk.site::SITE_FACTS`; the Django host fills it from `CANOPY_HOST["PERSON_SCHEME"]`), and each of its surfaces may carry its own ([host-sites.md](host-sites.md) § Surfaces); a `record_uri` may be under any of them (`surfaces.person_scheme_for`). canopy reads it LIVE from the verified, cached document, like `resource_schemes`, with no owner adopting it (`site_needs.person_scheme_for`): it widens nothing. No verifiable document, no scheme, and a `record_uri` is refused.
 
 ## The host keeps its records current: `POST /api/sites/contacts`
 
@@ -48,6 +48,8 @@ A contact has no passkey, so never an act-as-you grant (`HostGrant`), and an age
 - a contact's turn on that entry may use `site_tools`, `site_call` and `site_read`, and the gateway runs its **subject mode** (`host_gateway._subject_context`): no grant, no token. Each request carries `Authorization: CanopySubject <jws>` (`typ` `canopy-subject+jwt`, signed by canopy's client key, the CIMD key `Canopy-Execution` already uses; `client_identity.subject_statement`) naming `{sub, site, agent, turn, session, capability}`, bound to canopy's DPoP key (`cnf.jkt`) and to the JSON-RPC request (`rpc`), 60 s, single-use; a DPoP proof with no `ath`; and `Canopy-Execution`, which now carries `sub` too (`execution.subject_of`).
 - **The host authorizes every call against `sub`** (`canopy_sdk.host.verify_subject` → `Subject`). canopy's part is only to say truly who the turn is with.
 
+On a site with surfaces the subject statement goes to the MCP resource of the surface the conversation is held on, never the site's own (`surfaces.subject_resource`; [host-sites.md](host-sites.md) § Surfaces), and its `aud` is that resource.
+
 The subject mode is reachable only when every one of these holds (`host_gateway.resolve`), each pinned by a negative test in `tests/test_contact_scoped_site_tools.py`: the turn's initiator is a contact; the turn's own profile (`Turn.capability`) names the conversation's site with `contact_scoped: true`; the site is live and names its MCP resource (`host_mcp_resource`); the contact is the SITE's own (`Contact.app` is that site, `source` embed, an `external_id`), not blocked; and the runner meets the conversation's requirements. `sub` is the contact's `external_id`, read from the turn's initiator, never from the tool's arguments. Anything else takes the grant path, which refuses a contact.
 
 ## The agent sees who the person is at the host
@@ -62,7 +64,7 @@ The caller envelope's `contact` block (`apps/harness/caller_context.py::_contact
 | The wire (both halves) | `sdk/python/src/canopy_sdk/contacts.py`; the host's client `sdk/python/src/canopy_sdk/host/contacts.py` |
 | Verify and apply an update | `apps/host_grants/contact_records.py`, `apps/host_grants/contact_records_api.py` |
 | Write one person | `contacts.services.apply_host_record` |
-| The site's declared scheme and retention | `site_needs.person_scheme_for`, `site_needs.retention_days_for` |
+| The site's declared scheme and retention | `site_needs.person_scheme_for`, `surfaces.person_scheme_for` (a surface's scheme too), `site_needs.retention_days_for` |
 | Erase one person; the tombstone | `contacts.services.erase`, `ContactErasure`; a conversation `content_deletion.erase_session` |
 | The site's retention | `retention.services._sweep_site_contacts` |
 | What the agent is told | `apps/harness/caller_context.py::_contact` |

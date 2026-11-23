@@ -116,7 +116,8 @@ def _method(request, method: str | None) -> str:
 
 
 def verify_subject(request, *, config, client_keys=None, replay_store=None, method: str | None = None,
-                   rpc: tuple[str, Mapping] | None = None, now: float | None = None) -> Subject:
+                   rpc: tuple[str, Mapping] | None = None, resource: str | None = None,
+                   now: float | None = None) -> Subject:
     """Verify the subject statement on ``request`` (anything with ``.headers`` — a Django,
     Starlette or ASGI request — or a header mapping). ``config`` is the host's ``HostConfig``
     (``canopy_client_id``, ``resource``); ``client_keys`` a ``ClientKeyResolver``;
@@ -124,8 +125,10 @@ def verify_subject(request, *, config, client_keys=None, replay_store=None, meth
     in a multi-worker host). ``method`` is the HTTP method the DPoP proof must name (read off
     the request when it has one, else ``POST``). ``rpc`` — ``(method, params)`` of the
     JSON-RPC request in front of the host — requires the statement to be for exactly that
-    request; a host should always pass it. Returns the ``Subject`` or raises
-    ``SubjectRefused``."""
+    request; a host should always pass it. ``resource`` is the MCP resource the statement must
+    be for (its ``aud`` and the proof's ``htu``): a surface's ``mcp_resource`` when the host
+    serves one (``canopy_sdk.site``), else ``config.resource``. Returns the ``Subject`` or
+    raises ``SubjectRefused``."""
     try:
         headers = _headers(request)
     except Exception as exc:  # noqa: BLE001 — ExecutionRefused: no headers at all
@@ -136,7 +139,7 @@ def verify_subject(request, *, config, client_keys=None, replay_store=None, meth
     if scheme.lower() != contract.SUBJECT_AUTH_SCHEME.lower() or not raw or "," in raw or " " in raw:
         raise SubjectRefused("no_statement", f"send exactly one Authorization: {contract.SUBJECT_AUTH_SCHEME}")
     client_id = getattr(config, "canopy_client_id", "")
-    resource = getattr(config, "resource", "")
+    resource = resource or getattr(config, "resource", "")
     if not client_id or not resource:
         raise SubjectRefused("not_configured", "this host trusts no canopy (canopy_client_id, resource)")
     keys = client_keys if client_keys is not None else _default_keys

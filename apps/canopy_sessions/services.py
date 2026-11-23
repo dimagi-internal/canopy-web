@@ -62,6 +62,9 @@ SERVER_OWNED_METADATA = frozenset({
     # The relay channel a host site carries this conversation over (`RELAY_CHANNEL_KEY`),
     # from the relay token that started it.
     "relay_channel",
+    # The surface of its site a contact's conversation is held on
+    # (apps/host_grants/surfaces.py::SESSION_KEY), from the agent's entry when it started.
+    "host_surface",
 })
 
 #: The metadata keys a caller MAY set — an allowlist, so a key canopy starts acting on

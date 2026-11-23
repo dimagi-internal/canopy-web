@@ -23,7 +23,7 @@ from apps.common.rate_limit import over
 from apps.contacts import services
 from apps.embedding.rate_limit import SiteAgentsRateLimitError
 
-from . import client_identity, site_agents, site_needs
+from . import client_identity, site_agents, surfaces
 from .site_agents import SiteAgentsRefused
 
 UPDATE, ERASE = "update", "erase"
@@ -80,15 +80,16 @@ def verify(token: str, kind: str):
 def apply_update(app, claims: dict) -> list[dict]:
     """Each item of a verified update, written or refused on its own: one bad item never
     sinks the others. `[{sub, contact_id, status, reason?}]`, in the request's order."""
-    scheme = None
     signed_at = datetime.fromtimestamp(int(claims["iat"]), tz=timezone.utc)
     results = []
     for raw in claims["contacts"]:
         sub = raw.get("sub") if isinstance(raw, dict) and isinstance(raw.get("sub"), str) else ""
-        if isinstance(raw, dict) and raw.get("record_uri") and scheme is None:
-            # Read once, only when an item names a record: no document, no scheme, so a
-            # `record_uri` is refused rather than kept under a scheme nobody declared.
-            scheme = site_needs.person_scheme_for(app)
+        scheme = None
+        if isinstance(raw, dict) and raw.get("record_uri"):
+            # Only when an item names a record: no document, no scheme, so a `record_uri` is
+            # refused rather than kept under a scheme nobody declared. The site's own scheme
+            # or one of its surfaces' (`surfaces.person_scheme_for`; the document is cached).
+            scheme = surfaces.person_scheme_for(app, str(raw.get("record_uri")))
         try:
             item = wire.check_item(raw, person_scheme=scheme or "")
         except wire.ContactRecordError as exc:

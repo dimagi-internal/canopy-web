@@ -64,6 +64,10 @@ export async function updateHostSite(
     host_issuer?: string
     host_mcp_resource?: string
     show_on_canopy_pages?: boolean
+    /** Where canopy POSTs the agent's replies in the site's relayed conversations; '' to stop.
+     *  Changing it asks for the person's passkey (the API client handles `step_up_required`). */
+    reply_webhook_url?: string
+    reply_mode?: 'final' | 'stream'
   },
 ): Promise<HostSite> {
   const res = await apiV2.PATCH('/api/workspaces/{slug}/host-sites/{app_id}', {
@@ -95,6 +99,7 @@ export async function revokeHostSite(slug: string, appId: number): Promise<void>
 
 export type SiteNeeds = components['schemas']['SiteNeedsOut']
 export type AgentFit = components['schemas']['AgentFitOut']
+export type SiteSurface = components['schemas']['SiteSurfaceOut']
 
 /** What the site asks of agents (its signed `site.json`), and per agent canopy
  *  allows there whether it meets it. Fail-closed: `available: false` + reason. */

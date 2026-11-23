@@ -195,7 +195,8 @@ def site_document(request):
             config.app_name, pages=conf.site_pages(needs.get("titles")),
             sensitive_data=needs.get("sensitive_data"), uses=needs.get("uses"),
             site=site_facts(request, config), title=needs.get("title") or "",
-            scope_labels=needs.get("scope_labels")))
+            scope_labels=needs.get("scope_labels"),
+            surfaces=needs.get("surfaces") or conf.surfaces()))
     except HostNotConfigured:
         return _json({"error": "not_configured"}, 503)
     except SiteDocumentError as exc:

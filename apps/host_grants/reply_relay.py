@@ -7,10 +7,13 @@ canopy POSTs it there as a JWS signed with canopy's OAuth client key
 (`canopy_sdk.host.replies`: `typ: canopy-reply+jwt`, five minutes, the host verifies
 with `verify_reply`).
 
-* **Which turns.** A turn on a session whose contact came from a site (`Contact.app`)
-  that is live, has a `reply_webhook_url`, and whose conversation the session is
-  (`metadata["embed_app"]`). A sensitive conversation's words are never pushed (the
-  same rule as Slack's mirror): its contact could not read them back anywhere either.
+* **Which turns.** A turn on a RELAY session (`metadata["relay_channel"]`, stamped from the
+  relay token that started it) whose contact came from a site (`Contact.app`) that is live,
+  has a `reply_webhook_url`, and whose conversation the session is (`metadata["embed_app"]`).
+  The webhook is the site's, one per site whatever its surfaces: the host routes a reply by its
+  `session`, and only a relay needs one, since a widget's visitor reads the reply in the panel.
+  A sensitive conversation's words are never pushed (the same rule as Slack's mirror): its
+  contact could not read them back anywhere either.
 * **What.** `final` (the default): one post when the turn ends, with all of that turn's
   assistant prose and `ended: true`. `stream`: a post per assistant row as it lands, then
   an `ended` post with no text. A turn that did not finish well carries `error` (its
@@ -38,7 +41,7 @@ from django.db import IntegrityError, close_old_connections, transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from apps.canopy_sessions.services import EMBED_APP_KEY
+from apps.canopy_sessions.services import EMBED_APP_KEY, RELAY_CHANNEL_KEY
 from apps.harness import sensitivity
 from apps.harness.models import Turn, TurnEvent
 from apps.tokens.models import AppCredential, HostReplyDelivery
@@ -74,6 +77,8 @@ def _target(turn) -> AppCredential | None:
     if app is None or not app.reply_webhook_url:
         return None
     if (session.metadata or {}).get(EMBED_APP_KEY) != app.name:
+        return None
+    if not (session.metadata or {}).get(RELAY_CHANNEL_KEY):
         return None
     if sensitivity.is_sensitive(turn):
         return None

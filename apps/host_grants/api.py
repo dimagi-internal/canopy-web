@@ -166,6 +166,21 @@ class AgentFitOut(Schema):
     why_not: list[FitReasonOut]
 
 
+class SiteSurfaceOut(Schema):
+    """One surface the site declares (`site.json`'s `surfaces`): a part of it serving its own people."""
+
+    name: str
+    title: str = ""
+    #: Its conversations hold the site's sensitive data; a contact holds none on such a surface.
+    sensitive: bool
+    #: Where its contacts' subject-bound tool calls go ("" for none).
+    mcp_resource: str = ""
+    #: The scheme of its people's records ("" for none).
+    person_scheme: str = ""
+    #: The agents the site may offer whose entry for it serves this surface.
+    agents: list[str] = []
+
+
 class SiteNeedsOut(Schema):
     """What a host site asks of canopy's agents (its signed `site.json`)."""
 
@@ -185,6 +200,8 @@ class SiteNeedsOut(Schema):
     agents: list[AgentFitOut]
     #: Agents the site names that canopy does not allow on it — they never appear.
     not_allowed: list[str]
+    #: The site's surfaces; empty when it declares none (the site is one surface, itself).
+    surfaces: list[SiteSurfaceOut] = []
 
 
 def _iso(ts: float | None) -> str | None:
@@ -224,7 +241,23 @@ def host_site_needs(request: HttpRequest, slug: str, app_id: int) -> SiteNeedsOu
         requires=SensitiveDataRequiresOut(**requires),
         uses_version=document.uses_version if document else "",
         site_agents_version=wire.content_version(content),
-        agents=[AgentFitOut(**r) for r in rows], not_allowed=not_allowed)
+        agents=[AgentFitOut(**r) for r in rows], not_allowed=not_allowed,
+        surfaces=_surfaces_out(app, document))
+
+
+def _surfaces_out(app, document) -> list[SiteSurfaceOut]:
+    from apps.agents.published_profiles import surface_of  # noqa: PLC0415 — as the site agents content
+
+    if document is None or not document.surfaces:
+        return []
+    serving: dict[str, list[str]] = {}
+    for row in app.allowed_agents.select_related("agent"):
+        name = surface_of(row.agent, app.name)
+        if name:
+            serving.setdefault(name, []).append(row.agent.slug)
+    return [SiteSurfaceOut(name=x.name, title=x.title, sensitive=x.sensitive, mcp_resource=x.mcp_resource,
+                           person_scheme=x.person_scheme, agents=sorted(serving.get(x.name, [])))
+            for x in document.surfaces]
 
 
 class SiteFactsOut(Schema):

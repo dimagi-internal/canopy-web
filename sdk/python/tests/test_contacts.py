@@ -193,3 +193,42 @@ def test_a_bad_fact_makes_the_document_malformed(facts):
     with pytest.raises(site.SiteDocumentError) as exc:
         site.site_document("s", site=facts)
     assert exc.value.code == "malformed"
+
+
+# --- site.json: surfaces ------------------------------------------------------------
+
+
+WORKERS = {"title": "Connect Worker messaging", "sensitive": False,
+           "mcp_resource": "https://labs.example.org/messaging/canopy/mcp/", "person_scheme": "labs-worker"}
+
+
+def test_site_json_carries_surfaces():
+    doc = site.site_document("connect-labs", surfaces={"workers": WORKERS})
+    assert doc["surfaces"] == {"workers": WORKERS}
+    needs = site.SiteNeeds.from_claims(doc)
+    workers = needs.surface("workers")
+    assert workers == site.SiteSurface(name="workers", sensitive=False, title="Connect Worker messaging",
+                                       mcp_resource=WORKERS["mcp_resource"], person_scheme="labs-worker")
+    assert needs.surface("staff") is None
+
+
+def test_a_site_with_no_surfaces_reads_as_before():
+    doc = site.site_document("connect-labs")
+    assert "surfaces" not in doc and site.SiteNeeds.from_claims(doc).surfaces == ()
+
+
+@pytest.mark.parametrize("surfaces", [
+    {"workers": {"mcp_resource": "https://a.org/mcp/"}},          # sensitive left out: never assumed
+    {"workers": {"sensitive": "false"}},
+    {"Workers": {"sensitive": False}},
+    {"w" * 33: {"sensitive": False}},
+    {"workers": {"sensitive": False, "reply_url": "https://a.org/r/"}},
+    {"workers": {"sensitive": False, "mcp_resource": "ftp://a.org/"}},
+    {"workers": {"sensitive": False, "person_scheme": "https"}},
+    {"workers": ["sensitive"]},
+    {f"s{i}": {"sensitive": True} for i in range(site.MAX_SURFACES + 1)},
+])
+def test_a_bad_surface_makes_the_document_malformed(surfaces):
+    with pytest.raises(site.SiteDocumentError) as exc:
+        site.site_document("connect-labs", surfaces=surfaces)
+    assert exc.value.code == "malformed"

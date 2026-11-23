@@ -175,6 +175,20 @@ def test_a_members_conversation_is_never_pushed(w):
     assert reply_relay.on_finished(_end(turn)) is None
 
 
+def test_a_widget_conversation_on_the_same_site_is_never_pushed(w):
+    """The webhook is the site's, and only its relay conversations go there: a contact in the
+    site's panel (no relay channel) reads the reply in the panel."""
+    from apps.canopy_sessions.models import Session
+    from apps.canopy_sessions.services import RELAY_CHANNEL_KEY
+
+    turn = _turn(w)
+    session = Session.objects.get(pk=w["sid"])
+    Session.objects.filter(pk=session.pk).update(
+        metadata={k: v for k, v in session.metadata.items() if k != RELAY_CHANNEL_KEY})
+    _say(turn, "hi")
+    assert reply_relay.on_finished(_end(turn)) is None
+
+
 def test_a_failed_post_is_retried_with_backoff_then_given_up(w):
     turn = _turn(w)
     _say(turn, "hi")

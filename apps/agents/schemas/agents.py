@@ -788,6 +788,8 @@ class AgentHostSiteOut(AnsweringProfile):
     sensitive: bool = False
     # The site's own contacts reach the agent here, the site's tools bound to that one contact.
     contact_scoped: bool = False
+    # The part of the site this entry serves (a surface its site.json declares); "" for the site itself.
+    surface: str = ""
 
 
 class NewSiteDefaults(AnsweringProfile):
@@ -795,6 +797,7 @@ class NewSiteDefaults(AnsweringProfile):
     own_login: list[str] = []
     sensitive: bool = False
     contact_scoped: bool = False
+    surface: str = ""
 
 
 class AgentHostSitesOut(StrictModel):
@@ -811,6 +814,9 @@ class AgentHostSiteIn(ReadModeIn):
     # Let the site's own contacts reach the agent here, the site's tools bound to that one
     # contact and authorized by the site on every call (docs/architecture/host-systems-of-record.md).
     contact_scoped: bool | None = None
+    # The surface of the site this entry serves, one its site.json declares (`workers`); "" for the
+    # site itself. A contact's conversation is held on it, and its tool calls go to its MCP resource.
+    surface: str | None = None
 
 
 class AgentAppEntryOut(StrictModel):

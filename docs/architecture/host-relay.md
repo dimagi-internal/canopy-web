@@ -4,6 +4,8 @@ A **relay** is a host site carrying a person's conversation with a canopy agent 
 
 ## The host is the system of record
 
+A relay is usually one surface of a bigger site ([host-sites.md](host-sites.md) § Surfaces): Connect Labs relays its Connect Workers on its `workers` surface, signed with the same key as its pages, and its relay arrivals carry no `sensitive_data` requirement because that surface holds none.
+
 A relay site is the system of record for the people it brings ([host-systems-of-record.md](host-systems-of-record.md): canopy keeps an anchor, a pointer, a cache the host owns, and the working sessions). A relay changes none of that: the conversation's sessions are canopy's working copy, what the host knows about the person reaches the agent only as the host states it, and the agent's replies go back to the host, which carries them on its own channel.
 
 ## Relay channels
@@ -29,7 +31,7 @@ A send may carry `context`: what the host knows about this moment (the person's 
 
 A host site with a `reply_webhook_url` (`AppCredential.reply_webhook_url`, set by the workspace owner on the host-site PATCH behind a passkey step-up, and checked by `outbound.check_url` when set and again at every send) never polls: canopy POSTs the agent's replies in its contacts' conversations there (`apps/host_grants/reply_relay.py`).
 
-- **Which turns.** A turn on a session whose contact the site vouched for (`Contact.app`), held on that site (`metadata["embed_app"]`), while the site is live and has a URL. A sensitive conversation's words are never pushed, as Slack never mirrors them.
+- **Which turns.** A turn on a RELAY session (`metadata["relay_channel"]`) whose contact the site vouched for (`Contact.app`), held on that site (`metadata["embed_app"]`), while the site is live and has a URL. A sensitive conversation's words are never pushed, as Slack never mirrors them. The webhook is the site's, one per site whatever its surfaces ([host-sites.md](host-sites.md) § Surfaces): only a relay needs one (a widget's visitor reads the reply in the panel), and the host routes each reply by its `session`.
 - **What.** `Content-Type: application/jwt`, a JWS with `typ: canopy-reply+jwt`, signed with canopy's OAuth client key (the key in canopy's client metadata, which a host already trusts for `Canopy-Execution`): `{iss: client_id, aud: reply_webhook_url, sub: the contact's external_id, site, session, turn, seq, text, ended, error?, iat, exp: +300s, jti}` (`canopy_sdk.host.replies.sign_reply`). `reply_mode` `final` (the default) is one post when the turn ends, with all its assistant prose; `stream` is a post per assistant row as it lands (`turn_events_appended`), then an `ended` post with no text. A turn that did not finish well carries `error` (its status) on its `ended` post.
 - **Exactly once per `(turn, seq)`.** A `HostReplyDelivery` row is inserted before the first attempt under a unique `(turn, seq)` and one `ended` row per turn, so a re-delivered signal stops there; each attempt signs afresh, and the host dedupes on `(turn, seq)`. The `ended` post is queued after the turn's close commits (`session_turn_finished` → `transaction.on_commit`).
 - **Retries.** The first attempt runs on a background thread; a failure (a non-2xx answer, a timeout, a refused URL) is retried by the off-request clock (`host_grants.reply_deliver`, `reply_relay.deliver_due`) at `reply_relay.BACKOFF`, then given up on. Never a redirect.

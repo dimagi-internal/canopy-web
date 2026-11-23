@@ -37,9 +37,36 @@ const NEEDS: SiteNeeds = {
     },
   ],
   not_allowed: ['ghost'],
+  surfaces: [],
 }
 
 describe('SiteNeedsTable', () => {
+  it('shows the surfaces the site declares, and which agents serve each', () => {
+    render(
+      <SiteNeedsTable
+        needs={{
+          ...NEEDS,
+          surfaces: [
+            {
+              name: 'workers', title: 'Connect Worker messaging', sensitive: false,
+              mcp_resource: 'https://labs.test/messaging/canopy/mcp/', person_scheme: 'labs-worker',
+              agents: ['connect-helper'],
+            },
+          ],
+        }}
+      />,
+    )
+    const row = screen.getByText(/Connect Worker messaging/).closest('tr')!
+    expect(row.textContent).toContain('labs-worker://')
+    expect(row.textContent).toContain('https://labs.test/messaging/canopy/mcp/')
+    expect(row.textContent).toContain('connect-helper')
+  })
+
+  it('shows no surfaces section for a site that declares none', () => {
+    render(<SiteNeedsTable needs={NEEDS} />)
+    expect(screen.queryByText('Surfaces')).toBeNull()
+  })
+
   it('leads with the agents and says only what the owner can act on', () => {
     const { container } = render(<SiteNeedsTable needs={NEEDS} />)
     expect(screen.getByText('Can handle sensitive data')).toBeTruthy()

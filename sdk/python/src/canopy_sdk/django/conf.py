@@ -72,6 +72,11 @@
         # site.retention_days: how long canopy keeps your contacts' conversations (the
         # shorter of this and the workspace's own rule wins). None: canopy's rules alone.
         "RETENTION_DAYS": None,     # e.g. 90
+        # site.json's surfaces: the parts of this site that serve different people, each saying
+        # whether its conversations hold sensitive data and where a contact's subject-bound tool
+        # calls go (canopy_sdk.site). A mapping, or SITE_NEEDS may return "surfaces".
+        "SURFACES": {},             # e.g. {"workers": {"sensitive": False, "mcp_resource": "https://…/mcp/workers/",
+                                    #                   "person_scheme": "labs-worker"}}
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
@@ -315,6 +320,12 @@ def retention_days():
     """``RETENTION_DAYS`` as set (None when unset), declared as ``site.retention_days``."""
     value = raw().get("RETENTION_DAYS")
     return None if value in (None, "") else value
+
+
+def surfaces() -> dict:
+    """``SURFACES`` as set (``{}`` when unset), declared as ``site.json``'s ``surfaces``."""
+    value = raw().get("SURFACES") or {}
+    return dict(value) if isinstance(value, Mapping) else value
 
 
 def panel_options() -> dict:
