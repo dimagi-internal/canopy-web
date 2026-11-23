@@ -48,7 +48,7 @@ NOT_A_VAULT_MEMBER = "not_a_vault_member"
 class Refusal:
     """Why a resolve hands out nothing. `code` is one of the constants above;
     `detail` is what the caller is told. `reason` (device proof: `not_routed` /
-    `no_valid_proof`), `kv` and `device_key` (zk wrap) only where they apply."""
+    `key_pending` / `no_valid_proof`), `kv` and `device_key` (zk wrap) only where they apply."""
 
     code: str
     detail: str
@@ -159,6 +159,10 @@ def parse_refs(refs: str | None) -> set[str] | None:
     return {r.strip() for r in refs.split(",") if r.strip()}
 
 
+#: Set on the request by `device_key_from_proof` when the proof is a PENDING key's.
+PENDING_ATTR = "canopy_pending_device_key"
+
+
 def device_key_from_proof(request: HttpRequest, agent):
     """`(key, refused, unrouted)`: the ACTIVE RunnerDeviceKey whose proof this
     request carries, if the proof verifies and its runner serves `agent`; else
@@ -204,6 +208,16 @@ def device_key_from_proof(request: HttpRequest, agent):
     known = device_keys.known_key(jkt)
     if known is not None:
         return None, f"{known.runner.name} does not run {agent.slug}", known.runner
+    pending = device_keys.pending_key(jkt)
+    if pending is not None:
+        # Registered, not yet approved: usually a person's first session on a new
+        # machine, seconds after it enrolled. `resolve` reads this off the request
+        # to tell that apart from a stranger's key (see `PENDING_ATTR`).
+        setattr(request, PENDING_ATTR, pending)
+        owner = pending.runner.owner
+        who = (owner.email if owner is not None else "its owner")
+        return None, (f"{pending.runner.name}\u2019s device key is waiting for {who} to approve "
+                      f"it (canopy-web: Settings \u2192 Your runners)"), None
     return None, "the DPoP key is not an approved device key", None
 
 
@@ -256,6 +270,15 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
             # misused token, so the owner is not emailed.
             vault_alerts.unrouted_box_refused(agent, request, runner=unrouted)
             return Refusal(DEVICE_PROOF_REQUIRED, refused, reason="not_routed")
+        pending = getattr(request, PENDING_ATTR, None)
+        if pending is not None and pending.runner.owner_id == request.user.pk:
+            # The caller's OWN machine, enrolled but not yet approved by them. Only
+            # they can approve it (a private runner's key signs in as its owner), and
+            # registering it already emailed them the approve link
+            # (`device_key_notify.notify_pending`). Mailing the AGENT's owner a
+            # "revoke the token?" alert sent them to a page where they cannot act.
+            vault_alerts.pending_key_refused(agent, request, key=pending)
+            return Refusal(DEVICE_PROOF_REQUIRED, refused, reason="key_pending")
         # Name the box when the request does (its runner token, or an owned
         # X-Canopy-Runner), so the owner is not left asking which machine.
         box = rtok.runner if rtok is not None else caller_runner(request)

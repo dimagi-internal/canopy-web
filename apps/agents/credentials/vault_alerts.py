@@ -30,7 +30,9 @@ request: an email and a Web Push, each linking to the agent's Credentials.
 * `device-proof` — a resolve refused for a bad or missing device proof. NOT a
   good proof from an approved box that does not run the agent: that is routing,
   recorded as an `agent.credentials.refused` event with no alert
-  (`unrouted_box_refused`).
+  (`unrouted_box_refused`) — nor the caller's OWN machine whose key is
+  enrolled and waiting for them to approve it (`pending_key_refused`: only they can
+  approve it, and they were already emailed the link).
 
 Debounced to one alert per kind per agent per hour: a repeat inside the hour
 bumps the open alert's `occurrences` and tells no one again. One RUNNER fault
@@ -173,6 +175,30 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
         }], workspace=agent.workspace)
     except Exception:  # noqa: BLE001 - must not turn a 401 into a 500
         logger.exception("unrouted-box event failed for %s", agent.slug)
+
+
+def pending_key_refused(agent, request, *, key) -> None:
+    """A resolve refused because the proof is the CALLER'S OWN machine's key, registered
+    but not yet approved — a person's first session on a new laptop, typically seconds
+    after it enrolled. An event, never an owner alert: nothing was handed out, the
+    caller is the only one who may approve it (`runners.may_trust_device_keys`), and
+    registering it already emailed them the approve link. A key that stays pending
+    keeps showing on the event's count."""
+    try:
+        runner = key.runner
+        events.record([{
+            "source": "agents.credentials",
+            "kind": "agent.credentials.refused",
+            "level": "info",
+            "key": f"{agent.slug}:pending:{key.pk}",
+            "summary": (f"{runner.name} asked for {agent.slug}'s secrets before {_who(request.user)} "
+                        "approved its device key; refused, nothing handed out")[:300],
+            "payload": {"agent": agent.slug, "runner": str(runner.pk), "runner_name": runner.name,
+                        "device_key": str(key.pk), "user": _who(request.user),
+                        "reason": "key_pending"},
+        }], workspace=agent.workspace)
+    except Exception:  # noqa: BLE001 - must not turn a 401 into a 500
+        logger.exception("pending-key event failed for %s", agent.slug)
 
 
 def _count_read(agent) -> int:
