@@ -175,10 +175,25 @@ def owner_keyset(owner_kind: str, owner, by) -> UserVaultKeyset:
 
 
 def disconnect_owned_by(user) -> None:
-    """Disconnect every connection `user` owns (an agent login whose test key was turned off),
-    inside the caller's transaction, so canopy-web's own revoke waits for the sweep."""
+    """Disconnect every connection `user` owns (an agent login whose test key was turned off or
+    replaced), inside the caller's transaction. canopy-web revokes the ones its own key opens as
+    soon as that commits, as a disconnect outside a transaction does: a row left `revoking` until
+    the sweep blocks connecting the same account again (`revoking`) for up to a sweep interval."""
+    from . import server_tokens  # noqa: PLC0415 — it builds on this module
+
+    pks = []
     for conn in Connection.objects.filter(user_id=user.pk).exclude(state=Connection.REVOKING).order_by("pk"):
         disconnect(conn, by=None, revoke_now=False)
+        pks.append(conn.pk)
+
+    def revoke_after_commit() -> None:
+        for row in Connection.objects.filter(pk__in=pks, state=Connection.REVOKING).select_related("app", "user"):
+            if server_tokens.may_revoke(row):
+                rcpt.warm_server_key(row)
+                server_tokens.try_revoke(row)  # never raises; what it can't finish, the sweep retries
+
+    if pks:
+        transaction.on_commit(revoke_after_commit)
 
 
 def connections_for(owner: Owner) -> QuerySet[Connection]:
