@@ -51,6 +51,7 @@ export function EmbedStart({
   headerControls?: React.ReactNode
 }) {
   const { rows: history, putAway } = useEarlierChats(client, agent, isContact)
+  usePrepareAgent(client, agent.slug, isContact)
   const page = usePageState(link)
   const here = typeof page?.resource === 'string' ? page.resource : ''
   const pageName = pageLabel(page)
@@ -214,6 +215,19 @@ export function EmbedStart({
  *  are still in canopy's own chat list; here they were a wall of stale rows
  *  between the visitor and the box they came to type in. */
 const EARLIER_CHATS_DAYS = 7
+
+/** The panel is open with this agent: let its runner get ready for the question before
+ *  it is asked (`POST /api/embed/prepare`, which starts and creates nothing). Fire and
+ *  forget — the question works the same if this never lands. A contact's turns are
+ *  confined and gain nothing from it, so it is not asked for them. */
+export function usePrepareAgent(client: CanopyClient, slug: string, isContact: boolean) {
+  useEffect(() => {
+    if (isContact || !slug) return
+    client.rest
+      .json('/api/embed/prepare', { method: 'POST', body: JSON.stringify({ agent_slug: slug }) })
+      .catch(() => undefined)
+  }, [client, slug, isContact])
+}
 
 /** Your earlier conversations with THIS agent on THIS site, newest first.
  *
