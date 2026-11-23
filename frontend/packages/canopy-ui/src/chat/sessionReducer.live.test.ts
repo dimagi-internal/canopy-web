@@ -51,4 +51,15 @@ describe("chat.live_text: the reply being written", () => {
     expect(s.messages.filter((m) => m.id.startsWith("live:")).map((m) => m.plaintext))
       .toEqual(["Reading the run indicators now.", "Done: EHA."])
   })
+
+  it("drops a live reply the stored rows never repeat once the turn has settled", () => {
+    // A credential's own refusal streamed before the turn failed over to the next one.
+    let s = sessionReducer(state([msg("u1", "user", "Go")]), live("You've hit your weekly limit · resets 9pm (UTC)"))
+    s = sessionReducer(s, { event: "chat.stream_start", data: { message_id: "m9", turn_index: 5 } })
+    s = sessionReducer(s, { event: "chat.stream_complete", data: { message_id: "m9", plaintext: "EHA." } })
+    expect(s.messages.map((m) => m.id)).toContain("live:t1:0")
+    s = sessionReducer(s, { event: "session.turn_status",
+                            data: { status: { state: "done", settled: true } as never } })
+    expect(s.messages.map((m) => m.id)).toEqual(["u1", "m9"])
+  })
 })

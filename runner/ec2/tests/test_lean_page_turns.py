@@ -96,15 +96,28 @@ def test_live_text_sends_the_latest_whole_reply_and_coalesces(cloud_runner, monk
         return 200, {"sent": True}
 
     live = cloud_runner._LiveText("t" * 36, post=post)
-    live(0, "Ch")
-    live(0, "Check")
-    live(0, "Checking.")
+    long = "x" * (cloud_runner.CREDENTIAL_NOTICE_MAX_CHARS + 1)
+    live(0, long + "Ch")
+    live(0, long + "Check")
+    live(0, long + "Checking.")
     deadline = time.time() + 2
-    while time.time() < deadline and (not sent or sent[-1]["text"] != "Checking."):
+    while time.time() < deadline and (not sent or sent[-1]["text"] != long + "Checking."):
         time.sleep(0.01)
     live.stop()
-    assert sent[-1] == {"message": 0, "text": "Checking."}
+    assert sent[-1] == {"message": 0, "text": long + "Checking."}
     assert len(sent) <= 3
+
+
+def test_live_text_never_streams_a_credentials_refusal(cloud_runner, monkeypatch):
+    """A capped credential says so in one short line, which the turn holds back while it
+    fails over; the live view must not show it either."""
+    monkeypatch.setattr(cloud_runner, "LIVE_TEXT_EVERY_SECONDS", 0.01)
+    sent = []
+    live = cloud_runner._LiveText("t" * 36, post=lambda body: sent.append(body) or (200, {"sent": True}))
+    live(0, "You've hit your weekly limit · resets 9pm (UTC)")
+    time.sleep(0.2)
+    live.stop()
+    assert sent == []
 
 
 def test_live_text_stops_when_nobody_hears_it(cloud_runner, monkeypatch):
@@ -116,12 +129,13 @@ def test_live_text_stops_when_nobody_hears_it(cloud_runner, monkeypatch):
         return 200, {"sent": False}  # a sensitive conversation: its words never stream
 
     live = cloud_runner._LiveText("t" * 36, post=post)
-    live(0, "a")
+    long = "x" * (cloud_runner.CREDENTIAL_NOTICE_MAX_CHARS + 1)
+    live(0, long + "a")
     deadline = time.time() + 2
     while time.time() < deadline and not sent:
         time.sleep(0.01)
     time.sleep(0.05)
-    live(0, "ab")
+    live(0, long + "ab")
     time.sleep(0.1)
     live.stop()
     assert len(sent) == 1
