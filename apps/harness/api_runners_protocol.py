@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from django.http import HttpRequest
+from django.http import HttpRequest, JsonResponse
 from ninja import Status
 
 from apps.api.route_gates import gate
@@ -24,6 +24,7 @@ from .api_runners import _with_roots
 from .schemas import (
     ClaimedTurnOut,
     HeartbeatIn,
+    RunnerHeartbeatSlimOut,
     RunnerOut,
     UsageReportIn,
     UsageReportOut,
@@ -32,7 +33,7 @@ from .schemas import (
 from .session_sync import report_projects
 
 
-@router.post("/runners/{runner_id}/heartbeat", response=RunnerOut)
+@router.post("/runners/{runner_id}/heartbeat", response=RunnerOut | RunnerHeartbeatSlimOut)
 @gate("runner", kind="runner-protocol")
 def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: HeartbeatIn):
     from . import runner_protocol
@@ -48,6 +49,11 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
     # discharging any its report just showed it holds.
     if runner_projects.can_add_projects(beat):
         beat.add_projects_wanted = runner_projects.owed(beat)
+    # A runner that says it reads only the slim reply gets that: the full row's
+    # fleet-page fields (health checks above all) cost a query walk per beat.
+    # Answered as built: the route's union would re-read it through RunnerOut first.
+    if payload.slim_reply:
+        return JsonResponse(RunnerHeartbeatSlimOut.from_orm(beat).model_dump(mode="json"))
     return beat
 
 
