@@ -52,9 +52,10 @@ class PerConnectionThread:
 
 
 def mcp_middleware():
-    """The same, for an MCP message. A stateful Streamable-HTTP session runs its handlers in a
-    task the session manager started at lifespan, outside any HTTP request's context, so the
-    ASGI wrapper alone never reaches a tool call. Register FIRST (outermost), so the scope
+    """The same, for an MCP message. A stateful Streamable-HTTP session would run its handlers in
+    a task the session manager started at lifespan, outside any HTTP request's context, where the
+    ASGI wrapper alone never reaches a tool call; the servers are stateless, and this keeps a tool
+    call on its own thread either way. Register FIRST (outermost), so the scope
     middlewares' own DB reads run inside it too."""
     class McpPerMessageThread(Middleware):
         async def on_message(self, context, call_next):
