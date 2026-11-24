@@ -4346,6 +4346,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-apps/{workspace}/{key}/ai/complete": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask canopy's AI model, from a page of an app that declares AI use
+         * @description `canopy.ai.complete` from a member page: the app's manifest must declare `ai`. `model` is
+         *     an alias (`fast`, `smart`), never a model id. Answers `{text, content, stop_reason, model,
+         *     usage}` (plus `json` when `json_schema` was asked). 403 without the declaration, 429 over
+         *     the per-viewer limit, 502/503 when the model fails or AI is off.
+         */
+        readonly post: operations["ai_complete_workspace_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-apps/{workspace}/{key}/records/{record_id}/history": {
         readonly parameters: {
             readonly query?: never;
@@ -28585,6 +28608,8 @@ export interface components {
             readonly versions: readonly components["schemas"]["StoreVersionOut"][];
             /** Installed */
             readonly installed: boolean;
+            /** Ai */
+            readonly ai?: string | null;
         };
         /** StoreEmailOut */
         readonly StoreEmailOut: {
@@ -29139,6 +29164,47 @@ export interface components {
             readonly input: {
                 readonly [key: string]: unknown;
             };
+        };
+        /** AiCompleteIn */
+        readonly AiCompleteIn: {
+            /**
+             * Model
+             * @default fast
+             * @enum {string}
+             */
+            readonly model: "fast" | "smart";
+            /**
+             * System
+             * @default
+             */
+            readonly system: string;
+            /** Messages */
+            readonly messages: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Max Tokens */
+            readonly max_tokens?: number | null;
+            /** Json Schema */
+            readonly json_schema?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Web Search
+             * @default false
+             */
+            readonly web_search: boolean;
+            /**
+             * Feature
+             * @default
+             */
+            readonly feature: string;
         };
         /** FileOut */
         readonly FileOut: {
@@ -61892,6 +61958,37 @@ export interface operations {
             };
             /** @description Created */
             readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly ai_complete_workspace_app: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AiCompleteIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

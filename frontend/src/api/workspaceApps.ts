@@ -302,6 +302,14 @@ export async function callApp(workspace: string, key: string, op: AppOp,
                               token?: string): Promise<unknown> {
   if (surface === "link") return callLink(workspace, key, token ?? "", op);
   if (op.op === "tasks_query" || op.op === "tasks_act") return callTasks(workspace, key, op, surface, draft);
+  if (op.op === "ai") {
+    if (surface !== "member") throw new Error("AI is not available on a public page");
+    const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/ai/complete", {
+      params: { path: P(workspace, key), query: { draft: draft ?? undefined } },
+      body: op.request as never,
+    });
+    return unwrap(res, "The AI call failed");
+  }
   const path = P(workspace, key);
   const isPublic = surface === "public";
   const asPublic = surface === "preview" ? true : undefined;

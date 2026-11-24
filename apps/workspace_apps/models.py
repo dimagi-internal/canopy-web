@@ -296,3 +296,32 @@ class AppBundle(models.Model):
     files = models.JSONField(default=dict)
     size = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AppAiCall(models.Model):
+    """One `canopy.ai.complete` call from an app page (`ai.py`): who asked, from which app, for
+    which alias, what it cost and how it ended. Never the prompt or the answer: those are the
+    page's data, and canopy keeps none of them. Also the per-viewer rate limit's count."""
+
+    OK, FAILED, REFUSED = "ok", "failed", "refused"
+    STATUSES = [(OK, "ok"), (FAILED, "failed"), (REFUSED, "refused")]
+
+    installation = models.ForeignKey(AppInstallation, on_delete=models.CASCADE, related_name="ai_calls")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    #: "live", or the draft's test copy it was asked from.
+    space = models.CharField(max_length=40, default=LIVE)
+    alias = models.CharField(max_length=20)
+    #: The model the alias named when it was asked (`ai.ALIASES`), e.g. "vertex/gemini-3.5-flash".
+    model = models.CharField(max_length=120, blank=True, default="")
+    #: The page's own label for what it was doing ("record-summary"), free text, for reading the log.
+    feature = models.CharField(max_length=60, blank=True, default="")
+    status = models.CharField(max_length=10, choices=STATUSES)
+    error = models.CharField(max_length=300, blank=True, default="")
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    ms = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["user", "-created_at"]),
+                   models.Index(fields=["installation", "-created_at"])]
