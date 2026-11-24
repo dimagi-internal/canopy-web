@@ -33,6 +33,7 @@ from . import clis
 from .models import ProjectOptIn, Runner, Turn
 from .routing import EXECUTING, runner_tenant_slugs
 from .runner_requirements import is_sensitive_data_box
+from .signals import sessions_reported
 
 logger = logging.getLogger(__name__)
 
@@ -845,8 +846,6 @@ def _replay_unchanged(runner: Runner, digest: str, skipped: list | None) -> int 
         skipped.extend(memo["skipped"])
 
     def _fire_reported():
-        from apps.harness.signals import sessions_reported
-
         sessions_reported.send(sender=Runner, runner=runner, changed=False)
 
     transaction.on_commit(_fire_reported)
