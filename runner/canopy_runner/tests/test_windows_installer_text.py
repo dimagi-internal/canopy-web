@@ -86,6 +86,27 @@ def test_developer_install_restarts_the_runner_on_every_failure_path():
     assert no_tasks.index("Start-RunnerTask") < no_tasks.index("exit 0")
 
 
+def test_developer_install_hands_over_to_the_archived_installer():
+    """The updater runs a copy frozen at the last SUCCESSFUL install, refreshed only after
+    `uv tool install`. A frozen copy that fails before then can never replace itself, so
+    a fix to the installer never arrives (the pre-#2679 copy hit os error 32 for weeks).
+    Like install-runner.sh: once the ref is extracted, run the ARCHIVED installer if it
+    differs, before anything is stamped, stopped or installed."""
+    ps1 = _dev_ps1()
+    extract = ps1.index("& $sysTar -x -f $tar -C $Tmp")
+    guard = ps1.index("if (-not $env:CANOPY_INSTALLER_STAGE2)")
+    handover = ps1[guard:ps1.index("_build_info.py", guard)]
+    assert extract < guard < ps1.index("Stop-RunnerTask\n", guard) < ps1.index(
+        "& uv tool install --force", guard)
+    assert '"runner/canopy_runner/scripts/install-runner.ps1"' in handover
+    assert "(Get-FileHash $PSCommandPath).Hash" in handover
+    # Recursion guard set for the child; caller's args passed through; child's exit code kept.
+    assert handover.index('$env:CANOPY_INSTALLER_STAGE2 = "1"') < handover.index("-File $stage2Tmp @passArgs")
+    assert "$PSBoundParameters" in handover and "exit $code" in handover
+    # The copy must outlive the finally that deletes $Tmp.
+    assert "GetTempPath()" in handover and "Copy-Item -Path $archived -Destination $stage2Tmp" in handover
+
+
 def test_update_check_reads_stdout_only():
     """2>&1 under ErrorActionPreference Stop: one stderr line ends the updater on PS 5.1."""
     ps1 = (RUNNER / "canopy_runner" / "scripts" / "install-runner.ps1").read_text(
