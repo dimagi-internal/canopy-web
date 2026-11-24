@@ -333,6 +333,11 @@ Resources:
       HealthCheckIntervalSeconds: 5
       HealthyThresholdCount: 2
       HealthCheckTimeoutSeconds: 4
+      # Admission stays fast (2 x 5s above), but EVICTION should not be: at the
+      # default of 2, ten seconds of a saturated worker (not a dead one) got the
+      # task killed, turning slowness into a full outage (2026-11-24). Six
+      # failures = ~30s of sustained non-response before ECS replaces it.
+      UnhealthyThresholdCount: 6
       Matcher: { HttpCode: "200" }
       TargetGroupAttributes:
         # THE BIG ONE: deregistration_delay defaults to 300s and was never set
@@ -436,8 +441,13 @@ Resources:
     DeletionPolicy: Retain
     Properties:
       Family: labs-jj-canopy-web
-      Cpu: "1024"
-      Memory: "2048"
+      # 2026-11-24: 1 vCPU sat at 90-100% peak all day for two weeks while
+      # traffic grew ~190k -> 250-290k req/day (runner polling dominates); at
+      # saturation the ASGI worker wedged, /health/ timed out and ECS replaced
+      # the task (a ~1 min 502 outage). Doubled as headroom while the hot
+      # endpoints are optimised. Fargate pairs 2 vCPU with 4-16 GB.
+      Cpu: "2048"
+      Memory: "4096"
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
       ExecutionRoleArn: !Ref ExecutionRoleArn
