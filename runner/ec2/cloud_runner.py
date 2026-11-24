@@ -1992,6 +1992,7 @@ def _stage_salesforce(slug: str) -> pathlib.Path | None:
     home = _delegated_chrome_sales_home(slug)
     target = home / ".sf-creds.json"
     creds = _salesforce_value(slug)
+    _note_salesforce(slug, creds)
     try:
         if not creds:
             target.unlink(missing_ok=True)
@@ -2006,6 +2007,44 @@ def _stage_salesforce(slug: str) -> pathlib.Path | None:
     except OSError as exc:
         _log(f"warn: could not stage {slug}'s Salesforce credential ({exc})")
         return None
+
+
+def _note_salesforce(slug: str, creds: str) -> None:
+    """The `salesforce.<slug>` check: whether a Salesforce login was staged for this
+    agent's turns and whether chrome-sales can use it as it stands. Key NAMES only.
+
+    chrome-sales answers "Not authenticated" both when no file is staged and when the file
+    has no `accessToken` / `instanceUrl` (it refreshes only after a 401, never a token
+    that is missing), so the alert alone cannot tell the two apart. An agent with no
+    `salesforce` value and no gap that mentions it gets no check: it does not use one."""
+    name = f"salesforce.{slug}"
+    if not creds:
+        gaps = _TURN_VALUE_GAPS.get(slug, "")
+        if gaps and ("salesforce" in gaps.lower()):
+            _set_check(name, "warn", f"no Salesforce login staged: its vault value did not arrive — {gaps}")
+        else:
+            with _HEALTH_LOCK:
+                _HEALTH.pop(name, None)
+        return
+    try:
+        data = json.loads(creds)
+    except ValueError:
+        _set_check(name, "warn", "staged, but the `salesforce` value is not JSON: chrome-sales will "
+                                 "answer 'Not authenticated'")
+        return
+    keys = sorted(data) if isinstance(data, dict) else []
+    if not keys:
+        _set_check(name, "warn", "staged, but the `salesforce` value is not a JSON object")
+        return
+    missing = [k for k in ("accessToken", "instanceUrl") if not data.get(k)]
+    if not missing:
+        _set_check(name, "ok", f"staged (keys: {', '.join(keys)})")
+        return
+    can_refresh = bool(data.get("refreshToken") and data.get("clientId"))
+    _set_check(name, "warn", f"staged, but it has no {' or '.join(missing)} (keys: {', '.join(keys)}), so "
+               "chrome-sales answers 'Not authenticated'"
+               + (" before it ever tries its refresh token" if can_refresh else ""))
+    _log(f"warn: {slug}: staged Salesforce login lacks {', '.join(missing)} (keys: {', '.join(keys)})")
 
 
 #: A delegated Google account's vault entry name (canopy-web `google_mint.DELEGATED_PREFIX`):
@@ -4262,6 +4301,7 @@ def _turn_values(slug: str, *, now: float | None = None, outside_turn: bool = Fa
     values = {str(k): str(v) for k, v in values.items()}
     _TURN_ENV_ERRORS.pop(slug, None)
     note_cred_success(slug)
+    _TURN_VALUE_GAPS[slug] = _value_gaps(doc)
     # The resolve-time extras, when the CLI hands them over (`RESOLVE_EXTRAS`): it
     # resolved WITH this runner's device proof (and unwrapped a zero-knowledge
     # vault), which a runner's own (proofless) resolve cannot attach.
@@ -4269,9 +4309,41 @@ def _turn_values(slug: str, *, now: float | None = None, outside_turn: bool = Fa
         _AGENT_DELEGATED[slug] = {str(k): str(v) for k, v in doc["delegated"].items() if v}
     with _TURN_VALUES_LOCK:
         _TURN_VALUES[slug] = (now, values)
-    _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
-               "held in memory")
+    gaps = _TURN_VALUE_GAPS[slug]
+    if gaps:
+        _log(f"warn: {slug}: resolved without some vault values — {gaps}")
+        _set_check(f"env.{slug}", "warn", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
+                   f"held in memory — but not everything its vaults hold reached it: {gaps}")
+    else:
+        _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
+                   "held in memory")
     return values
+
+
+#: Per agent, what its last resolve could NOT hand this box (a shared vault it holds no
+#: copy of, a value a layer could not serve, a value sealed to other devices), as one
+#: line of names and reasons — never a value. "" when everything arrived.
+_TURN_VALUE_GAPS: dict[str, str] = {}
+
+
+def _value_gaps(doc: dict) -> str:
+    """The resolve's own diagnostics (canopy's `vault_layers` / `sealed_skipped`, passed
+    through by `cred env --runner --print-json`) as one line. Without this a vault attached
+    to an agent whose value never arrived read as "N var(s), ok", and the turn failed later
+    on something else's words (chrome-sales: "Not authenticated")."""
+    parts = []
+    for layer in doc.get("vault_layers") or []:
+        if not isinstance(layer, dict):
+            continue
+        name = str(layer.get("vault") or "?")
+        if not layer.get("opened"):
+            parts.append(f"vault '{name}' not opened ({layer.get('fix') or layer.get('why') or 'no reason given'})")
+        elif layer.get("left_out"):
+            parts.append(f"vault '{name}' left out {', '.join(map(str, layer['left_out']))}")
+    for skip in doc.get("sealed_skipped") or []:
+        if isinstance(skip, dict):
+            parts.append(f"{skip.get('name')}: {skip.get('why') or 'sealed to other devices'}")
+    return "; ".join(parts)[:1500]
 
 
 # ── backing off an agent whose credentials this box cannot resolve ──────────
