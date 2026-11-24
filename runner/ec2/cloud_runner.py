@@ -783,6 +783,11 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         # This code keeps nothing of an `isolated` turn (a learning run's) for later turns
         # (`ISOLATED_TURN_ENV`); canopy-web hands such a turn only to a box that reports it.
         "isolated": ISOLATED_VERSION,
+        # A REST beat's reply is the slim one (`RunnerHeartbeatSlimOut`): this box
+        # reads only `paused`, `paused_note`, `expected_canopy_version`,
+        # `refresh_pending` and `cancel_turn_ids` off it (`_observe_beat`,
+        # `honour_stops`, `maybe_self_refresh`). The socket's ack ignores it.
+        "slim_reply": 1,
     }
     # Omitted until the first inbox probe: absent is "unknown", [] is "none".
     readable = mailboxes_readable()
