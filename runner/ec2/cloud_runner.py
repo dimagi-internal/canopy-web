@@ -5778,6 +5778,10 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
 #: How often a waiting ask polls `/menu-answers` itself, so an answer lands even
 #: when the doorbell frame was lost.
 MENU_ANSWER_POLL_SECONDS = 3.0
+#: With `/sync` in use the answer arrives through it (an answer moves the sync
+#: version and rings `menu_answer`), so a waiting ask only checks the version
+#: this often itself: a conditional `/sync`, a 304 while nothing changed.
+MENU_ANSWER_SYNC_CHECK_SECONDS = 15.0
 _ASKS_LOCK = threading.Lock()
 #: Chat session id -> the ask waiting on a person there.
 _ASKS: dict[str, dict] = {}
@@ -5858,9 +5862,14 @@ def _ask_a_person(runner_id: str, turn_id: str, chat_session_id: str):
                 if stop_requested(turn_id):
                     return ({"outcome": {"outcome": "cancelled"}} if method == _PERMISSION
                             else {"action": "cancel"})
-                waiter["ring"].wait(MENU_ANSWER_POLL_SECONDS)
-                waiter["ring"].clear()
-                _drain_menu_answers(runner_id)
+                if sync_in_use():
+                    if not waiter["ring"].wait(MENU_ANSWER_SYNC_CHECK_SECONDS):
+                        _check_sync_for_answers(runner_id)
+                    waiter["ring"].clear()
+                else:
+                    waiter["ring"].wait(MENU_ANSWER_POLL_SECONDS)
+                    waiter["ring"].clear()
+                    _drain_menu_answers(runner_id)
                 with _ASKS_LOCK:
                     answer, waiter["answer"] = waiter["answer"], None
                 if answer is None:
@@ -5885,6 +5894,14 @@ def _ask_a_person(runner_id: str, turn_id: str, chat_session_id: str):
             _post_session_menu(runner_id, chat_session_id, None)
 
     return ask
+
+
+def _check_sync_for_answers(runner_id: str) -> None:
+    """A waiting ask's own check while `/sync` is in use: a conditional read, acted
+    on when the version moved (the answer is delivered to the waiter there)."""
+    answer = fetch_sync(runner_id, whole=False)
+    if answer is not None:
+        act_on_sync(runner_id, answer)
 
 
 def _drain_menu_answers(runner_id: str) -> None:
