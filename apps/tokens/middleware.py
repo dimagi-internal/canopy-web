@@ -35,6 +35,7 @@ from collections.abc import Callable
 from django.http import HttpRequest, HttpResponse
 
 from apps.tokens import kinds
+from apps.tokens.models import stamp_last_used
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +110,6 @@ class BearerTokenAuthMiddleware:
         from apps.harness.models import RunnerAccessToken
 
         if raw.startswith(RunnerAccessToken.PREFIX):
-            from django.utils import timezone
-
             from apps.api.errors import problem_response
             from apps.harness import runner_auth
 
@@ -122,7 +121,7 @@ class BearerTokenAuthMiddleware:
                                        private=rtok.runner.private,
                                        computer=rtok.runner.kind == rtok.runner.COMPUTER):
                 return problem_response(403, detail="a runner token opens the runner protocol only")
-            RunnerAccessToken.objects.filter(pk=rtok.pk).update(last_used_at=timezone.now())
+            stamp_last_used(RunnerAccessToken, rtok)
             request.user = found.user
             request.runner_token = rtok
             request.auth_method = found.auth_method
