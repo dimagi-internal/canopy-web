@@ -19,7 +19,7 @@ dependencies = [
     "django-allauth[socialaccount]>=65.19,<66.0",
     "whitenoise>=6.6,<7.0",
     "uvicorn[standard]>=0.27,<1.0",
-    "psycopg[binary,pool]>=3.1,<4.0",
+    "psycopg[binary]>=3.1,<4.0",
     # The vector column + HNSW index for knowledge-base passages (apps/agents/kb_vectors.py).
     # Needs the `vector` extension in the database (migration 0064; on RDS it is
     # enabled once by an rds_superuser — docs/architecture/deploy.md).
