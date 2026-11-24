@@ -1751,11 +1751,28 @@ def test_sync_session_views_can_skip_backfills(cloud_runner, monkeypatch):
         return 200, {"backfills": []}
 
     _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._SYNC["supported"] = False  # a server without /sync: the drains
     cloud_runner._sync_session_views("r", with_backfills=False)
     assert not any(p.endswith("/backfills") for p in paths)
     paths.clear()
     cloud_runner._sync_session_views("r")
     assert any(p.endswith("/backfills") for p in paths)
+
+
+def test_session_views_read_streams_and_backfills_from_sync(cloud_runner, monkeypatch):
+    # With /sync in use, its answer is the stream list and carries the backfills:
+    # the views make neither GET.
+    core = _FakeCore()
+    paths = []
+
+    def api(method, path, body=None):
+        paths.append(path)
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._SYNC.update(supported=True, version=3, answer={"version": 3, "streams": []})
+    cloud_runner._sync_session_views("r")
+    assert not any(p.endswith(("/backfills", "/handoffs", "/streams")) for p in paths)
 
 
 def test_session_views_survive_a_missing_transcript_core(cloud_runner, monkeypatch):

@@ -223,7 +223,10 @@ def test_the_ws_loops_chores_run_off_the_socket_thread(cloud_runner, monkeypatch
         monkeypatch.setattr(cloud_runner, name, lambda *a, _n=name, **k: ran.append((_n, threading.current_thread().name)))
     for name in ("_maybe_reread_credentials", "_credential_tick", "_job_cap_tick"):
         monkeypatch.setattr(cloud_runner, name, lambda *a, _n=name, **k: ran.append((_n, threading.current_thread().name)))
+    monkeypatch.setattr(cloud_runner, "maybe_sync",
+                        lambda *a, **k: ran.append(("maybe_sync", threading.current_thread().name)))
     monkeypatch.setattr(cloud_runner, "POLL_SECONDS", 0)
+    cloud_runner._SYNC["supported"] = False  # a server without /sync: the drains
     chores = cloud_runner._WsChores("rid")
     chores.start()
     deadline = time.time() + 2
@@ -231,11 +234,11 @@ def test_the_ws_loops_chores_run_off_the_socket_thread(cloud_runner, monkeypatch
         time.sleep(0.01)
     chores.stop()
     assert {n for n, _ in ran} >= {"_drain_session_interrupts", "_sync_session_views", "_drain_inbox",
-                                   "_credential_tick"}
+                                   "_credential_tick", "maybe_sync"}
     assert {t for _, t in ran} == {"ws-chores"}
     src = open(cloud_runner.__file__).read()
     ws = src[src.index("def run_over_ws"):src.index("def main()")]
-    tick = ws[ws.index("if time.monotonic() - last_poll >= POLL_SECONDS:"):]
+    tick = ws[ws.index("if time.monotonic() - last_poll >= claim_every:"):]
     tick = tick[:tick.index("except Exception as exc:")]
     assert "_drain(ws, runner_id)" in tick and "_sync_session_views" not in tick and "_drain_inbox" not in tick
 
