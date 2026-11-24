@@ -127,7 +127,7 @@ so "where does X live" has exactly one answer:
 | `emdash.py` | the two READ-ONLY emdash DB queries |
 | `add_project.py` | adding a repo canopy-web asked for: clone it, add it in emdash's UI, verify, report |
 | `transcript.py` / `tail.py` | resolving and incrementally reading transcripts |
-| `inbox.py` / `schedules.py` | the email and cron turn producers |
+| `inbox.py` | the email turn producer (canopy-web fires schedules itself) |
 | `provenance.py` / `update.py` / `_build_info.py` | what code this box runs, and whether to update |
 | `desktop.py` / `headless.py` | the Claude desktop and Claude CLI session runtimes; the headless ACP executor |
 | `cancel.py` / `failure_log.py` | the shared "stop this turn" set; repeat-aware retry logging |
@@ -420,7 +420,7 @@ check was not enough. 1.2 moved **three** things at once:
 ## Windows
 
 The runner is **not** macOS-only, and never mostly was. Everything it does is
-portable — `inbox.py` and `schedules.py` shell out to `gog` and do date math,
+portable — `inbox.py` shells out to `gog` and does date math,
 `cdp_control` drives emdash through `node`, `transcript`/`tail` are pure
 pathlib, and emdash itself ships `emdash-x64.exe` / `.msi`. What was macOS-only
 was the **supervision**: two launchd jobs, and one inline `launchctl kickstart`.

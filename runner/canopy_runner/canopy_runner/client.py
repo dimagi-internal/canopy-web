@@ -85,8 +85,7 @@ class Client:
         idempotent — a retry after the server already claimed a turn would risk a
         double-claim. Everything else is either a pure state transition
         (`start`/`finish`/`fail_turn`), an upsert (`record_session`), a level
-        report (`heartbeat`), or idempotency-keyed (`enqueue_turn`,
-        `fire_schedule`).
+        report (`heartbeat`), or idempotency-keyed (`enqueue_turn`).
         """
         label = label or path
         attempts = RETRY_ATTEMPTS if retry else 1
@@ -525,27 +524,6 @@ class Client:
             {"lines": lines, "batch_id": batch_id},
         )
         return not (payload or {}).get("truncated", False)
-
-    def sync_schedules(self, runner_id: str) -> list[dict]:
-        """The schedules this runner may fire (tenant-scoped server-side). The runner
-        evaluates their cron locally and reports what came due — the server stores the
-        config, the runner is the tick. Response is a Page; callers want the items."""
-        from urllib.parse import urlencode
-        _, payload = self._call("GET", "/schedules/?" + urlencode({"runner_id": runner_id}))
-        return (payload or {}).get("items", [])
-
-    def fire_schedule(self, schedule_id: int, runner_id: str, slot: str) -> dict:
-        """Report a due slot; the server materializes it as a normal turn.
-
-        Safe to race — both macOS-account runners may report the same slot, and the
-        server's slot-derived idempotency_key collapses it inside enqueue_turn. The
-        route answers 201 either way, so a fresh turn and a replay are indistinguishable
-        here (and both are success — there is nothing for the runner to reconcile).
-        """
-        from urllib.parse import urlencode
-        path = f"/schedules/{schedule_id}/fire?" + urlencode({"runner_id": runner_id})
-        _, payload = self._call("POST", path, {"slot": slot})
-        return payload or {}
 
     def enqueue_turn(self, agent_slug: str, origin: str, idempotency_key: str, *,
                      prompt: str = "", origin_ref: dict | None = None,
