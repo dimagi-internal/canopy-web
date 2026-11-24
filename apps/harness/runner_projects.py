@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from apps.realtime import groups
 
+from . import runner_sync
 from .models import Runner, RunnerProjectRequest
 
 #: An emdash project name the box can also use as a folder name: no path parts,
@@ -68,17 +69,20 @@ def request_project(runner: Runner, *, repo_url: str, name: str = "", agent=None
             "or '-', starting with a letter or digit")
     held = name in runner.observed_projects()
     now = timezone.now()
-    row, _ = RunnerProjectRequest.objects.update_or_create(
-        runner=runner, name=name,
-        defaults={
-            "repo_url": repo_url, "agent": agent, "requested_by": user,
-            "status": RunnerProjectRequest.ADDED if held else RunnerProjectRequest.PENDING,
-            "detail": "already an emdash project on this runner" if held else "",
-            "requested_at": now, "finished_at": now if held else None,
-        },
-    )
+    with transaction.atomic():
+        row, _ = RunnerProjectRequest.objects.update_or_create(
+            runner=runner, name=name,
+            defaults={
+                "repo_url": repo_url, "agent": agent, "requested_by": user,
+                "status": RunnerProjectRequest.ADDED if held else RunnerProjectRequest.PENDING,
+                "detail": "already an emdash project on this runner" if held else "",
+                "requested_at": now, "finished_at": now if held else None,
+            },
+        )
+        if not held:
+            runner_sync.bump(runner)
     if not held:
-        # The heartbeat carries the ask; the ring only makes the box beat sooner.
+        # The heartbeat and `/sync` carry the ask; the ring only makes the box look sooner.
         transaction.on_commit(lambda: groups.publish(
             groups.runner_group(runner.pk), {"type": "runner.wake"}))
     return row

@@ -102,6 +102,7 @@ def heartbeat(runner: Runner, payload: HeartbeatIn, *, device_key: bool = False)
         midturn=payload.midturn,
         isolated=payload.isolated,
         stored_projects=payload.stored_projects,
+        sync=payload.sync,
         clis=payload.clis,
         claude_model=payload.claude_model,
         data_mode=payload.data_mode if data_mode_trusted(runner, device_key=device_key) else "",

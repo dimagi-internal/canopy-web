@@ -13,7 +13,7 @@ import uuid
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
-from apps.harness import runner_protocol
+from apps.harness import runner_protocol, runner_sync
 from apps.harness import services as harness_services
 from apps.harness import claim, ledger
 from apps.harness.models import Runner, Turn
@@ -174,23 +174,41 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         for group in getattr(self, "_groups", []):
             await self.channel_layer.group_discard(group, self.channel_name)
 
+    async def _doorbell(self, frame: dict) -> None:
+        """Send a server -> runner frame carrying `v`, the runner's sync version
+        (`apps/harness/runner_sync.py`), read when the frame goes out. A frame is a
+        doorbell: the box acts on the rows, and `v` tells it whether `/sync` has
+        anything it has not read."""
+        pk = getattr(self, "_runner_pk", None)
+        await self.send_json({**frame, "v": await self._sync_version(pk) if pk else 0})
+
+    @database_sync_to_async
+    def _sync_version(self, pk) -> int:
+        return runner_sync.version_of(pk)
+
+    async def runner_mint(self, message):
+        # runner.{id} group_send type="runner.mint" (`runner_sync.ring_mint`): a sign-in
+        # this box owes work on — asked to start, or a code handed back. The box
+        # reads it on `GET /runners/{id}/mint/claim`.
+        await self._doorbell({"type": "mint"})
+
     async def runner_wake(self, message):
         # runnable.{ws} group_send type="runner.wake" dispatches here.
-        await self.send_json({"type": "wake"})
+        await self._doorbell({"type": "wake"})
 
     async def runner_prepare(self, message):
         # runner.{id} group_send type="runner.prepare" (`harness.prepare.ring`): a
         # conversation on a site's page was opened with an agent this box may hold, so it
         # can make the conversation's working copy before the turn arrives. Names the agent
         # and the conversation only; the turn is claimed as always.
-        await self.send_json({"type": "prepare", "agent": message.get("agent") or "",
+        await self._doorbell({"type": "prepare", "agent": message.get("agent") or "",
                               "session_id": message.get("session_id") or ""})
 
     async def runner_cancel(self, message):
         # runner.{id} group_send type="runner.cancel" — the user asked to stop a turn
         # this runner is executing. Forwarded down the socket; the executor checks its
         # cancel set every bridge poll (~0.5s), interrupts emdash, finishes CANCELLED.
-        await self.send_json({"type": "cancel", "turn_id": message.get("turn_id")})
+        await self._doorbell({"type": "cancel", "turn_id": message.get("turn_id")})
 
     async def runner_session_interrupt(self, message):
         # runner.{id} group_send type="runner.session_interrupt" — the user asked to
@@ -201,7 +219,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # terminal, keyed on (project, session_key) because task names are unique per
         # project only. interrupt_id is how the runner retires the server's record of
         # this stop; without it the next sweep would press Escape a second time.
-        await self.send_json({
+        await self._doorbell({
             "type": "session_interrupt",
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
@@ -214,7 +232,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # session this runner backs. Forwarded to the runner socket; the runner also
         # syncs desired-streaming via GET /runners/{id}/streams, so a missed frame
         # only costs latency (like the wake channel).
-        await self.send_json({
+        await self._doorbell({
             "type": "stream",
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
@@ -228,7 +246,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # is load-bearing beyond forwarding: Channels RAISES on an unhandled
         # group-message type, so without it the doorbell frame not only never
         # arrived, it errored the consumer carrying wake/cancel too.
-        await self.send_json({
+        await self._doorbell({
             "type": "check_inbox",
             "mailbox": message.get("mailbox"),
         })
@@ -240,7 +258,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # re-checks staleness and the in-flight marker itself — the daemon never
         # installs anything on this signal, and the updater's 30-min timer stays
         # the rescue path for a daemon too dead to hear a frame.
-        await self.send_json({
+        await self._doorbell({
             "type": "update_available",
             "expected_sha": message.get("expected_sha"),
         })
@@ -263,7 +281,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # Unit tests that build the frame by hand would not see either, so
         # `test_realtime_menu_answer.py` asserts this relay against
         # what `answer_menu` actually publishes.
-        await self.send_json({
+        await self._doorbell({
             "type": "menu_answer",
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
@@ -280,7 +298,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # name in its `archived:` closing signal; the server wrote nothing, so the
         # emdash task stays the single source of truth for a local session and a
         # failed delete simply leaves the row where it is.
-        await self.send_json({
+        await self._doorbell({
             "type": "close_session",
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
@@ -292,7 +310,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # a listen session to this box. The runner starts its pipe to /ws/listen/<id>/;
         # `hello` is public keys only. A doorbell: a box that misses it finds the
         # session on GET /api/runner/listen-sessions/pending.
-        await self.send_json({
+        await self._doorbell({
             "type": "listen_start",
             "session_id": message.get("session_id"),
             "kind": message.get("kind"),
@@ -328,6 +346,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             # its own, so it has to be told which kind it is under.
             # And the canopy release, for the box's `canopy.cli` check (RunnerOut
             # .expected_canopy_version on the REST path).
+            # And `v`, its sync version: a box that reads `/sync` asks it when `v` moved.
             await self.send_json({"type": "heartbeat.ack", "refresh_pending": bool(refresh),
                                   "cancel_turn_ids": cancel_ids, **pause})
         elif action == "start":
@@ -399,7 +418,8 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
                                   device_key=getattr(self, "scope", {}).get("auth_method") == principal.RUNNER_KEY)
         return (runner.refresh_pending(), list(getattr(runner, "cancel_turn_ids", None) or []),
                 {"paused": bool(runner.paused), "paused_note": runner.paused_note or "",
-                 "expected_canopy_version": runner.expected_canopy_version()})
+                 "expected_canopy_version": runner.expected_canopy_version(),
+                 "v": runner_sync.version_of(runner.pk)})
 
     def _turn_owned_sync(self, turn_id):
         """A turn THIS runner claimed — the only ones it may start/append/finish.

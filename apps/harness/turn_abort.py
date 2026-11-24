@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from apps.realtime import groups
 
+from . import runner_sync
 from .ledger import append_events
 from .models import Turn
 from .routing import EXECUTING
@@ -64,6 +65,8 @@ def abort(turn: Turn, *, reason: str, tool: str = "", by: str = "") -> Turn:
             return turn
         raise NotAbortable(f"status={turn.status}")
     append_events(turn, [{"kind": "error", "payload": {"detail": note}}])
+    if was_executing:
+        runner_sync.bump(turn.claimed_by_id)
     if was_executing and turn.claimed_by_id:
         groups.publish(groups.runner_group(turn.claimed_by_id),
                        {"type": "runner.cancel", "turn_id": str(turn.id)})

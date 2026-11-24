@@ -16,7 +16,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from apps.harness import provenance
+from apps.harness import provenance, runner_sync
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Turn
 
@@ -826,7 +826,9 @@ def _set_stream_desired(session, desired: bool) -> bool:
         return False
     if binding.stream_desired != desired:
         binding.stream_desired = desired
-        binding.save(update_fields=["stream_desired", "updated_at"])
+        with transaction.atomic():
+            binding.save(update_fields=["stream_desired", "updated_at"])
+            runner_sync.bump(binding.runner_id)
     if binding.runner_id:
         from apps.realtime import groups
         groups.publish(groups.runner_group(binding.runner_id), {

@@ -146,7 +146,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     jobs_trusted = (rtok is not None and rtok.runner_id == runner.pk
                     and runner.kind == Runner.CLOUD)
     jobs_said = payload.capabilities.pop("jobs", None)
-    reported = ("projects", "profiles", "envelope", "midturn", "isolated", "stored_projects", "unprepared",
+    reported = ("projects", "profiles", "envelope", "midturn", "isolated", "stored_projects", "sync", "unprepared",
                 "data_mode",
                 "data_mode_hash", "claude_model", "clis", "clis_unknown")
     payload.capabilities = {k: v for k, v in payload.capabilities.items()
@@ -159,7 +159,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "routable, open it as a project in emdash on that runner (or set "
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
-    for key in ("profiles", "envelope", "midturn", "isolated", "stored_projects", "unprepared", "data_mode",
+    for key in ("profiles", "envelope", "midturn", "isolated", "stored_projects", "sync", "unprepared", "data_mode",
                 "data_mode_hash",
                 "claude_model", "clis", "clis_unknown"):
         if key in payload.capabilities:

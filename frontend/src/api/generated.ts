@@ -16018,6 +16018,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every piece of work this runner owes, behind an ETag
+         * @description The drains in one read. `ETag` is the runner's sync version; send it back as
+         *     `If-None-Match` and an unchanged version answers 304 with nothing else read.
+         *     Every list is whole (never a diff since the last read), so a box that missed a
+         *     doorbell, or a bump, finds the work on its next read.
+         */
+        readonly get: operations["get_runner_sync"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/unclaimable": {
         readonly parameters: {
             readonly query?: never;
@@ -45388,6 +45411,11 @@ export interface components {
              * @default
              */
             readonly expected_canopy_version: string;
+            /**
+             * Sync Version
+             * @default 0
+             */
+            readonly sync_version: number;
             /** Workspace */
             readonly workspace: string | null;
             /** Owner Email */
@@ -46677,6 +46705,11 @@ export interface components {
              * @default
              */
             readonly expected_canopy_version: string;
+            /**
+             * Sync Version
+             * @default 0
+             */
+            readonly sync_version: number;
         };
         /** HeartbeatIn */
         readonly HeartbeatIn: {
@@ -46765,6 +46798,11 @@ export interface components {
              * @default 0
              */
             readonly slim_reply: number;
+            /**
+             * Sync
+             * @default 0
+             */
+            readonly sync: number;
             /** Clis */
             readonly clis?: {
                 readonly [key: string]: unknown;
@@ -47836,6 +47874,74 @@ export interface components {
              * @default
              */
             readonly transcript_id: string;
+        };
+        /**
+         * RunnerSyncOut
+         * @description `GET /runners/{id}/sync`: every piece of work this box owes, in one read.
+         *
+         *     Each list is the same rows its own drain route answers (`/session-interrupts`,
+         *     `/menu-answers`, `/closes`, `/backfills`, `/handoffs`, `/streams`); `sections`
+         *     holds what other apps register (`runner_sync.register_section`, e.g. `listen`).
+         *     `mint_due` says `/mint/claim` has something (claiming it consumes a code, so it
+         *     stays its own call). `version` is the ETag's number.
+         */
+        readonly RunnerSyncOut: {
+            /** Version */
+            readonly version: number;
+            /**
+             * Interrupts
+             * @default []
+             */
+            readonly interrupts: readonly components["schemas"]["SessionInterruptOut"][];
+            /**
+             * Answers
+             * @default []
+             */
+            readonly answers: readonly components["schemas"]["MenuAnswerOut"][];
+            /**
+             * Closes
+             * @default []
+             */
+            readonly closes: readonly components["schemas"]["CloseOut"][];
+            /**
+             * Backfills
+             * @default []
+             */
+            readonly backfills: readonly components["schemas"]["BackfillDescriptorOut"][];
+            /**
+             * Handoffs
+             * @default []
+             */
+            readonly handoffs: readonly components["schemas"]["HandoffDueOut"][];
+            /**
+             * Streams
+             * @default []
+             */
+            readonly streams: readonly components["schemas"]["StreamDescriptorOut"][];
+            /**
+             * Cancel Turn Ids
+             * @default []
+             */
+            readonly cancel_turn_ids: readonly string[];
+            /**
+             * Add Projects
+             * @default []
+             */
+            readonly add_projects: readonly components["schemas"]["RunnerProjectAskOut"][];
+            /**
+             * Mint Due
+             * @default false
+             */
+            readonly mint_due: boolean;
+            /**
+             * Sections
+             * @default {}
+             */
+            readonly sections: {
+                readonly [key: string]: readonly {
+                    readonly [key: string]: unknown;
+                }[];
+            };
         };
         /**
          * UnclaimableTurnOut
@@ -77535,6 +77641,35 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["BackfillWriteOut"];
                 };
+            };
+        };
+    };
+    readonly get_runner_sync: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerSyncOut"];
+                };
+            };
+            /** @description Not Modified */
+            readonly 304: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
