@@ -55,12 +55,18 @@ class ClientError(Exception):
         self.body = body
 
 
+#: How long `Client.runner_mailboxes` reuses its last answer.
+MAILBOXES_TTL_SECONDS = 600.0
+
+
 class Client:
     def __init__(self, base_url: str, token):
         """`token`: the owner's PAT, or a `runner_token.RunnerCredential` — this
         runner signing in with its device key, the PAT only as its fallback."""
         self.base_url = base_url.rstrip("/")
         self._token = token
+        # (fetched_at monotonic, rows) of the last `runner_mailboxes` answer.
+        self._mailboxes: tuple[float, list[dict]] | None = None
 
     @property
     def token(self) -> str:
@@ -568,9 +574,19 @@ class Client:
         InboundPushConfig so a tenant sets one in the UI, instead of someone
         hand-editing runner.json on every box. (An older server sends only the
         rows with a topic, and no `agent_slug`.)
+
+        Cached for MAILBOXES_TTL_SECONDS: the rows change when someone edits a
+        workspace's push config or an agent's mailbox, and both callers (the probe
+        and the watch re-arm) act on day-scale clocks, while the loop ticks every
+        few seconds. A failed fetch raises as before and caches nothing.
         """
+        now = time.monotonic()
+        if self._mailboxes is not None and now - self._mailboxes[0] < MAILBOXES_TTL_SECONDS:
+            return list(self._mailboxes[1])
         _status, payload = self._call_api("/inbound/runner-mailboxes", method="GET")
-        return (payload or {}).get("items", []) if isinstance(payload, dict) else []
+        rows = (payload or {}).get("items", []) if isinstance(payload, dict) else []
+        self._mailboxes = (now, rows)
+        return list(rows)
 
     def report_watch(self, address: str, expires_at, error: str = "") -> dict:
         """Tell canopy-web the state of this mailbox's Gmail watch.
