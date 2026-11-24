@@ -26,6 +26,9 @@ turn_events_appended = Signal()
 # apps/realtime fans the runner-owner's visible sessions to their supervisor group so
 # the phone reflects live emdash activity instantly (one broadcast, N viewers) instead
 # of every client polling. Post-commit, same reasoning as turn_events_appended.
+# `changed=False` when the report was identical to the last and only liveness was
+# restamped (session_sync._replay_unchanged): the sweeps that ride this clock still
+# run, a push of what viewers already have does not.
 sessions_reported = Signal()
 
 # Sent with: sender=RunnerBinding, session_id=<uuid>, menu=<dict|None>,
