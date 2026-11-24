@@ -35,6 +35,7 @@ from types import SimpleNamespace
 from django.db import transaction
 from django.utils import timezone
 
+from apps.harness import runner_sync
 from apps.harness.models import Runner
 
 from .. import services
@@ -140,8 +141,10 @@ def start(agent, *, user, login_hint: str = "") -> AgentGoogleMint:
         for old in AgentGoogleMint.objects.select_for_update().filter(
                 agent=agent, delegated_by__isnull=True).exclude(status__in=AgentGoogleMint.FINISHED):
             _fail(old, "superseded", "superseded by a newer sign-in")
-        return AgentGoogleMint.objects.create(agent=agent, runner=runners[0], requested_by=user,
+        mint = AgentGoogleMint.objects.create(agent=agent, runner=runners[0], requested_by=user,
                                               login_hint=login_hint[:254])
+        _owed(mint)
+        return mint
 
 
 #: The longest a session may last: Google's access tokens live an hour, and there is no
@@ -186,10 +189,12 @@ def start_delegated(agent, *, user, account: str, services=None, session_minutes
         for old in AgentGoogleMint.objects.select_for_update().filter(agent=agent, delegated_by=user).exclude(
                 status__in=AgentGoogleMint.FINISHED):
             _fail(old, "superseded", "superseded by a newer sign-in")
-        return AgentGoogleMint.objects.create(agent=agent, runner=runners[0], requested_by=user,
+        mint = AgentGoogleMint.objects.create(agent=agent, runner=runners[0], requested_by=user,
                                               delegated_by=user, expected_account=account,
                                               services=services, login_hint=account,
                                               session_minutes=int(session_minutes or 0))
+        _owed(mint)
+        return mint
 
 
 def get(agent, mint_id, *, delegated_by=None) -> AgentGoogleMint | None:
@@ -342,8 +347,16 @@ def receive_code(mint: AgentGoogleMint, *, code: str, error: str) -> AgentGoogle
     if error or not code:
         return _fail(mint, "denied", "the sign-in was cancelled on Google's side")
     mint.code, mint.status = code.strip(), AgentGoogleMint.COMPLETING
-    mint.save(update_fields=["code", "status", "updated_at"])
+    with transaction.atomic():
+        mint.save(update_fields=["code", "status", "updated_at"])
+        _owed(mint)
     return mint
+
+
+def _owed(mint: AgentGoogleMint) -> None:
+    """Its runner owes work on it now (`claim`): move the box's sync version, ring it."""
+    runner_sync.bump(mint.runner_id)
+    runner_sync.ring_mint(mint.runner_id)
 
 
 def _finish_delegated(runner, mint: AgentGoogleMint, *, value_zk: str, account: str, name: str) -> AgentGoogleMint:

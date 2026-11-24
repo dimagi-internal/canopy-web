@@ -12,12 +12,13 @@ import re
 from dataclasses import dataclass
 
 from canopy_transcript import BLOCK_STRIDE, contract
+from django.db import transaction
 from django.db.models import OuterRef, Q, Subquery
 from django.utils import timezone
 
 from apps.agents.credentials import secret_requests
 from apps.common import redact
-from apps.harness import runner_requirements, sensitivity
+from apps.harness import runner_requirements, runner_sync, sensitivity
 from apps.harness.models import Turn
 from apps.mcp_apps_host import mcp_apps_views
 
@@ -956,7 +957,9 @@ def request_backfill(session) -> str:
         return "unavailable"
     if not binding.backfill_requested:
         binding.backfill_requested = True
-        binding.save(update_fields=["backfill_requested", "updated_at"])
+        with transaction.atomic():
+            binding.save(update_fields=["backfill_requested", "updated_at"])
+            runner_sync.bump(binding.runner_id)
     from apps.realtime import groups
     groups.publish(groups.runner_group(binding.runner_id), {
         "type": "runner.stream",  # reuse the control frame; desired=None marks a backfill ask

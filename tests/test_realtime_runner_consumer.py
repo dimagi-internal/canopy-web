@@ -84,7 +84,7 @@ async def test_enqueue_wakes_the_runner():
 
     await _enqueue()
     frame = await comm.receive_json_from(timeout=2)
-    assert frame == {"type": "wake"}
+    assert frame == {"type": "wake", "v": 0}
     await comm.disconnect()
 
 
@@ -174,7 +174,7 @@ async def test_revoking_the_pat_closes_the_socket_before_it_claims():
     await database_sync_to_async(PersonalToken.objects.filter(pk=token.pk).update)(
         revoked_at=timezone.now())
     turn, _created = await _enqueue()
-    assert await comm.receive_json_from(timeout=2) == {"type": "wake"}
+    assert await comm.receive_json_from(timeout=2) == {"type": "wake", "v": 0}
     await comm.send_json_to({"action": "claim"})
     out = await comm.receive_output(timeout=2)
     assert out == {"type": "websocket.close", "code": 4001}
@@ -253,7 +253,7 @@ async def test_cancel_frame_reaches_the_runner():
         "type": "runner.cancel", "turn_id": "t-456",
     })
     frame = await comm.receive_json_from(timeout=2)
-    assert frame == {"type": "cancel", "turn_id": "t-456"}
+    assert frame == {"type": "cancel", "turn_id": "t-456", "v": 0}
     await comm.disconnect()
 
 
@@ -274,7 +274,7 @@ async def test_check_inbox_frame_reaches_the_runner():
         "type": "runner.check_inbox", "mailbox": "hal@dimagi-ai.com",
     })
     frame = await comm.receive_json_from(timeout=2)
-    assert frame == {"type": "check_inbox", "mailbox": "hal@dimagi-ai.com"}
+    assert frame == {"type": "check_inbox", "mailbox": "hal@dimagi-ai.com", "v": 0}
     await comm.disconnect()
 
 
@@ -292,7 +292,7 @@ async def test_update_available_frame_reaches_the_runner():
         "type": "runner.update_available", "expected_sha": "a" * 40,
     })
     frame = await comm.receive_json_from(timeout=2)
-    assert frame == {"type": "update_available", "expected_sha": "a" * 40}
+    assert frame == {"type": "update_available", "expected_sha": "a" * 40, "v": 0}
     await comm.disconnect()
 
 
@@ -590,6 +590,7 @@ def test_the_relay_forwards_every_published_field(monkeypatch):
     # What the socket actually writes, for that exact published payload.
     relayed = {}
     consumer = RunnerConsumer()
+    consumer._runner_pk = runner.id  # set by `connect`
     consumer.send_json = lambda payload: _noop_store(relayed, payload)
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
         consumer.runner_menu_answer(sent))
@@ -622,7 +623,7 @@ async def test_ws_heartbeat_records_health_and_acks_refresh():
     ack = await comm.receive_json_from(timeout=2)
     assert ack == {"type": "heartbeat.ack", "refresh_pending": False,
                    "cancel_turn_ids": [], "paused": False, "paused_note": "",
-                   "expected_canopy_version": ""}
+                   "expected_canopy_version": "", "v": 0}
     fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
     assert fresh.health["checks"][0]["name"] == "transcripts"
 
@@ -802,3 +803,37 @@ def test_supervisor_snapshot_leaves_out_ownerless_runners():
     user, _ws, _a, runner = _setup()
     Runner.objects.filter(pk=runner.pk).update(owner=None)
     assert supervisor_snapshot(user)["runners"] == []
+
+
+# --- `v`: the runner's sync version on every frame and on the heartbeat ack --------
+async def test_frames_and_the_ack_carry_the_sync_version():
+    """A doorbell says which version the box should have read; the ack says it on
+    every beat, so a box whose frame was lost still sees the version move."""
+    from channels.layers import get_channel_layer
+
+    from apps.harness import runner_sync
+    from apps.realtime import groups
+
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await database_sync_to_async(runner_sync.bump)(runner.id)
+    await get_channel_layer().group_send(groups.runner_group(runner.id), {"type": "runner.mint"})
+    assert await comm.receive_json_from(timeout=2) == {"type": "mint", "v": 1}
+    await database_sync_to_async(runner_sync.bump)(runner.id)
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": [], "sync": 1})
+    ack = await comm.receive_json_from(timeout=2)
+    assert ack["type"] == "heartbeat.ack" and ack["v"] == 2
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.capabilities["sync"] == 1
+    await comm.disconnect()
+
+
+async def test_a_sign_in_rings_the_box():
+    """A sign-in asked of a box has a doorbell of its own (`runner.mint`)."""
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await database_sync_to_async(runners.start_runner_mint)(runner, requested_by=user)
+    assert await comm.receive_json_from(timeout=2) == {"type": "mint", "v": 1}
+    await comm.disconnect()

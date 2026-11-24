@@ -226,6 +226,7 @@ from .schedules import (  # noqa: F401
     TriggerPatch,
 )
 from .session_sync import (  # noqa: F401
+    RunnerSyncOut,
     BackfillDescriptorOut,
     BackfillMessageIn,
     BackfillSyncOut,

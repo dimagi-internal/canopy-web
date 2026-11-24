@@ -32,8 +32,10 @@ LAPTOP_READS = {
     "engine",  # desktop.observe
     "refresh_pending",  # refresh.observe
     "add_projects",  # add_project.observe
+    "sync_version",  # runner_sync: `v`
 }
-CLOUD_READS = {"paused", "paused_note", "expected_canopy_version", "refresh_pending", "cancel_turn_ids"}
+CLOUD_READS = {"paused", "paused_note", "expected_canopy_version", "refresh_pending", "cancel_turn_ids",
+               "sync_version"}
 
 
 @pytest.fixture

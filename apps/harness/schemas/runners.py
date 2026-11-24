@@ -387,6 +387,9 @@ class RunnerOut(Schema):
     # it runs, beside its code (`canopy_release`). The box compares its CLI with
     # it in its `canopy.cli` check. "" = unknown.
     expected_canopy_version: str = ""
+    # `v`: the runner's sync version (`runner_sync`). A box that reads `sync` asks
+    # `GET /runners/{id}/sync` when this differs from the version it last synced.
+    sync_version: int = 0
 
     workspace: str | None
     # The runner's OWNER — the human whose token it authenticates with. This — NOT `workspace` — is what governs
@@ -696,6 +699,8 @@ class RunnerHeartbeatSlimOut(Schema):
     cancel_turn_ids: list[str] | None = None
     add_projects: list[RunnerProjectAskOut] | None = None
     expected_canopy_version: str = ""
+    # `v`: a box that reads `sync` asks `/sync` when it moves (`runner_sync`).
+    sync_version: int = 0
 
     resolve_status = staticmethod(RunnerOut.resolve_status)
     resolve_private_runner_id = staticmethod(RunnerOut.resolve_private_runner_id)
@@ -807,6 +812,10 @@ class HeartbeatIn(Schema):
     # reply is that instead of the whole `RunnerOut`. Absent (older code) means 0: the
     # whole row, as before.
     slim_reply: int = 0
+    # 1 = this runner's code reads its work through `GET /runners/{id}/sync` when
+    # `sync_version` moves, instead of polling each drain route. Recorded so the
+    # drain routes can go once no beat reports 0. Absent (older code) means 0.
+    sync: int = 0
     # Which agent CLIs this box has, signed in and confining (`clis.sanitize`):
     # {"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}.
     # A level like `profiles`: absent (older code) means the box is read as Claude
