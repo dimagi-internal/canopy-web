@@ -232,8 +232,9 @@ def _locked(agent):
     return Agent.objects.select_for_update().get(pk=agent.pk)
 
 
-def _store(agent) -> engine.Store:
-    """The agent's vault, for the rules in `vault_engine`: its rows live on the agent."""
+def _store(agent, facts=None) -> engine.Store:
+    """The agent's vault, for the rules in `vault_engine`: its rows live on the agent.
+    `facts`: `device_keys.serving_facts`, when asking about several agents."""
 
     def save_kv(kv: int) -> None:
         agent.zk_kv = kv
@@ -242,8 +243,8 @@ def _store(agent) -> engine.Store:
     return engine.Store(
         label=agent.slug, kv=agent.zk_kv,
         wrap_model=AgentVaultWrap, secret_model=AgentCredential, owner_kw={"agent": agent},
-        eligible_devices=lambda: eligible_device_keys(agent),
-        eligible_members=lambda: eligible_members(agent),
+        eligible_devices=lambda: eligible_device_keys(agent, facts),
+        eligible_members=lambda: eligible_members(agent, facts),
         lock=lambda: _store(_locked(agent)), save_kv=save_kv,
         # A browser may seal a value to its recipients before the vault key exists.
         accepts_sealed=True,
@@ -330,10 +331,11 @@ def forget_member_wraps(user) -> int:
 
 # ---- reads ----------------------------------------------------------------------------
 
-def pending_targets(agent) -> list[dict]:
+def pending_targets(agent, facts=None) -> list[dict]:
     """Eligible principals with no wrap at the current kv: who a member should
-    grant to next. Before enable, every eligible principal (what enable wraps to)."""
-    return engine.pending_targets(_store(agent), has_key=True)
+    grant to next. Before enable, every eligible principal (what enable wraps to).
+    `facts`: `device_keys.serving_facts`, when asking about several agents."""
+    return engine.pending_targets(_store(agent, facts), has_key=True)
 
 
 def copies(agent) -> tuple[set[int], list[str]]:

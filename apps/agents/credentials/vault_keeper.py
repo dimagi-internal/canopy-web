@@ -46,18 +46,21 @@ from . import vault_members, workspace_vaults, zk, zk_endorse
 logger = logging.getLogger(__name__)
 
 
-def _held(runner) -> list[AgentVaultWrap]:
+def _held(runner, facts=None) -> list[AgentVaultWrap]:
     """This box's device wraps at each zero-knowledge agent's current kv — only while
     the box may pass that key on NOW: it serves the agent and its person is an owner
     or admin of the vault. Holding a copy is never itself permission to pass one on;
-    a member's machine reads the vault but is no keeper."""
-    return [w for w in (AgentVaultWrap.objects
-                        .filter(kind=AgentVaultWrap.DEVICE, device_key__runner=runner,
-                                device_key__status=RunnerDeviceKey.ACTIVE)
-                        .select_related("agent", "device_key__runner"))
-            if w.kv == w.agent.zk_kv
-            and vault_members.device_works_for_an_admin(vault_members.vault_for_agent(w.agent), w.device_key)
-            and device_keys.runner_serves_agent(runner, w.agent)]
+    a member's machine reads the vault but is no keeper. `facts`: `_facts_for`."""
+    current = [w for w in (AgentVaultWrap.objects
+                           .filter(kind=AgentVaultWrap.DEVICE, device_key__runner=runner,
+                                   device_key__status=RunnerDeviceKey.ACTIVE)
+                           .select_related("agent", "device_key__runner"))
+               if w.kv == w.agent.zk_kv]
+    if current and facts is None:
+        facts = device_keys.serving_facts([w.agent for w in current])
+    return [w for w in current
+            if vault_members.device_works_for_an_admin(vault_members.vault_for_agent(w.agent), w.device_key)
+            and device_keys.runner_serves_agent(runner, w.agent, facts)]
 
 
 def work(runner) -> list[dict]:
@@ -65,15 +68,21 @@ def work(runner) -> list[dict]:
     for: what a keeper needs to grant — its own wrap, the pending targets, and the
     endorsements it checks them against."""
     out = []
-    for w in _held(runner):
+    # Runners poll this: the fleet is read once for every agent the box holds a key of,
+    # not once per agent per question.
+    agents = list(Agent.objects.filter(
+        pk__in=AgentVaultWrap.objects.filter(kind=AgentVaultWrap.DEVICE, device_key__runner=runner,
+                                             device_key__status=RunnerDeviceKey.ACTIVE).values("agent_id")))
+    facts = device_keys.serving_facts(agents) if agents else None
+    for w in _held(runner, facts):
         agent = w.agent
-        pending = zk.pending_targets(agent)
+        pending = zk.pending_targets(agent, facts)
         if not pending:
             continue
         base = f"/api/harness/runners/{runner.pk}/vault-keeper/{agent.slug}"
         out.append({"agent": agent.slug, "agent_id": str(agent.pk), "kv": agent.zk_kv,
                     "device_key": str(w.device_key_id), "wrap": w.wrap, "pending": pending,
-                    "endorsements": [{**e, "agent_id": str(agent.pk)} for e in zk_endorse.endorsements(agent)],
+                    "endorsements": [{**e, "agent_id": str(agent.pk)} for e in zk_endorse.endorsements(agent, facts)],
                     "pins": pins_of(vault_members.vault_for_agent(agent)), "pins_path": f"{base}/pins",
                     "grant_path": f"{base}/wraps"})
     for w in _held_workspace(runner):

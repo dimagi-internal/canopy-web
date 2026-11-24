@@ -276,12 +276,14 @@ def describe(entry, agent) -> dict:
 
 # ---- a machine that holds it, re-sealing for a new one -------------------------------
 
-def _recipient_rows(entry, agent) -> list[dict]:
+def _recipient_rows(entry, agent, devices=None) -> list[dict]:
     """Everyone `entry` may be sealed to now, with their public keys: the machines that
-    run `agent`, and its person when they have a vault key."""
+    run `agent` (`devices`, when the caller read `entry_devices` already), and its
+    person when they have a vault key."""
 
+    devices = entry_devices(entry, agent) if devices is None else devices
     out = [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
-            "runner_name": k.runner.name} for k in entry_devices(entry, agent)]
+            "runner_name": k.runner.name} for k in devices]
     ks = UserVaultKeyset.objects.filter(user_id=entry.delegated_by_id).first() if entry.delegated_by_id else None
     if ks is not None:
         out.append({"kind": "member", "target": str(ks.user_id), "public_jwk": ks.public_jwk,
@@ -289,31 +291,56 @@ def _recipient_rows(entry, agent) -> list[dict]:
     return out
 
 
+def _held_by(runner) -> list:
+    """The delegated entries sealed to one of this box's active machines: the only ones
+    it can open, so the only ones it can keep. One read of the box's keys and one of the
+    delegated entries; the sealed envelope names its recipients without a query."""
+
+    jkts = set(RunnerDeviceKey.objects.filter(runner=runner, status=RunnerDeviceKey.ACTIVE)
+               .exclude(ecdh_jkt="").values_list("ecdh_jkt", flat=True))
+    if not jkts:
+        return []
+    mine = {("device", t) for t in jkts}
+    return [e for e in (AgentCredential.objects.filter(account=VaultEntryAccount.DELEGATED)
+                        .only("pk", "agent_id", "value_zk"))
+            if mine & zk_seal.sealed_targets(e.value_zk)]
+
+
 def keeper_work(runner) -> list[dict]:
     """For each delegated entry this box holds (sealed to one of its keys, in force, for an
     agent it runs) that a machine is still waiting for: what the box needs to re-seal it —
     the stored value, everyone it may be sealed to, which of them wait, and the
     endorsements it checks a waiting machine against. canopy-web only lists; the box
-    decides whom to trust (`canopy vault zk keep`)."""
+    decides whom to trust (`canopy vault zk keep`).
 
+    Runners poll this, so it asks about the agents of the entries sealed to this box
+    (`_held_by`) and nobody else's, with the fleet read once for all of them."""
+
+    held = _held_by(runner)
+    if not held:
+        return []
+    held_pks = {e.pk for e in held}
+    agents = list(Agent.objects.filter(pk__in={e.agent_id for e in held}))
+    facts = device_keys.serving_facts(agents)
     out = []
-    for agent in Agent.objects.filter(pk__in=AgentCredential.objects.filter(account="delegated")
-                                      .values("agent_id")):
-        for entry in delegated_entries(agent):
-            mine = [k for k in entry_devices(entry, agent) if k.runner_id == runner.pk]
+    for agent in agents:
+        for entry in delegated_entries(agent).filter(pk__in=held_pks):
+            devices = entry_devices(entry, agent, facts)
+            mine = [k for k in devices if k.runner_id == runner.pk]
             if not mine:
                 continue
             sealed = zk_seal.sealed_targets(entry.value_zk)
             holder = next((k for k in mine if ("device", k.ecdh_jkt) in sealed), None)
-            waiting = [k.ecdh_jkt for k in waiting_machines(entry, agent)]
+            have = {t for kind, t in sealed if kind == "device"}
+            waiting = [k.ecdh_jkt for k in devices if k.ecdh_jkt not in have]
             if holder is None or not waiting or not serves(entry, agent):
                 continue
             out.append({
                 "agent": agent.slug, "agent_id": str(agent.pk), "name": entry.name,
                 "device_jkt": holder.ecdh_jkt, "value_zk": entry.value_zk,
                 "expect": vault_engine.value_digest(entry.value_zk),
-                "recipients": _recipient_rows(entry, agent), "waiting": waiting,
-                "endorsements": [{**e, "agent_id": str(agent.pk)} for e in zk_endorse.endorsements(agent)],
+                "recipients": _recipient_rows(entry, agent, devices), "waiting": waiting,
+                "endorsements": [{**e, "agent_id": str(agent.pk)} for e in zk_endorse.endorsements(agent, facts)],
                 "reseal_path": f"/api/harness/runners/{runner.pk}/vault-keeper/{agent.slug}/delegated/{entry.name}",
             })
     return out
