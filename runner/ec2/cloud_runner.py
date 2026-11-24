@@ -784,6 +784,9 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         # (`ISOLATED_TURN_ENV`); canopy-web hands such a turn only to a box that reports it.
         "isolated": ISOLATED_VERSION,
     }
+    # This code reads its work through `GET /runners/{id}/sync` when `v` moves,
+    # rather than polling each drain route; 0 once a server answered it has none.
+    body["sync"] = 1 if sync_in_use() else 0
     # Omitted until the first inbox probe: absent is "unknown", [] is "none".
     readable = mailboxes_readable()
     if readable is not None:
@@ -5813,7 +5816,12 @@ def _drain_menu_answers(runner_id: str) -> None:
     status, payload = _api("GET", f"/runners/{runner_id}/menu-answers")
     if status != 200 or not isinstance(payload, dict):
         return
-    for a in payload.get("answers") or []:
+    _deliver_menu_answers(runner_id, payload.get("answers") or [])
+
+
+def _deliver_menu_answers(runner_id: str, answers: list) -> None:
+    """`_drain_menu_answers` on a list already read (`/menu-answers` or `/sync`)."""
+    for a in answers:
         sid, answer_id = a.get("session_id") or "", a.get("answer_id") or ""
         if not answer_id:
             continue
@@ -9122,8 +9130,14 @@ def _drain_session_interrupts(runner_id: str) -> int:
         return 0
     if status != 200 or not isinstance(payload, dict):
         return 0
+    return _carry_out_interrupts(runner_id, payload.get("interrupts") or [])
+
+
+def _carry_out_interrupts(runner_id: str, items: list) -> int:
+    """Stop each session named in `items` (a `/session-interrupts` or `/sync` list)
+    and retire its record. Returns how many reached a running turn."""
     reached = 0
-    for item in payload.get("interrupts") or []:
+    for item in items:
         sid, iid = item.get("session_id") or "", item.get("interrupt_id") or ""
         if not iid:
             continue
@@ -10601,6 +10615,10 @@ def _observe_beat(reply) -> None:
     """Take in one heartbeat reply. A reply without pause state (none, an error,
     an older server) leaves `_LAST_BEAT` empty, so the pause is left alone."""
     _LAST_BEAT.clear()
+    if isinstance(reply, dict):
+        # `v` on a socket ack, `sync_version` on a REST reply; neither (an older
+        # server, a slim reply without it) makes `/sync` due, behind its ETag.
+        note_version(reply.get("v", reply.get("sync_version")))
     if isinstance(reply, dict) and "expected_canopy_version" in reply:
         _CANOPY_RELEASE["v"] = str(reply.get("expected_canopy_version") or "")
     if not isinstance(reply, dict) or "paused" not in reply:
@@ -12332,6 +12350,10 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
         status, _ = _api("POST", f"/runners/{runner_id}/record-session", body)
         if status != 200:
             _log(f"record-session turn={str(turn.get('id', ''))[:8]} -> {status}")
+        else:
+            # A new binding moves no sync version, and its live tail starts from
+            # `/sync`'s stream list: read it whole on the next pass.
+            sync_refresh()
     except Exception as exc:  # noqa: BLE001 — never let this fail the turn
         _log(f"record-session turn={str(turn.get('id', ''))[:8]} raised: {exc}")
 
@@ -12820,10 +12842,13 @@ def _sync_session_streams(runner_id: str) -> None:
     ct = _transcript_core()
     if ct is None:
         return
-    status, payload = _api("GET", f"/runners/{runner_id}/streams")
-    if status != 200 or not isinstance(payload, dict):
-        return
-    desired = {s["session_id"]: s for s in (payload.get("streams") or []) if s.get("session_id")}
+    streams = sync_streams()
+    if streams is None:
+        status, payload = _api("GET", f"/runners/{runner_id}/streams")
+        if status != 200 or not isinstance(payload, dict):
+            return
+        streams = payload.get("streams") or []
+    desired = {s["session_id"]: s for s in streams if s.get("session_id")}
 
     for sid in list(_STREAM_READERS):  # drop tailers for sessions nobody watches
         if sid not in desired:
@@ -12903,7 +12928,12 @@ def _drain_backfills(runner_id: str) -> None:
     status, payload = _api("GET", f"/runners/{runner_id}/backfills")
     if status != 200 or not isinstance(payload, dict):
         return
-    for b in payload.get("backfills") or []:
+    _ship_backfills(runner_id, ct, payload.get("backfills") or [])
+
+
+def _ship_backfills(runner_id: str, ct, backfills: list) -> None:
+    """Ship each session's full history named in `backfills` (`/backfills` or `/sync`)."""
+    for b in backfills:
         sid = b.get("session_id") or ""
         path = _session_transcript_path(sid, b.get("session_key") or "",
                                         b.get("project") or "")
@@ -12982,7 +13012,12 @@ def _drain_handoffs(runner_id: str) -> None:
     status, payload = _api("GET", f"/runners/{runner_id}/handoffs")
     if status != 200 or not payload:
         return
-    for item in payload.get("handoffs") or []:
+    _act_on_handoffs(runner_id, hc, payload.get("handoffs") or [])
+
+
+def _act_on_handoffs(runner_id: str, hc, items: list) -> None:
+    """Pack or close each transfer in `items` (`/handoffs` or `/sync`)."""
+    for item in items:
         try:
             if item.get("capture"):
                 _capture_handoff(runner_id, hc, item)
@@ -13090,7 +13125,9 @@ def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
     """
     try:
         if with_backfills:
-            if not SENSITIVE_DATA_MODE:
+            # With `/sync` in use its answer carries backfills and handoffs
+            # (`act_on_sync`); these drains are for a server without it.
+            if not SENSITIVE_DATA_MODE and not sync_in_use():
                 _drain_backfills(runner_id)
                 _drain_handoffs(runner_id)
             _maybe_report_usage(runner_id)
@@ -15543,6 +15580,168 @@ def maybe_keep_vaults(*, now: float | None = None) -> bool:
     return True
 
 
+# ── the work this box owes, in one read: GET /runners/{id}/sync ─────────────
+# canopy-web moves the runner's sync version (`v`) whenever it records work for
+# this box, and puts `v` on every heartbeat reply, heartbeat ack and doorbell
+# frame. The box reads `/sync` (behind an ETag, so an unchanged version is a 304)
+# when `v` differs from the version it last read, when a frame arrives, when its
+# socket (re)connects, and every SYNC_RECONCILE_SECONDS in full — the reconcile is
+# what finds work whose doorbell and bump were both missed. The answer replaces
+# the per-tick drain GETs (session interrupts, menu answers, backfills, handoffs,
+# streams, the sign-in poll). A server without `/sync` (404/405) is read the old
+# way, drain by drain, for the life of this process.
+
+#: How often the box reads `/sync` whole whatever `v` says.
+SYNC_RECONCILE_SECONDS = float(os.environ.get("SYNC_RECONCILE_SECONDS", "300"))
+#: The socket heartbeat's cadence while `/sync` is in use (`v` rides its ack).
+SYNC_WS_HEARTBEAT_SECONDS = int(os.environ.get("SYNC_WS_HEARTBEAT_SECONDS", "30"))
+#: The socket's safety claim while `/sync` is in use; a `wake` frame claims at once.
+SYNC_SAFETY_CLAIM_SECONDS = float(os.environ.get("SYNC_SAFETY_CLAIM_SECONDS", "60"))
+#: The REST heartbeat's cadence while `/sync` is in use (no socket).
+SYNC_REST_HEARTBEAT_SECONDS = float(os.environ.get("SYNC_REST_HEARTBEAT_SECONDS", "15"))
+
+#: supported: None until the first read, then whether canopy-web serves `/sync`.
+#: version/answer: the last 200. at: monotonic time of the last read (200 or 304).
+#: want: read when next due (ETag). full: read whole (no ETag) when next due.
+_SYNC: dict = {"supported": None, "version": None, "answer": None, "at": 0.0,
+               "want": True, "full": True}
+_SYNC_LOCK = threading.Lock()
+
+
+def _reset_sync() -> None:
+    """Forget everything `/sync` said (a fresh process, and between tests)."""
+    with _SYNC_LOCK:
+        _SYNC.update(supported=None, version=None, answer=None, at=0.0, want=True, full=True)
+
+
+def sync_in_use() -> bool:
+    """Whether this box reads its work through `/sync` (until a server says it has none)."""
+    return _SYNC["supported"] is not False
+
+
+def sync_streams() -> list | None:
+    """The stream list of the last `/sync` answer, or None when there is none to use."""
+    answer = _SYNC["answer"] if _SYNC["supported"] else None
+    return list(answer.get("streams") or []) if isinstance(answer, dict) else None
+
+
+def note_version(v) -> None:
+    """A `v` off a reply, ack or frame. One that differs from the version last read —
+    or no `v` at all (an older reply) — makes `/sync` due."""
+    with _SYNC_LOCK:
+        try:
+            same = v is not None and _SYNC["version"] is not None and int(v) == _SYNC["version"]
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            _SYNC["want"] = True
+
+
+def sync_refresh() -> None:
+    """Read `/sync` whole on the next pass: this box changed something the version
+    does not count (it recorded a new session)."""
+    with _SYNC_LOCK:
+        _SYNC["want"] = _SYNC["full"] = True
+
+
+def _sync_due(now: float) -> tuple[bool, bool]:
+    """(due, whole)."""
+    reconcile = _SYNC["version"] is None or now - _SYNC["at"] >= SYNC_RECONCILE_SECONDS
+    whole = reconcile or _SYNC["full"]
+    return (whole or _SYNC["want"]), whole
+
+
+def fetch_sync(runner_id: str, *, whole: bool, now: float | None = None) -> dict | None:
+    """One `/sync` read. Returns the answer on a 200, None on a 304 or a failure
+    (a failure leaves it due, so the next pass asks again)."""
+    headers = {}
+    if not whole and _SYNC["version"] is not None:
+        headers["If-None-Match"] = f'"v{_SYNC["version"]}"'
+    status, body = _api("GET", f"/runners/{runner_id}/sync", headers=headers, quiet=True)
+    now = time.monotonic() if now is None else now
+    with _SYNC_LOCK:
+        if status in (404, 405):
+            if _SYNC["supported"] is not False:
+                _log("canopy-web has no /sync; reading work drain by drain")
+            _SYNC["supported"] = False
+            return None
+        if status == 304:
+            _SYNC.update(supported=True, at=now, want=False)
+            return None
+        if status != 200 or not isinstance(body, dict):
+            _log(f"GET /runners/{runner_id}/sync -> {status}; will ask again")
+            return None
+        try:
+            version = int(body.get("version") or 0)
+        except (TypeError, ValueError):
+            version = 0
+        _SYNC.update(supported=True, version=version, answer=body, at=now, want=False, full=False)
+    return body
+
+
+def act_on_sync(runner_id: str, answer: dict) -> None:
+    """Carry out what a `/sync` answer lists. Each list is whole, so acting on one
+    twice is what the drains did every tick: idempotent on the server's side."""
+    for name, act in (
+        ("session interrupts", lambda: _carry_out_interrupts(runner_id, answer.get("interrupts") or [])),
+        ("menu answers", lambda: _deliver_menu_answers(runner_id, answer.get("answers") or [])),
+        ("stops", lambda: honour_stops({"cancel_turn_ids": answer.get("cancel_turn_ids") or []})),
+    ):
+        try:
+            act()
+        except Exception as exc:  # noqa: BLE001 — one list never costs the others
+            _log(f"sync {name} failed: {exc}")
+    if not SENSITIVE_DATA_MODE:
+        ct = _transcript_core()
+        if ct is not None and answer.get("backfills"):
+            try:
+                _ship_backfills(runner_id, ct, answer.get("backfills") or [])
+            except Exception as exc:  # noqa: BLE001
+                _log(f"sync backfills failed: {exc}")
+        hc = _handoff_core() if answer.get("handoffs") else None
+        if hc is not None:
+            try:
+                _act_on_handoffs(runner_id, hc, answer.get("handoffs") or [])
+            except Exception as exc:  # noqa: BLE001
+                _log(f"sync handoffs failed: {exc}")
+
+
+def maybe_sync(runner_id: str, *, now: float | None = None) -> bool:
+    """Read `/sync` and act on it when it is due. Returns whether it was read (a
+    304 counts). False on a server without it: the caller drains the old way."""
+    if _SYNC["supported"] is False:
+        return False
+    now = time.monotonic() if now is None else now
+    due, whole = _sync_due(now)
+    if not due:
+        return False
+    answer = fetch_sync(runner_id, whole=whole, now=now)
+    if answer is not None:
+        act_on_sync(runner_id, answer)
+    return _SYNC["supported"] is not False
+
+
+#: A `mint` frame: `/mint/claim` has work for this box.
+_MINT_RUNG = threading.Event()
+
+
+def mint_wanted() -> bool:
+    """Whether to read `/mint/claim` now: always on a server without `/sync`;
+    otherwise when the last answer says a sign-in is due, a `mint` frame rang, or a
+    sign-in is in flight on this box (it steps on that read until it ends)."""
+    if not sync_in_use():
+        return True
+    answer = _SYNC["answer"] if isinstance(_SYNC["answer"], dict) else {}
+    rung = _MINT_RUNG.is_set()
+    _MINT_RUNG.clear()
+    return bool(rung or answer.get("mint_due") or _MINT_SESSION is not None or _MINT_ID)
+
+
+def _maybe_drain_mint(runner_id: str) -> None:
+    if mint_wanted():
+        _drain_mint(runner_id)
+
+
 def run_over_rest(runner_id: str) -> None:
     _log(f"polling {BASE_URL} every {POLL_SECONDS}s (REST fallback), "
          f"up to {MAX_CONCURRENT_TURNS} concurrent turns")
@@ -15555,7 +15754,11 @@ def run_over_rest(runner_id: str) -> None:
         honour_stops(beat)
         maybe_retry_pending_finishes()
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
-        _drain_session_interrupts(runner_id)
+        # The work this box owes: one `/sync` read when `v` moved (or the reconcile
+        # is due), else the drains, on a server without it.
+        maybe_sync(runner_id)
+        if not sync_in_use():
+            _drain_session_interrupts(runner_id)
         maybe_sweep_disk()
         maybe_keep_vaults()
         maybe_sweep_kept(runner_id)
@@ -15565,19 +15768,20 @@ def run_over_rest(runner_id: str) -> None:
         # Likewise a sign-in: a box on the REST fallback is EXACTLY the box most
         # likely to need one, and leaving this on the WS path only would strand
         # the operator on the runners that fail most.
-        _drain_mint(runner_id)
+        _maybe_drain_mint(runner_id)
         _maybe_reread_credentials()
         _credential_tick()
         _job_cap_tick()
         _drain_inbox(runner_id)
+        wait = SYNC_REST_HEARTBEAT_SECONDS if sync_in_use() else POLL_SECONDS
         if not claim_gate()[0]:
-            time.sleep(POLL_SECONDS)
+            time.sleep(wait)
             continue
         paused = backed_off_slugs()
         status, turn = _api("POST", f"/runners/{runner_id}/claim"
                             + (f"?paused={','.join(paused)}" if paused else ""))
         if status != 200 or not turn:
-            time.sleep(POLL_SECONDS)
+            time.sleep(wait)
             continue
         turn_id = turn["id"]
         _log(f"claimed turn {turn_id[:8]} target={turn.get('target')} (REST) "
@@ -15606,6 +15810,8 @@ class _WsChores:
         self._clock = clock
         self._stopped = threading.Event()
         self._stream_now = threading.Event()
+        # Ends the loop's wait early: a stream frame, or a `v` that made `/sync` due.
+        self._wake = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="ws-chores")
 
     def start(self) -> None:
@@ -15614,9 +15820,15 @@ class _WsChores:
     def stop(self) -> None:
         self._stopped.set()
         self._stream_now.set()
+        self._wake.set()
 
     def ring_stream(self) -> None:
         self._stream_now.set()
+        self._wake.set()
+
+    def ring_sync(self) -> None:
+        """Look at `/sync` now (it reads only when due: a `v` it has not read)."""
+        self._wake.set()
 
     @contextlib.contextmanager
     def _chore(self, name: str):
@@ -15632,12 +15844,13 @@ class _WsChores:
 
     def _poll_tick(self) -> None:
         rid = self.runner_id
-        with self._chore("session interrupts"):
-            _drain_session_interrupts(rid)
+        if not sync_in_use():
+            with self._chore("session interrupts"):
+                _drain_session_interrupts(rid)
         with self._chore("session views"):
-            _sync_session_views(rid)          # incl. backfills
+            _sync_session_views(rid)          # incl. backfills without `/sync`
         with self._chore("mints"):
-            _drain_mint(rid)
+            _maybe_drain_mint(rid)
         with self._chore("credentials"):
             _maybe_reread_credentials()
             _credential_tick()
@@ -15651,6 +15864,13 @@ class _WsChores:
         last_stream = 0.0
         while not self._stopped.is_set() and not _stop:
             now = self._clock()
+            # `/sync` first: what it lists (streams, backfills, stops) is what the
+            # chores below act on. A no-op unless `v` moved or the reconcile is due.
+            with self._chore("sync"):
+                maybe_sync(self.runner_id, now=now)
+            if _MINT_RUNG.is_set():
+                with self._chore("mints"):
+                    _maybe_drain_mint(self.runner_id)
             if now - last_poll >= POLL_SECONDS:
                 self._poll_tick()
                 last_poll = last_stream = self._clock()
@@ -15666,7 +15886,8 @@ class _WsChores:
                     _log(f"session view sync error: {exc}")
                 last_stream = self._clock()
                 continue
-            self._stream_now.wait(0.5)
+            self._wake.wait(0.5)
+            self._wake.clear()
 
 
 def _ws_url(runner_id: str) -> str:
@@ -15702,6 +15923,8 @@ def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
         msg = json.loads(raw)
         if msg.get("type") == want_type:
             return msg
+        # A doorbell passed over while waiting still says `/sync` has work.
+        note_version(msg.get("v"))
     return None
 
 
@@ -15816,6 +16039,9 @@ def run_over_ws(runner_id: str) -> bool:
             maybe_sweep_kept(runner_id)
 
         chores = _WsChores(runner_id)
+        # A (re)connect reads `/sync` whole: frames sent while the socket was down
+        # went nowhere.
+        sync_refresh()
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
             last_beat = time.monotonic()
@@ -15830,6 +16056,11 @@ def run_over_ws(runner_id: str) -> bool:
                 if raw:
                     msg = json.loads(raw)
                     mtype = msg.get("type")
+                    if mtype != "heartbeat.ack":
+                        # Every doorbell carries `v`: one this box has not read (or
+                        # none, from an older server) makes `/sync` due.
+                        note_version(msg.get("v"))
+                        chores.ring_sync()
                     if mtype == "wake":
                         _drain(ws, runner_id)
                     elif mtype == "cancel":
@@ -15840,11 +16071,17 @@ def run_over_ws(runner_id: str) -> bool:
                         # A stop aimed at a session: the turn driving it, if any.
                         # Then the server's record of it, which the stop retires.
                         stop_session(str(msg.get("session_key") or ""), "session interrupt")
-                        _drain_session_interrupts(runner_id)
+                        if not sync_in_use():
+                            _drain_session_interrupts(runner_id)
                     elif mtype == "menu_answer":
                         # A person answered an ask. The bell only: the answer is
-                        # read from /menu-answers, which a waiting ask also polls.
-                        _ring_menu_answers(runner_id)
+                        # read from `/sync` (or /menu-answers), which a waiting ask
+                        # also polls.
+                        if not sync_in_use():
+                            _ring_menu_answers(runner_id)
+                    elif mtype == "mint":
+                        # A sign-in this box owes work on: read /mint/claim now.
+                        _MINT_RUNG.set()
                     elif mtype == "check_inbox":
                         # Mark it due; the POLL thread does the read. Same split
                         # the laptop uses, for the same reason: a `gog` subprocess
@@ -15868,8 +16105,10 @@ def run_over_ws(runner_id: str) -> bool:
                                                str(msg.get("session_id") or ""))
                 elif raw == "":
                     break  # server closed the socket
-                if time.monotonic() - last_beat >= HEARTBEAT_SECONDS:
+                beat_every = SYNC_WS_HEARTBEAT_SECONDS if sync_in_use() else HEARTBEAT_SECONDS
+                if time.monotonic() - last_beat >= beat_every:
                     _beat()
+                    chores.ring_sync()  # its ack's `v` may have moved
                     last_beat = time.monotonic()
                 # Safety net: claim on a wall clock too, never on wakes alone.
                 # Wake delivery is the ONLY other trigger, so a wake that is never
@@ -15885,7 +16124,8 @@ def run_over_ws(runner_id: str) -> bool:
                 # runs on the chores thread (`_WsChores`): any of it can take seconds,
                 # and while it ran here a wake waited in the socket — a page turn sat
                 # queued ~10s before this box even asked for it.
-                if time.monotonic() - last_poll >= POLL_SECONDS:
+                claim_every = SYNC_SAFETY_CLAIM_SECONDS if sync_in_use() else POLL_SECONDS
+                if time.monotonic() - last_poll >= claim_every:
                     _drain(ws, runner_id)
                     last_poll = time.monotonic()
         except Exception as exc:
