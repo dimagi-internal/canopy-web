@@ -81,6 +81,40 @@ export type AppOp =
   | { op: 'tasks_query'; filters?: AppTaskFilters }
   /** One of the app's declared task actions, as the viewer (`app.tasks.act`). Never starts a turn. */
   | { op: 'tasks_act'; name: string; key?: string | null; input?: Record<string, unknown> }
+  /** canopy's AI model (`canopy.ai.complete`), for a member page of an app that declares `ai`. */
+  | { op: 'ai'; request: AiRequest }
+
+/**
+ * `canopy.ai.complete(request)` (docs/architecture/app-ai.md; checked by apps/workspace_apps/ai.py).
+ * `model` is an alias, never a model id. A message's content is text or blocks: `text`,
+ * `tool_use` (assistant; carry its `signature` back unread) and `tool_result` (user).
+ */
+export interface AiRequest {
+  model?: 'fast' | 'smart'
+  system?: string
+  messages: { role: 'user' | 'assistant'; content: string | AiBlock[] }[]
+  max_tokens?: number
+  json_schema?: Record<string, unknown>
+  tools?: { name: string; description?: string; input_schema?: Record<string, unknown> }[]
+  web_search?: boolean
+  /** The page's own label for the call, kept in canopy's log ("record-summary"). */
+  feature?: string
+}
+
+export type AiBlock =
+  | { type: 'text'; text: string; signature?: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown>; signature?: string }
+  | { type: 'tool_result'; tool_use_id: string; content: unknown }
+
+export interface AiAnswer {
+  text: string
+  content: AiBlock[]
+  stop_reason: 'end_turn' | 'tool_use' | 'max_tokens' | 'refusal'
+  model: 'fast' | 'smart'
+  usage: { input_tokens: number; output_tokens: number }
+  /** The parsed answer, when `json_schema` was asked (null if it did not parse). */
+  json?: unknown
+}
 
 /** `app.tasks.query`'s filters (`GET /api/workspace-apps/{ws}/{key}/tasks`). */
 export interface AppTaskFilters {

@@ -70,6 +70,9 @@ links). Record-level access is `scope.py`. An optional top-level `connections` d
 pages call Salesforce through canopy-web; public pages never do. A shared agent connection
 is approved per app on the agent's Accounts tab ([`vault-connections.md`](vault-connections.md) § Calls from screens).
 
+An optional top-level `ai` declaration (`{"purpose": …}`) lets member pages ask canopy's model with
+`canopy.ai.complete`, as the viewer, logged and rate-limited ([`app-ai.md`](app-ai.md)).
+
 An optional top-level `browser` declaration says which member pages the browser extension's
 side panel shows beside which tabs, and what each may ask of the tab's adapter
 ([`browser-extension.md`](browser-extension.md)).

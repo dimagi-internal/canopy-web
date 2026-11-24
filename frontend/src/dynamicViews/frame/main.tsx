@@ -10,6 +10,8 @@ import {
   type AgentTaskStatus,
   type AppContext,
   type AppOp,
+  type AiAnswer,
+  type AiRequest,
   type AppTaskFilters,
   type BrowserInfo,
   type FrameMessage,
@@ -116,6 +118,12 @@ const canopy = {
   clipboard: {
     write(text: string): Promise<unknown> {
       return ask((id) => ({ channel: CHANNEL, type: 'clipboard', id, text: String(text ?? '') }))
+    },
+  },
+  /** canopy's AI model, for a member page of an app that declares `ai` (docs/architecture/app-ai.md). */
+  ai: {
+    complete(request: AiRequest): Promise<AiAnswer> {
+      return ask((id) => ({ channel: CHANNEL, type: 'app', id, request: { op: 'ai', request } })) as Promise<AiAnswer>
     },
   },
   /** Save a file (text, an ArrayBuffer, a Uint8Array or a Blob), from a click. Resolves {name}. */

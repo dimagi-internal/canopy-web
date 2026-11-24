@@ -15,6 +15,7 @@ the surfaces where a mistake exposes data or hands out power:
 * Salesforce — the calls an app's pages may make, and as whom (`connections`);
 * the browser — which tabs the extension's panel shows a page on, and what it may
   read there (`browser`);
+* AI — the app's pages starting to send what they show to canopy's model (`ai`);
 * retention — what is anonymized or deleted, and when;
 * tasks — which project's tasks the app's pages act on, who may, and how (`tasks`,
   and the default of the setting that names the project).
@@ -120,6 +121,9 @@ def changes(old: dict, new: dict) -> list[str]:
     # The browser extension: which tabs a page is offered on, and what it may read or hear there.
     if (old.get("browser") or []) != (new.get("browser") or []):
         out.append("changes which browser tabs the app's pages open beside, or what they may read from them")
+    # canopy's model: what the pages show leaves canopy for it (dropping it widens nothing).
+    if new.get("ai") and not old.get("ai"):
+        out.append("lets the app's pages send what they show to canopy's AI model")
     # Retention.
     if (old.get("retention") or []) != (new.get("retention") or []):
         out.append("changes what candidate data is anonymized or deleted, and when")

@@ -42,10 +42,12 @@ from apps.workspaces import permissions as perms
 from apps.workspaces.models import Workspace
 
 from . import access, bundles, guide, services
+from . import ai as app_ai
 from . import tasks as app_tasks
 from .models import LIVE, AppInstallation, AppRoleGrant, AppVersion
 from .schemas import (
     ActionIn,
+    AiCompleteIn,
     BulkActionIn,
     BundleBlobOut,
     BundleBlobsIn,
@@ -73,8 +75,8 @@ from .schemas import (
     SetupIn,
     SetupOut,
     StoreAppDetailOut,
-    TaskActionIn,
     StoreAppOut,
+    TaskActionIn,
     VersionOut,
 )
 
@@ -784,6 +786,29 @@ def act_workspace_app_task(request: HttpRequest, workspace: str, key: str, name:
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
     return Status(201 if made else 200, out)
+
+
+@router.post("/workspace-apps/{workspace}/{key}/ai/complete", response=dict,
+             summary="Ask canopy's AI model, from a page of an app that declares AI use")
+@gate("member", kind="action",
+      viewer_write="a model call writes nothing; it is the app's declared use, logged per viewer and rate-limited")
+def ai_complete_workspace_app(request: HttpRequest, workspace: str, key: str, payload: AiCompleteIn,
+                              draft: int | None = None) -> dict:
+    """`canopy.ai.complete` from a member page: the app's manifest must declare `ai`. `model` is
+    an alias (`fast`, `smart`), never a model id. Answers `{text, content, stop_reason, model,
+    usage}` (plus `json` when `json_schema` was asked). 403 without the declaration, 429 over
+    the per-viewer limit, 502/503 when the model fails or AI is off."""
+    inst = _installation(request, workspace, key)
+    try:
+        space = _space(request, inst, draft)
+        m = services.manifest_for(inst, space)
+        return app_ai.complete(inst, request.user, payload.model_dump(by_alias=True), space=space, manifest=m)
+    except app_ai.Refused as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    except app_ai.RateLimited as exc:
+        raise ProblemError(429, "Too many requests", type_=TYPE_RATE_LIMIT, detail=str(exc)) from exc
+    except services.Refused as exc:
+        raise _refusal(exc) from exc
 
 
 @router.get("/workspace-apps/{workspace}/{key}/records/{record_id}/history", response=list[dict],

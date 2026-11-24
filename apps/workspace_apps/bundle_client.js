@@ -141,6 +141,12 @@
     agentTask: function (taskId) {
       return ask(function (id) { return { type: 'agent-task-read', id: id, taskId: taskId } })
     },
+    /** canopy's AI model, for a member page of an app that declares `ai` (docs/architecture/app-ai.md):
+     *  complete({model: 'fast'|'smart', system, messages, max_tokens, json_schema, tools, web_search, feature})
+     *  → {text, content, stop_reason, model, usage, json?}. */
+    ai: {
+      complete: function (req) { return ask(function (id) { return { type: 'app', id: id, request: { op: 'ai', request: req || {} } } }) },
+    },
     connection: {
       request: function (req) { return ask(function (id) { return { type: 'connection-call', id: id, request: req } }) },
       begin: function () { return ask(function (id) { return { type: 'connection-begin', id: id } }) },

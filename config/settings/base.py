@@ -362,6 +362,21 @@ HCP_VERTEX_LOCATION = env("HCP_VERTEX_LOCATION", default="us-central1")
 HCP_VERTEX_WIF_AUDIENCE = env("HCP_VERTEX_WIF_AUDIENCE", default="")
 HCP_VERTEX_SERVICE_ACCOUNT = env("HCP_VERTEX_SERVICE_ACCOUNT", default="")
 
+# --- AI for app pages (apps/workspace_apps/ai.py, `canopy.ai.complete`) ---
+# The ONE place model ids live: a page asks for an alias ("fast" | "smart"), never a model.
+# `vertex/<gemini model>` is Gemini on Vertex; `vertex/anthropic/<claude model>` is Claude on
+# Vertex (needs Claude enabled in HCP_VERTEX_PROJECT's Model Garden). Same identity and same
+# zero-retention gate as memory (HCP_VERTEX_* above); off when HCP_VERTEX_PROJECT is empty.
+APP_AI_MODELS = {
+    "fast": env("APP_AI_FAST_MODEL", default="vertex/gemini-3.5-flash"),
+    "smart": env("APP_AI_SMART_MODEL", default="vertex/gemini-3.1-pro-preview"),
+}
+# Vertex location for these calls: Gemini 3.x and Claude are served on `global`.
+APP_AI_LOCATION = env("APP_AI_LOCATION", default="global")
+# Per viewer, across every app: calls in the last hour / last day (`AppAiCall` rows).
+APP_AI_PER_HOUR = env.int("APP_AI_PER_HOUR", default=120)
+APP_AI_PER_DAY = env.int("APP_AI_PER_DAY", default=600)
+
 # --- Knowledge-base search reranker (apps/agents/kb_rerank.py) ---
 # Orders KB search's word and card matches: a Vertex AI ranking API model (e.g.
 # `semantic-ranker-default@latest`), memory's identity. Empty = off. Needs the Discovery

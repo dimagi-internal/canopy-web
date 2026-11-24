@@ -112,6 +112,11 @@ parameters in canopy's address bar with no reload (app.params follows; "draft" i
 canopy.clipboard.write(text) copies, from a click; canopy.download(name, mime, data) saves a file
 (text, ArrayBuffer, Uint8Array or Blob, up to 25 MB), from a click. A member page may declare
 "layout": "full" to be drawn at the whole viewport with no canopy header, its frame scrolling itself.
+An app whose manifest declares "ai": {"purpose": "<what its pages use the model for>"} may call
+canopy.ai.complete({model: "fast" | "smart", system, messages: [{role, content}], max_tokens,
+json_schema, tools, web_search, feature}) from a member page: canopy calls its own model as the
+viewer (aliases only, never a model id; logged and rate-limited per viewer) and answers
+{text, content, stop_reason, model, usage, json?}. Public and link pages cannot.
 
 WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot add these):
   an action's `when` (it applies only to a record in that state — offer the button only then),
