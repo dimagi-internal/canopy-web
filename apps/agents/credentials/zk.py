@@ -276,6 +276,36 @@ def add_wraps(agent, *, kv: int, wraps: list, user, only_new: bool = False) -> i
     return engine.add_wraps(_store(agent), kv=kv, wraps=wraps, user=user, only_new=only_new)
 
 
+def my_wrap(agent, user):
+    """The caller's OWN member wrap at the current kv (their copy of the vault key), or None."""
+    if not agent.zk_kv:
+        return None
+    return AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="member", user=user).first()
+
+
+def add_own_device_wraps(agent, *, kv: int, wraps: list, user) -> int:
+    """A member of the agent's vault hands the vault key to their OWN machine, from their
+    own copy: no manager, keeper or owner in the way of a teammate's new laptop.
+
+    Narrow on purpose, since the managers' grant (`add_wraps`) is the general path: the
+    caller holds a member wrap at the current kv (so they already read everything this
+    gives the machine), every wrap is a `device` wrap to an eligible machine that works for
+    THEM, and a machine that already holds a copy is never replaced (`only_new`)."""
+    if vault_members.not_a_person([user.pk]):
+        raise ZkError(403, "not_a_person", "an agent's login is not a person, and grants no machine")
+    if my_wrap(agent, user) is None:
+        raise ZkError(409, "zk_no_copy",
+                      f"you hold no copy of {agent.slug}'s current vault key, so you cannot pass it on; "
+                      "a manager of the vault, or a keeper, grants your machine")
+    mine = {str(k.pk) for k in eligible_device_keys(agent) if vault_members.person_of_device(k) == user.pk}
+    for i, item in enumerate(wraps):
+        if item.kind != "device" or str(item.target) not in mine:
+            raise ZkError(403, "zk_not_your_machine",
+                          f"wraps[{i}]: a member of {agent.slug}'s vault grants only their own approved "
+                          "machine; a manager of the vault grants anyone else")
+    return add_wraps(agent, kv=kv, wraps=wraps, user=user, only_new=True)
+
+
 def rotate(agent, *, new_kv: int, wraps: list, values: list, user) -> None:
     """A fresh vault key: replace every wrap and every value atomically."""
     engine.rotate(_store(agent), new_kv=new_kv, wraps=wraps, values=values, user=user)

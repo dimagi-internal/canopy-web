@@ -23,7 +23,7 @@ const KEY = {
   approved_by_email: '', revoked_at: null, last_used_at: null, can_manage: true,
   ecdh_jkt: '', ecdh_public_jwk: {}, zk_pending_agents: [] as string[], reapproval: false, ecdh_waiting: false,
   runner_host: '', runner_kind: 'emdash', ecdh_store: '', can_open: [] as { slug: string; name: string }[],
-  zk_vouch_agents: [] as { slug: string; agent_id: string }[],
+  zk_vouch_agents: [] as { slug: string; agent_id: string; kv: number }[],
 }
 
 afterEach(() => {
@@ -33,7 +33,7 @@ afterEach(() => {
 
 describe('DeviceKeysTable', () => {
   it('a vault member approving their own machine signs for it in the same touch (DIM-W154)', async () => {
-    const mine = [{ slug: 'ace', agent_id: '2' }]
+    const mine = [{ slug: 'ace', agent_id: '2', kv: 1 }]
     approveAndGrant.mockResolvedValue({ key: { ...KEY, status: 'active' }, granted: [], failed: [], vouched: ['ace'] })
     render(<DeviceKeysTable keys={[{ ...KEY, zk_vouch_agents: mine }]} onChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
@@ -42,7 +42,7 @@ describe('DeviceKeysTable', () => {
   })
 
   it('offers an approved machine of mine that still waits one touch to sign for it', async () => {
-    const mine = [{ slug: 'ace', agent_id: '2' }]
+    const mine = [{ slug: 'ace', agent_id: '2', kv: 1 }]
     const k = { ...KEY, status: 'active' as const, zk_vouch_agents: mine }
     vouchForMyMachine.mockResolvedValue(['ace'])
     const onChange = vi.fn()
