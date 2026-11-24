@@ -273,3 +273,14 @@ def test_pongs_keep_an_idle_socket_open_and_frames_still_arrive():
     w._serve(ws, websocket, clock=_Clock(step=30))
     assert got == [{"type": "listen_start", "session_id": "s"}]
     assert ws.pings == 4 and not ws.script  # read to the close; never gave up
+
+
+def test_reconnect_waits_are_jittered(monkeypatch):
+    from canopy_runner import wake
+
+    monkeypatch.setattr(wake.random, "random", lambda: 0.0)
+    assert wake.jittered(2) == 1.0
+    monkeypatch.setattr(wake.random, "random", lambda: 0.999)
+    assert 2.99 < wake.jittered(2) < 3.0
+    src = open(wake.__file__).read()
+    assert "self._stop.wait(2)" not in src and "self._stop.wait(15)" not in src

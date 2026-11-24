@@ -280,7 +280,7 @@
 "apps/storyboards/services.py" = ["PLC0415"]  # 6
 "apps/tokens/api.py" = ["PLC0415"]  # 1
 "apps/tokens/cli_authorize_views.py" = ["PLC0415"]  # 1
-"apps/tokens/middleware.py" = ["PLC0415"]  # 13
+"apps/tokens/middleware.py" = ["PLC0415"]  # 12
 "apps/tokens/models.py" = ["PLC0415"]  # 4
 "apps/tokens/principal.py" = ["PLC0415"]  # 4
 "apps/walkthroughs/api.py" = ["PLC0415"]  # 1

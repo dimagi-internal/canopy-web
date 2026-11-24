@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PageLocation } from './pageKey'
+import { jittered } from '../jitter'
 
 export interface Viewer {
   email: string
@@ -19,7 +20,8 @@ const IDLE_AFTER_MS = 120_000
 // Reconnect backoff. A flat retry is wrong for the permanent-failure case:
 // a tab left open past session expiry is closed with 4001 on every attempt,
 // so a flat 2s retry hammers a handshake forever. Double up to a ceiling and
-// reset on a socket that actually opens.
+// reset on a socket that actually opens. Each wait is spread ±50% (`jittered`)
+// so the sockets of a task that stopped do not all return on the same tick.
 const RECONNECT_BASE_MS = 2_000
 const RECONNECT_MAX_MS = 60_000
 
@@ -54,7 +56,7 @@ export function usePresence({ url, location }: UsePresenceOptions): { viewers: V
 
     const scheduleReconnect = () => {
       if (closedByCleanup) return
-      reconnectTimer = setTimeout(open, reconnectDelay)
+      reconnectTimer = setTimeout(open, jittered(reconnectDelay))
       reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS)
     }
 

@@ -7,11 +7,10 @@ dynamic = ["version"]
 description = "Canopy laptop/cloud runner: claims turns from canopy-web and executes them (emdash adapter first)."
 requires-python = ">=3.11"
 dependencies = [
-    # The cron slot math the runner fires on. Lives in-repo at packages/canopy_cron
-    # and is shared verbatim with the server (which previews fire times from the
-    # same next_slots) — the runner is Django-free and cannot import apps.*, so a
-    # shared package is the only way the editor's preview and the runner's firing
-    # can't drift. croniter's bound is declared there, once; don't restate it here.
+    # The cron slot math (packages/canopy_cron). The runner fires no schedule
+    # (canopy-web's clock does); the installers and the packaging smoke tests
+    # install it by path, so it leaves this list together with them.
+    # croniter's bound is declared there, once; don't restate it here.
     "canopy-cron",
     # The Claude Code transcript core — path resolution, tailing, block->row
     # extraction, ordinals, batching. Shared VERBATIM with the cloud runner and

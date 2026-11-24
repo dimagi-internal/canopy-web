@@ -159,10 +159,43 @@ def client_label(user_agent: str, canopy_client: str = "") -> str:
     return ((user_agent or "").strip() or (canopy_client or "").strip())[:200]
 
 
+#: A token's use is stamped at most once per this many seconds (unless its client
+#: changes): an agent or runner authenticates on every call, and a row write per
+#: request is load on the shared database for a value read only to the minute.
+LAST_USED_RESOLUTION_S = 60
+
+
+def stamp_due(last_used_at, now=None) -> bool:
+    """Whether a token last stamped at `last_used_at` is due a new stamp."""
+    if last_used_at is None:
+        return True
+    now = now or timezone.now()
+    return (now - last_used_at).total_seconds() >= LAST_USED_RESOLUTION_S
+
+
+def stamp_last_used(model, token, **extra) -> None:
+    """Stamp `token.last_used_at` (and `extra` fields) when due: in memory first, then a
+    conditional UPDATE, so concurrent requests on another task do not each write."""
+    now = timezone.now()
+    if not extra and not stamp_due(token.last_used_at, now):
+        return
+    rows = model.objects.filter(pk=token.pk)
+    if not extra:
+        rows = rows.filter(Q(last_used_at__isnull=True) | Q(
+            last_used_at__lte=now - timedelta(seconds=LAST_USED_RESOLUTION_S)))
+    rows.update(last_used_at=now, **extra)
+    token.last_used_at = now
+    for name, value in extra.items():
+        setattr(token, name, value)
+
+
 def note_used(token: PersonalToken, client: str) -> None:
-    """Stamp a token's last use — every entry point that authenticates with one."""
-    PersonalToken.objects.filter(pk=token.pk).update(
-        last_used_at=timezone.now(), last_used_client=client)
+    """Stamp a token's last use — every entry point that authenticates with one. At most
+    once a minute while the client stays the same (`LAST_USED_RESOLUTION_S`)."""
+    if client != token.last_used_client:
+        stamp_last_used(PersonalToken, token, last_used_client=client)
+    else:
+        stamp_last_used(PersonalToken, token)
 
 
 def hash_secret(raw: str) -> str:

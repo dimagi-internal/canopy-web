@@ -70,7 +70,7 @@ values and click **Connect**; nothing is saved until you do, because a site must
 never set its own trusted origins. Where canopy looks, and what it accepts:
 `apps/host_grants/api.py::discover_site` and `apps/host_grants/site_needs.py`.
 
-The fields are `CreateIn` / `UpdateIn` in `apps/embedding/host_sites_api.py`.
+The fields are `ConnectIn` / `UpdateIn` in `apps/embedding/host_sites_api.py`.
 What to get right, because each fails closed and silently:
 
 - **Name** is the `app` you pass to `canopy.init`; a mismatch 404s the frame.
@@ -95,7 +95,7 @@ agent's Read mode and host sites; the two records are
 [host-sites.md](host-sites.md). Canopy's own pages are the same form with one
 tick ([§11](embedding-reference.md#11-reference-canopy-embedding-its-own-pages)).
 
-**By API or MCP**: `POST` and `PATCH /api/workspaces/<ws>/host-sites[/<id>]`
+**By API or MCP**: `POST /api/workspaces/<ws>/host-sites` and `PATCH /api/workspaces/<ws>/host-sites/<id>`
 (MCP `register_host_site`, `update_host_site`) take the same fields with the same
 validation, `GET …/host-sites/discover?address=…` (MCP `discover_site`) reads the
 site's declared facts, and each change is recorded in the settings audit

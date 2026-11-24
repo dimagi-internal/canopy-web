@@ -10,10 +10,6 @@ from canopy_runner.client import RETRY_ATTEMPTS, Client, ClientError
 
 
 class _Handler(BaseHTTPRequestHandler):
-    # Records the (path, body) of the last schedule call so the tests can pin the
-    # exact wire format against the server contract (apps/harness/api.py).
-    last_fire = None
-
     # Retry-policy fixtures. `attempts` counts every hit on a retry-exercising
     # path; the handler serves `fail_status` for the first `fail_times` of them
     # and succeeds after — which is what lets a test distinguish "recovered on
@@ -24,33 +20,11 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         assert self.headers["Authorization"] == "Bearer tok"
-        if self.path.startswith("/api/harness/schedules/"):
-            _Handler.last_sync_path = self.path
-            # Shape mirrors Page[ScheduleOut] — the runner wants .items.
-            body = json.dumps({
-                "items": [{"id": 7, "agent_slug": "echo", "cron": "0 9 * * 5",
-                           "timezone": "America/New_York", "enabled": True,
-                           "fire_after": "2026-07-08T12:00:00+00:00"}],
-                "total": 1, "offset": 0, "limit": 200,
-            }).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-            return
         self.send_response(500)
         self.end_headers()
 
     def do_POST(self):
         assert self.headers["Authorization"] == "Bearer tok"
-        if "/fire" in self.path:
-            raw = self.rfile.read(int(self.headers["Content-Length"]))
-            _Handler.last_fire = (self.path, json.loads(raw))
-            self.send_response(201)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"id": "turn-9", "status": "queued"}')
-            return
         if self.path.endswith("/retry-probe"):
             _Handler.attempts += 1
             if _Handler.attempts <= _Handler.fail_times:
@@ -120,23 +94,6 @@ def test_error_raises(server):
     c = Client(server, "tok")
     with pytest.raises(ClientError):
         c.post_events("t-1", [{"kind": "status", "payload": {}}])  # handler 500s unknown paths
-
-
-def test_sync_schedules_unwraps_page_items(server):
-    c = Client(server, "tok")
-    items = c.sync_schedules("r-1")
-    assert [s["id"] for s in items] == [7]
-    # runner_id is a query param on the runner-facing route (not a path segment).
-    assert _Handler.last_sync_path == "/api/harness/schedules/?runner_id=r-1"
-
-
-def test_fire_schedule_posts_slot_with_runner_id(server):
-    c = Client(server, "tok")
-    turn = c.fire_schedule(7, "r-1", "2026-07-10T13:00:00+00:00")
-    assert turn["id"] == "turn-9"
-    path, body = _Handler.last_fire
-    assert path == "/api/harness/schedules/7/fire?runner_id=r-1"
-    assert body == {"slot": "2026-07-10T13:00:00+00:00"}
 
 
 # --- transient-fault retry ---------------------------------------------------
@@ -212,3 +169,43 @@ def test_a_connection_cut_mid_response_is_transient_and_retried(monkeypatch, mak
         c.finish("t-1", note="done")
     assert exc.value.transient is True
     assert len(calls) == RETRY_ATTEMPTS
+
+
+# --- runner-mailboxes: reused for MAILBOXES_TTL_SECONDS --------------------------
+
+
+def test_runner_mailboxes_is_fetched_once_per_ttl(monkeypatch):
+    c = Client("http://x", "tok")
+    calls = []
+
+    def fake_call_api(path, *, method, **_kw):
+        calls.append((method, path))
+        return 200, {"items": [{"address": "a@x.org", "watch_topic": "t"}]}
+
+    clock = [1000.0]
+    monkeypatch.setattr(c, "_call_api", fake_call_api)
+    monkeypatch.setattr(client_mod.time, "monotonic", lambda: clock[0])
+
+    assert c.runner_mailboxes() == [{"address": "a@x.org", "watch_topic": "t"}]
+    clock[0] += client_mod.MAILBOXES_TTL_SECONDS - 1
+    c.runner_mailboxes()
+    assert calls == [("GET", "/inbound/runner-mailboxes")]
+    clock[0] += 2
+    c.runner_mailboxes()
+    assert len(calls) == 2
+
+
+def test_a_failed_runner_mailboxes_fetch_raises_and_caches_nothing(monkeypatch):
+    c = Client("http://x", "tok")
+    answers = [ClientError("boom", transient=True), (200, {"items": [{"address": "b@x.org"}]})]
+
+    def fake_call_api(path, *, method, **_kw):
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    monkeypatch.setattr(c, "_call_api", fake_call_api)
+    with pytest.raises(ClientError):
+        c.runner_mailboxes()
+    assert c.runner_mailboxes() == [{"address": "b@x.org"}]

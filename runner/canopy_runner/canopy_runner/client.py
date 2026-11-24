@@ -55,12 +55,18 @@ class ClientError(Exception):
         self.body = body
 
 
+#: How long `Client.runner_mailboxes` reuses its last answer.
+MAILBOXES_TTL_SECONDS = 600.0
+
+
 class Client:
     def __init__(self, base_url: str, token):
         """`token`: the owner's PAT, or a `runner_token.RunnerCredential` — this
         runner signing in with its device key, the PAT only as its fallback."""
         self.base_url = base_url.rstrip("/")
         self._token = token
+        # (fetched_at monotonic, rows) of the last `runner_mailboxes` answer.
+        self._mailboxes: tuple[float, list[dict]] | None = None
 
     @property
     def token(self) -> str:
@@ -85,8 +91,7 @@ class Client:
         idempotent — a retry after the server already claimed a turn would risk a
         double-claim. Everything else is either a pure state transition
         (`start`/`finish`/`fail_turn`), an upsert (`record_session`), a level
-        report (`heartbeat`), or idempotency-keyed (`enqueue_turn`,
-        `fire_schedule`).
+        report (`heartbeat`), or idempotency-keyed (`enqueue_turn`).
         """
         label = label or path
         attempts = RETRY_ATTEMPTS if retry else 1
@@ -526,27 +531,6 @@ class Client:
         )
         return not (payload or {}).get("truncated", False)
 
-    def sync_schedules(self, runner_id: str) -> list[dict]:
-        """The schedules this runner may fire (tenant-scoped server-side). The runner
-        evaluates their cron locally and reports what came due — the server stores the
-        config, the runner is the tick. Response is a Page; callers want the items."""
-        from urllib.parse import urlencode
-        _, payload = self._call("GET", "/schedules/?" + urlencode({"runner_id": runner_id}))
-        return (payload or {}).get("items", [])
-
-    def fire_schedule(self, schedule_id: int, runner_id: str, slot: str) -> dict:
-        """Report a due slot; the server materializes it as a normal turn.
-
-        Safe to race — both macOS-account runners may report the same slot, and the
-        server's slot-derived idempotency_key collapses it inside enqueue_turn. The
-        route answers 201 either way, so a fresh turn and a replay are indistinguishable
-        here (and both are success — there is nothing for the runner to reconcile).
-        """
-        from urllib.parse import urlencode
-        path = f"/schedules/{schedule_id}/fire?" + urlencode({"runner_id": runner_id})
-        _, payload = self._call("POST", path, {"slot": slot})
-        return payload or {}
-
     def enqueue_turn(self, agent_slug: str, origin: str, idempotency_key: str, *,
                      prompt: str = "", origin_ref: dict | None = None,
                      routing: str = "prefer_local") -> dict:
@@ -568,9 +552,19 @@ class Client:
         InboundPushConfig so a tenant sets one in the UI, instead of someone
         hand-editing runner.json on every box. (An older server sends only the
         rows with a topic, and no `agent_slug`.)
+
+        Cached for MAILBOXES_TTL_SECONDS: the rows change when someone edits a
+        workspace's push config or an agent's mailbox, and both callers (the probe
+        and the watch re-arm) act on day-scale clocks, while the loop ticks every
+        few seconds. A failed fetch raises as before and caches nothing.
         """
+        now = time.monotonic()
+        if self._mailboxes is not None and now - self._mailboxes[0] < MAILBOXES_TTL_SECONDS:
+            return list(self._mailboxes[1])
         _status, payload = self._call_api("/inbound/runner-mailboxes", method="GET")
-        return (payload or {}).get("items", []) if isinstance(payload, dict) else []
+        rows = (payload or {}).get("items", []) if isinstance(payload, dict) else []
+        self._mailboxes = (now, rows)
+        return list(rows)
 
     def report_watch(self, address: str, expires_at, error: str = "") -> dict:
         """Tell canopy-web the state of this mailbox's Gmail watch.

@@ -313,6 +313,27 @@ class RunnerCliOut(Schema):
     known: bool = True
 
 
+def github_readiness(obj) -> list[tuple[str, str, str]]:
+    """`(slug, status, detail)` of `delegations.readiness` for each agent the box
+    runs, by slug. Uses what `api_runners_fleet.prime_github_readiness` stamped on
+    the row when a listing read the lot; a row it was not called on reads its own."""
+    from apps.agents.credentials import delegations
+
+    from ..routing import agents_routed_to_of
+
+    routed = getattr(obj, "_routed_agents", None)
+    if routed is None:
+        routed = agents_routed_to_of([obj])[obj.pk]
+    memo = getattr(obj, "_readiness_memo", None)
+    memo = {} if memo is None else memo
+    out = []
+    for agent in routed:
+        if agent.pk not in memo:
+            memo[agent.pk] = delegations.readiness(agent)
+        out.append((agent.slug, *memo[agent.pk]))
+    return out
+
+
 class RunnerOut(Schema):
     id: uuid.UUID
     name: str
@@ -579,15 +600,9 @@ class RunnerOut(Schema):
         # asks about at boot. Served from the box's report it would stay red for a
         # token lent after that boot, under a fresh `health_received_at`.
         # So it is answered here, from the rows, on every read.
-        from apps.agents.credentials import delegations
-
-        from ..routing import agents_routed_to
-
         checks = {n: c for n, c in checks.items() if n != "github" and not n.startswith("github.")}
-        for agent in agents_routed_to(obj):
-            status, detail = delegations.readiness(agent)
-            checks[f"github.{agent.slug}"] = HealthCheck(
-                name=f"github.{agent.slug}", status=status, detail=detail)
+        for slug, status, detail in github_readiness(obj):
+            checks[f"github.{slug}"] = HealthCheck(name=f"github.{slug}", status=status, detail=detail)
         return checks
 
     @staticmethod
@@ -653,6 +668,43 @@ class RunnerOut(Schema):
         # ONLINE and nothing ever demotes it, so the raw status lies once a
         # runner goes quiet. See Runner.live_status.
         return obj.live_status
+
+
+class RunnerHeartbeatSlimOut(Schema):
+    """The heartbeat reply a runner that sends `slim_reply: 1` gets: only what the
+    laptop (`runner/canopy_runner`) and the cloud box (`runner/ec2`) read off it.
+    Each field means what it means on `RunnerOut`, and is read by the same
+    resolver; none of the fleet-page fields (health checks, roots, open sessions)
+    is computed."""
+
+    id: uuid.UUID
+    name: str
+    host: str
+    engine: str = "emdash"
+    status: str
+    status_note: str
+    ready: bool
+    ready_note: str
+    remedy: str = ""
+    paused: bool
+    paused_note: str
+    private: bool = False
+    private_runner_id: uuid.UUID | None = None
+    key_waiting: str = ""
+    report_projects: list[str] | None = None
+    refresh_pending: bool | None = None
+    cancel_turn_ids: list[str] | None = None
+    add_projects: list[RunnerProjectAskOut] | None = None
+    expected_canopy_version: str = ""
+
+    resolve_status = staticmethod(RunnerOut.resolve_status)
+    resolve_private_runner_id = staticmethod(RunnerOut.resolve_private_runner_id)
+    resolve_key_waiting = staticmethod(RunnerOut.resolve_key_waiting)
+    resolve_report_projects = staticmethod(RunnerOut.resolve_report_projects)
+    resolve_refresh_pending = staticmethod(RunnerOut.resolve_refresh_pending)
+    resolve_cancel_turn_ids = staticmethod(RunnerOut.resolve_cancel_turn_ids)
+    resolve_add_projects = staticmethod(RunnerOut.resolve_add_projects)
+    resolve_expected_canopy_version = staticmethod(RunnerOut.resolve_expected_canopy_version)
 
 
 class FleetHoldIn(Schema):
@@ -751,6 +803,10 @@ class HeartbeatIn(Schema):
     # runs that agent's confined turns (`clis.laptop_cannot_confine_stored`). Absent (older
     # code) means 0: such a laptop is never handed one.
     stored_projects: int = 0
+    # 1 = this runner's code reads only the fields of `RunnerHeartbeatSlimOut`, so the
+    # reply is that instead of the whole `RunnerOut`. Absent (older code) means 0: the
+    # whole row, as before.
+    slim_reply: int = 0
     # Which agent CLIs this box has, signed in and confining (`clis.sanitize`):
     # {"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}.
     # A level like `profiles`: absent (older code) means the box is read as Claude

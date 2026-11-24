@@ -6,6 +6,7 @@ import { prependHistory } from "./history";
 import { REDUCER_EVENTS, sessionReducer } from "./sessionReducer";
 import { useDraftSync } from "./useDraftSync";
 import { newClientId, useSendReceipts } from "./useSendReceipts";
+import { jittered } from "../jitter";
 
 export { newClientId };
 
@@ -20,7 +21,8 @@ export const STALE_SOCKET_MS = 30_000;
  *  (a handshake the server answers with a 500, which arrives here as 1006) climbs
  *  the tail. Keep the tail long: capped at 10 s, one broken conversation in one
  *  open tab is a failed handshake every few seconds for as long as the tab stays
- *  open, ~40 per five minutes, enough on its own to page canopy-web's 5xx alarm. */
+ *  open, ~40 per five minutes, enough on its own to page canopy-web's 5xx alarm.
+ *  Each step is spread ±50% (`jittered`), so sockets dropped together come back apart. */
 export const RECONNECT_DELAYS_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
 /** Close codes that are canopy's ANSWER, not a dropped line: 4003 (you may not
  *  open this conversation — its ACL, the site's agents, or a private one you are
@@ -364,7 +366,7 @@ export function useSessionSocket({
           const attempt = reconnectAttemptRef.current;
           reconnectAttemptRef.current = attempt + 1;
           window.setTimeout(connect,
-            RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)]);
+            jittered(RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)]));
         },
       );
       return;
@@ -460,8 +462,8 @@ export function useSessionSocket({
         return;
       }
       const attempt = reconnectAttemptRef.current;
-      const delay =
-        RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)];
+      const delay = jittered(
+        RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)]);
       reconnectAttemptRef.current = attempt + 1;
       window.setTimeout(connect, delay);
     };

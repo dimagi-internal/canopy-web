@@ -14,10 +14,18 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import threading
 import time
 
 from .runner_token import bearer_of
+
+
+def jittered(seconds: float) -> float:
+    """`seconds` spread over ±50%. When a server task stops (a scale-in or a deploy),
+    every runner on it drops at once; spread, they come back apart instead of as one
+    burst of handshakes on the tasks left."""
+    return seconds * (0.5 + random.random())  # noqa: S311 — spacing, not security
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +115,7 @@ class WakeListener:
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("wake ws connect failed (%s); retrying", exc)
-                self._stop.wait(15)
+                self._stop.wait(jittered(15))
                 continue
             logger.info("wake listener connected: %s", self._url)
             self.connected = True
@@ -121,4 +129,4 @@ class WakeListener:
                     ws.close()
                 except Exception:  # noqa: BLE001
                     pass
-            self._stop.wait(2)  # brief backoff before reconnect
+            self._stop.wait(jittered(2))  # brief backoff before reconnect
