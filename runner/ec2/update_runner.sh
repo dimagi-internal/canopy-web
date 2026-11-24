@@ -784,7 +784,7 @@ ensure_tmp_age_rule() {
 # run short of disk. Root's tick installs one system-wide copy (/usr/bin/gcloud),
 # on boxes already up and, 30 minutes after boot, on new ones (runner.cfn.yaml
 # installs it at first boot too). Google's apt repo, so unattended-upgrades keeps
-# it current. Skipped when the volume is at the disk warning; a failure is logged
+# it current. Skipped when the volume has under 5 GB free; a failure is logged
 # and retried next tick, never fails it.
 GCLOUD_PATH="${GCLOUD_PATH:-/usr/bin/gcloud}"
 GCLOUD_INSTALLER="${GCLOUD_INSTALLER:-install_gcloud_apt}"
@@ -810,10 +810,13 @@ install_gcloud_apt() {
 }
 ensure_gcloud() {
   [ -x "$GCLOUD_PATH" ] && return 0
-  local pct
-  pct="$(df -P "${DISK_USAGE_ROOT:-/}" 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}')"
-  if [ -n "$pct" ] && [ "$pct" -ge "${DISK_WARN_PCT:-80}" ]; then
-    log "gcloud not installed: the volume is ${pct}% full"
+  # Gate on free space, not percent full: gcloud needs ~1 GB, and a 145 GB
+  # volume at the 80% warning still has 30 GB free (cloud-ec2-2 sat there and
+  # never got it).
+  local avail_kb
+  avail_kb="$(df -Pk "${DISK_USAGE_ROOT:-/}" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "$avail_kb" ] && [ "$avail_kb" -lt "${GCLOUD_MIN_FREE_KB:-5242880}" ]; then
+    log "gcloud not installed: only $((avail_kb / 1024)) MB free on the volume"
     return 0
   fi
   if "$GCLOUD_INSTALLER" >/dev/null 2>&1 && [ -x "$GCLOUD_PATH" ]; then

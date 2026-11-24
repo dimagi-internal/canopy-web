@@ -68,8 +68,11 @@ class Box:
         self.legacy_home.mkdir()
         self.disk_pct = tmp_path / "disk-pct"
         self.disk_pct.write_text("10")
+        self.disk_avail_kb = tmp_path / "disk-avail-kb"
+        self.disk_avail_kb.write_text("90000000")
         self._write_stub("df", f'echo "Filesystem 1024-blocks Used Available Capacity Mounted"\n'
-                               f'echo "/dev/root 100 10 90 $(cat "{self.disk_pct}")% /"\n')
+                               f'echo "/dev/root 100 10 $(cat "{self.disk_avail_kb}") '
+                               f'$(cat "{self.disk_pct}")% /"\n')
         self.legacy_busy = tmp_path / "legacy-busy"
         self._write_stub("pgrep", f'[ -e "{self.legacy_busy}" ]\n')
         # gcloud: a fake installer, so no test ever runs apt (a CI runner has
@@ -808,12 +811,20 @@ def test_gcloud_is_installed_once(box):
     assert _gcloud_installs(box) == 1
 
 
-def test_a_full_disk_skips_the_install(box):
-    box.disk_pct.write_text("85")
+def test_a_volume_short_of_space_skips_the_install(box):
+    box.disk_avail_kb.write_text(str(2 * 1024 * 1024))
     out = box.run()
     assert out.returncode == 0
     assert _gcloud_installs(box) == 0
-    assert "85% full" in out.stdout + out.stderr
+    assert "only 2048 MB free" in out.stdout + out.stderr
+
+
+def test_a_big_volume_at_the_disk_warning_still_gets_gcloud(box):
+    # cloud-ec2-2: 80% full of 145 GB is still ~30 GB free.
+    box.disk_pct.write_text("80")
+    box.disk_avail_kb.write_text(str(30 * 1024 * 1024))
+    assert box.run().returncode == 0
+    assert _gcloud_installs(box) == 1
 
 
 def test_a_failed_gcloud_install_never_fails_the_tick(box):
