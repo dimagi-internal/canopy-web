@@ -9,10 +9,10 @@ from django.db.models import Q
 
 from apps.agents.holding import runner_may_hold_agent
 from apps.agents.models import Agent
+from apps.agents.standings import Standings
 from apps.canopy_sessions.models import RunnerBinding, SessionHandoff
-from apps.harness import actors, clis
+from apps.harness import actors, clis, stored_agents
 from apps.harness import runner_requirements as rr
-from apps.harness import stored_agents
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import MAX_DEPTH, Workspace
@@ -143,6 +143,32 @@ def agents_following_runner(runner: Runner, among=None) -> set:
             if any(r.id == runner.id for r in inh.runners)}
 
 
+def agents_following_runners(runners) -> dict:
+    """{runner pk: `agents_following_runner(runner)`} for many boxes, from one read of
+    the orders listing them and ONE `inherited_orders` for every agent below them —
+    what a fleet listing asks, instead of rebuilding every inherited order per box."""
+    runners = [r for r in runners if not r.directed_only()]
+    out: dict = {r.pk: set() for r in runners}
+    listed: dict = {}
+    for rid, ws in (WorkspaceRunnerOrder.objects.filter(runner__in=runners, enabled=True)
+                    .values_list("runner_id", "workspace_id")):
+        listed.setdefault(rid, set()).add(ws)
+    if not listed:
+        return out
+    below = wsvc.descendant_map(set().union(*listed.values()))
+    scope = {rid: ws | set().union(*(below.get(w, set()) for w in ws)) for rid, ws in listed.items()}
+    by_ws: dict = {}
+    for aid, ws in Agent.objects.filter(workspace_id__in=set().union(*scope.values())).values_list(
+            "id", "workspace_id"):
+        by_ws.setdefault(ws, set()).add(aid)
+    inherited = inherited_orders(set().union(*by_ws.values()) if by_ws else ())
+    for rid, ws in scope.items():
+        candidates = set().union(*(by_ws.get(w, set()) for w in ws))
+        out[rid] = {aid for aid in candidates
+                    if aid in inherited and any(r.id == rid for r in inherited[aid].runners)}
+    return out
+
+
 def default_order_source(agent) -> str | None:
     """The workspace whose default order this agent would follow: its own
     workspace or the nearest above it with an enabled order. None: none has one."""
@@ -206,11 +232,15 @@ def inherited_orders(agent_ids) -> dict:
     chains = _ancestor_chains({a.workspace_id for a in agents if a.workspace_id})
     orders = load_workspace_orders({s for chain in chains.values() for s in chain})
     held: dict = {}  # (agent_id, owner_id) -> bool; owners are few
+    standings: list = []  # every listed owner's standing with every agent, read on first ask
 
     def may_hold(runner, agent) -> bool:
         key = (agent.id, runner.owner_id)
         if key not in held:
-            held[key] = runner_may_hold_agent(runner, agent)
+            if not standings:
+                owners = {r.owner for rs in orders.values() for r in rs if r.owner_id}
+                standings.append(Standings(owners, agents))
+            held[key] = runner_may_hold_agent(runner, agent, standings=standings[0])
         return held[key]
 
     out: dict = {}
@@ -445,7 +475,7 @@ def load_workspace_orders(ws_ids) -> dict:
         return out
     rows = (
         WorkspaceRunnerOrder.objects.filter(workspace_id__in=ws_ids, enabled=True)
-        .select_related("runner").prefetch_related("runner__declared_flags")
+        .select_related("runner", "runner__owner").prefetch_related("runner__declared_flags")
         .exclude(runner__status=Runner.RETIRED).order_by("rank")
     )
     rows = list(rows)
