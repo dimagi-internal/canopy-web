@@ -125,6 +125,16 @@ for s in $SERVICES; do aws ecs update-service --cluster $C --service $s --desire
 aws ecs wait services-stable --cluster $C --services $SERVICES
 ```
 
+A service with an Application Auto Scaling target (`labs-jj-canopy-web`, `labs-jj-web`) is put
+back to its minimum by the scaler; suspend it first and resume it in the restore step:
+
+```bash
+aws application-autoscaling register-scalable-target --service-namespace ecs \
+  --scalable-dimension ecs:service:DesiredCount --resource-id service/$C/labs-jj-canopy-web \
+  --suspended-state DynamicScalingInSuspended=true,DynamicScalingOutSuspended=true,ScheduledScalingSuspended=true
+# restore: the same call with every *Suspended=false
+```
+
 `update-service --desired-count` only scales: CloudFormation still owns the task
 definitions (see `docs/architecture/deploy.md`); don't register task
 definitions by hand.

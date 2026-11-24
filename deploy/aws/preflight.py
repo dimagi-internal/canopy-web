@@ -145,6 +145,25 @@ RESOURCE_ACTIONS: dict[str, dict[str, tuple[str, ...]]] = {
         "Modify": ("kms:UpdateAlias",),
         "Remove": ("kms:DeleteAlias",),
     },
+    # The service's scalable target and its target-tracking policy (canopy-web.cfn.yaml).
+    # The CloudWatch alarms a target-tracking policy creates are granted by alarm name
+    # (deploy_roles.py `OwnServiceAutoscalingAlarms`); simulating them against the
+    # policy's ARN would read as denied, so only the application-autoscaling calls are
+    # checked here.
+    "AWS::ApplicationAutoScaling::ScalableTarget": {
+        "Add": ("application-autoscaling:RegisterScalableTarget",
+                "application-autoscaling:DescribeScalableTargets"),
+        "Modify": ("application-autoscaling:RegisterScalableTarget",
+                   "application-autoscaling:DescribeScalableTargets"),
+        "Remove": ("application-autoscaling:DeregisterScalableTarget",),
+    },
+    "AWS::ApplicationAutoScaling::ScalingPolicy": {
+        "Add": ("application-autoscaling:PutScalingPolicy",
+                "application-autoscaling:DescribeScalingPolicies"),
+        "Modify": ("application-autoscaling:PutScalingPolicy",
+                   "application-autoscaling:DescribeScalingPolicies"),
+        "Remove": ("application-autoscaling:DeleteScalingPolicy",),
+    },
     "AWS::IAM::Policy": {
         # Never grantable to CI: iam:PutRolePolicy on its own role is a full
         # privilege escalation reachable by anyone who can merge. Mapped so the
