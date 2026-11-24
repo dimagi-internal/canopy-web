@@ -16517,6 +16517,12 @@ export interface paths {
          * Get one failure investigation
          * @description One investigation: the normalized failure, its latest raw note, the recent
          *     failed turns, the agents and runners it hit, and its debug turn.
+         *
+         *     `failed_turns` says, per recent failed turn, which agent, channel, kind of
+         *     caller, stamp, mode and runner it was: metadata, never content. Those turns'
+         *     own routes stay behind the chat ACL (a private chat is its people's), so this
+         *     is how the people who debug a failure can still tell one kind of turn from
+         *     another.
          */
         readonly get: operations["get_failure_investigation"];
         readonly put?: never;
@@ -48216,6 +48222,157 @@ export interface components {
             /** Limit */
             readonly limit: number;
         };
+        /**
+         * FailedTurnOut
+         * @description One failed turn of an investigation, as the people who debug it may see it:
+         *     WHAT failed and in what kind of turn, never what anyone said. No prompt, no
+         *     messages, no result text (the investigation's own note carries the error), no
+         *     person's name or address. A private chat's turn is otherwise readable only by
+         *     the people in that chat (`turn_queries.visible_turns_qs`), so without this the
+         *     debugger could not tell a confined caller's chat from a full owner turn.
+         */
+        readonly FailedTurnOut: {
+            /** Id */
+            readonly id: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
+            /**
+             * Chat
+             * @default false
+             */
+            readonly chat: boolean;
+            /**
+             * Private Chat
+             * @default false
+             */
+            readonly private_chat: boolean;
+            /**
+             * Initiator Kind
+             * @default
+             */
+            readonly initiator_kind: string;
+            /**
+             * Initiator Via
+             * @default
+             */
+            readonly initiator_via: string;
+            /**
+             * Initiator Assurance
+             * @default
+             */
+            readonly initiator_assurance: string;
+            /**
+             * Capability
+             * @default
+             */
+            readonly capability: string;
+            /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
+            /**
+             * Runner
+             * @default
+             */
+            readonly runner: string;
+            /**
+             * Cli
+             * @default
+             */
+            readonly cli: string;
+            /**
+             * Status
+             * @default
+             */
+            readonly status: string;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Finished At */
+            readonly finished_at?: string | null;
+        };
+        /**
+         * FailureInvestigationDetailOut
+         * @description One investigation, with each of its recent failed turns' metadata.
+         */
+        readonly FailureInvestigationDetailOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace Slug */
+            readonly workspace_slug: string;
+            /** Fingerprint */
+            readonly fingerprint: string;
+            /** Status */
+            readonly status: string;
+            /** Normalized Note */
+            readonly normalized_note: string;
+            /** Sample Note */
+            readonly sample_note: string;
+            /** Occurrences */
+            readonly occurrences: number;
+            /**
+             * First Seen
+             * Format: date-time
+             */
+            readonly first_seen: string;
+            /**
+             * Last Seen
+             * Format: date-time
+             */
+            readonly last_seen: string;
+            /** Turn Ids */
+            readonly turn_ids: readonly string[];
+            /** Agents */
+            readonly agents: readonly string[];
+            /** Runners */
+            readonly runners: readonly string[];
+            /** Recurred After Resolve */
+            readonly recurred_after_resolve: boolean;
+            /** Debug Turn Id */
+            readonly debug_turn_id: string | null;
+            /** Triggers */
+            readonly triggers: number;
+            /** Resolved At */
+            readonly resolved_at: string | null;
+            /** Resolution Note */
+            readonly resolution_note: string;
+            /**
+             * Fix Commit
+             * @default
+             */
+            readonly fix_commit: string;
+            /** Fix Committed At */
+            readonly fix_committed_at?: string | null;
+            /**
+             * Fix Pr
+             * @default
+             */
+            readonly fix_pr: string;
+            /**
+             * Handler Email
+             * @default
+             */
+            readonly handler_email: string;
+            /**
+             * Ask
+             * @default
+             */
+            readonly ask: string;
+            /** Evidence */
+            readonly evidence?: {
+                readonly [key: string]: unknown;
+            };
+            /** Failed Turns */
+            readonly failed_turns?: readonly components["schemas"]["FailedTurnOut"][];
+        };
         /** ResolveInvestigationIn */
         readonly ResolveInvestigationIn: {
             /**
@@ -78020,7 +78177,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["FailureInvestigationOut"];
+                    readonly "application/json": components["schemas"]["FailureInvestigationDetailOut"];
                 };
             };
         };

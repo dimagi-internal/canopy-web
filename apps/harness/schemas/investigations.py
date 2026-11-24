@@ -49,6 +49,42 @@ class FailureInvestigationOut(Schema):
         return obj.handler.email if obj.handler_id and obj.handler else ""
 
 
+class FailedTurnOut(Schema):
+    """One failed turn of an investigation, as the people who debug it may see it:
+    WHAT failed and in what kind of turn, never what anyone said. No prompt, no
+    messages, no result text (the investigation's own note carries the error), no
+    person's name or address. A private chat's turn is otherwise readable only by
+    the people in that chat (`turn_queries.visible_turns_qs`), so without this the
+    debugger could not tell a confined caller's chat from a full owner turn."""
+
+    id: str
+    agent: str = ""
+    origin: str = ""
+    #: The turn ran in a chat session (`private_chat`: someone's own conversation,
+    #: whose content stays with its people) rather than as the agent's own turn.
+    chat: bool = False
+    private_chat: bool = False
+    #: Who it was for, as a kind (user / contact / agent / system), how it came in,
+    #: and how sure canopy was — never who.
+    initiator_kind: str = ""
+    initiator_via: str = ""
+    initiator_assurance: str = ""
+    #: The stamp the claim ran it under (`Turn.capability`) and its turn mode.
+    capability: str = ""
+    turn_mode: str = ""
+    runner: str = ""
+    cli: str = ""
+    status: str = ""
+    created_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
+
+
+class FailureInvestigationDetailOut(FailureInvestigationOut):
+    """One investigation, with each of its recent failed turns' metadata."""
+
+    failed_turns: list[FailedTurnOut] = Field(default_factory=list)
+
+
 class ResolveInvestigationIn(Schema):
     note: str = Field(min_length=1, max_length=10000,
                       description="What was wrong and what you changed to fix it.")
