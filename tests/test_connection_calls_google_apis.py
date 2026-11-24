@@ -176,7 +176,8 @@ def test_drive_names_are_unchanged_without_a_path():
 # ---- the provider ----------------------------------------------------------------------------
 
 def test_an_app_may_ask_for_each_read_scope():
-    for scope in ("gmail.readonly", "calendar.readonly", "spreadsheets.readonly", "documents.readonly"):
+    # Sheets and Docs reads ride `drive.readonly`, which both APIs accept.
+    for scope in ("gmail.readonly", "calendar.readonly", "drive.readonly"):
         assert f"https://www.googleapis.com/auth/{scope}" in GoogleProvider.scope_choices
     assert (GoogleProvider.server_use_default, GoogleProvider.server_calls) == (False, False)
 

@@ -60,11 +60,9 @@ class GoogleProvider(Provider):
         f"{_SCOPE}gmail.send": "Send mail",
         f"{_SCOPE}gmail.modify": "Label and archive mail",
         f"{_SCOPE}calendar.readonly": "Read calendars",
-        # A screen reading the viewer's own Sheets and Docs (`calls.GOOGLE_RULES`: the Sales app's Motions
-        # pathways Sheet, an account's KAM journal Doc). `drive.readonly` covers both too, more broadly.
-        f"{_SCOPE}spreadsheets.readonly": "Read spreadsheets",
-        f"{_SCOPE}documents.readonly": "Read documents",
-        # An agent reading a meeting transcript's Doc in a turn, on a connection the person lent it.
+        # An agent reading a meeting transcript's Doc in a turn, on a connection the person lent it; and a
+        # screen reading the viewer's Sheets and Docs (`calls.GOOGLE_RULES`), which both APIs accept it for.
+        # (No separate spreadsheets/documents scopes: every choice at once must fit `Connection.scopes`.)
         f"{_SCOPE}drive.readonly": "Read files in Drive",
         # A screen listing a folder tree and changing files' labels as the viewer (`calls.GOOGLE_RULES`).
         f"{_SCOPE}drive.metadata": "See and change file details and labels in Drive (not contents)",

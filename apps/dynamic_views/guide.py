@@ -236,8 +236,8 @@ GOOGLE DRIVE CALLS
     valueRenderOption, dateTimeRenderOption, fields)
     docs/<id> (fields, suggestionsViewMode)
   Declare each as a read with * for the id (gmail/messages/*, sheets/*/values:batchGet). The
-  workspace's Google app must ask for each one's read scope (Read mail, Read calendars, Read
-  spreadsheets, Read documents).
+  workspace's Google app must ask for each one's read scope (Read mail, Read calendars, and Read
+  files in Drive for Sheets and Docs).
 - It never uses a stored Google connection: only an hour of access the viewer grants for their own
   screens. Without one (or once it ends) the call rejects with code "not_connected" (or
   "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url) in
