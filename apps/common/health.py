@@ -27,8 +27,7 @@ import os
 import time
 
 from asgiref.sync import sync_to_async
-
-from apps.harness.runner_releases import deployed_sha
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +55,9 @@ def _body() -> tuple[int, dict]:
     stalled = stalled_for()
     if stalled > STALL_S:
         return 503, {"status": "stalled", "stalled_s": int(stalled)}
-    return 200, {"status": "ok", "runner_code_sha": deployed_sha()}
+    # The runner release this deployment ships: `apps.harness.runner_releases.deployed_sha`,
+    # read from settings here because common sits below harness.
+    return 200, {"status": "ok", "runner_code_sha": (getattr(settings, "RUNNER_CODE_SHA", "") or "").strip()}
 
 
 async def _beat_forever() -> None:
