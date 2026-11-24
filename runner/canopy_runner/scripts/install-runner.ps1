@@ -296,10 +296,8 @@ try {
     # The updater task runs ~\.canopy\canopy-runner-update.ps1, a copy of this
     # script frozen at the LAST SUCCESSFUL install: the copy is refreshed only at
     # the very end, after `uv tool install`. So a fix to this installer cannot
-    # reach a box whose frozen copy fails before that point. That is not
-    # hypothetical: #2679 made the install stop the runner first, but a box frozen
-    # on the pre-#2679 copy kept hitting os error 32 every update, never got far
-    # enough to replace itself, and kept the old daemon running for weeks.
+    # reach a box whose frozen copy fails before that point: the box keeps
+    # failing the same way and keeps running the old daemon.
     # Same cure as install-runner.sh: if the archived ref carries a different
     # installer, hand over to THAT copy. It installs itself over the frozen copy
     # on its way out. The env guard stops recursion.

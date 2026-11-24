@@ -89,7 +89,7 @@ def test_developer_install_restarts_the_runner_on_every_failure_path():
 def test_developer_install_hands_over_to_the_archived_installer():
     """The updater runs a copy frozen at the last SUCCESSFUL install, refreshed only after
     `uv tool install`. A frozen copy that fails before then can never replace itself, so
-    a fix to the installer never arrives (the pre-#2679 copy hit os error 32 for weeks).
+    a fix to the installer would never arrive.
     Like install-runner.sh: once the ref is extracted, run the ARCHIVED installer if it
     differs, before anything is stamped, stopped or installed."""
     ps1 = _dev_ps1()
