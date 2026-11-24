@@ -350,8 +350,17 @@ def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str, kms=No
         tag_context: list[dict] = []
         if change.resource_type == "AWS::KMS::Key" and change.change_action != "Add":
             arn, tag_context = _kms_key(change, principal_arn, kms)
-        scoped = [a for a in actions if a not in UNSCOPED_ACTIONS]
-        unscoped = [a for a in actions if a in UNSCOPED_ACTIONS]
+        # An action is checked against the ARN only when the ARN belongs to the
+        # action's own service. A scaling policy's ARN is "arn:aws:autoscaling:..."
+        # while its actions are "application-autoscaling:...", and simulate reads
+        # every such pair as implicitDeny even under Resource "*".
+        arn_service = arn.split(":")[2] if arn and arn.count(":") >= 5 else None
+
+        def _scopable(action: str) -> bool:
+            return action not in UNSCOPED_ACTIONS and action.split(":")[0] == arn_service
+
+        scoped = [a for a in actions if arn is None or _scopable(a)]
+        unscoped = [a for a in actions if arn is not None and not _scopable(a)]
 
         decisions: dict = {}
         for names, resource in ((scoped, arn), (unscoped, None)):

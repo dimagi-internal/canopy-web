@@ -305,6 +305,21 @@ class TestCheck:
                 assert call["ResourceArns"] == [
                     "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/tg/x"]
 
+    def test_a_scaling_policy_is_simulated_unscoped(self):
+        # A scaling policy's physical id is an "arn:aws:autoscaling:..." ARN while its
+        # actions are "application-autoscaling:...". Simulate reads that pair as
+        # implicitDeny even under Resource "*", which refused every deploy that
+        # touched the policy although the real call is allowed.
+        described = {"Changes": [{"Type": "Resource", "ResourceChange": {
+            "Action": "Modify", "LogicalResourceId": "CpuScalingPolicy",
+            "PhysicalResourceId": "arn:aws:autoscaling:us-east-1:1:scalingPolicy:x:"
+                                  "resource/ecs/service/c/s:policyName/p",
+            "ResourceType": "AWS::ApplicationAutoScaling::ScalingPolicy",
+            "Replacement": "False"}}]}
+        iam = FakeIam()
+        assert check(FakeCfn(described), iam, "s", "cs", "arn:role") == []
+        assert iam.calls and all("ResourceArns" not in c for c in iam.calls)
+
     def test_a_non_arn_physical_id_is_not_passed_as_a_resource(self):
         # Some physical ids are names, not ARNs (a log group, for one).
         described = {"Changes": [{"Type": "Resource", "ResourceChange": {
