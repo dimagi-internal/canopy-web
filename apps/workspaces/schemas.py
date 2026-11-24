@@ -682,6 +682,9 @@ class AnalyticsDayOut(StrictModel):
     sessions: int
     messages: int
     active_users: int
+    # Agents that ran a turn that day; agents the workspaces owned by its end.
+    active_agents: int
+    built_agents: int
     done: int
     failed: int
     lost: int

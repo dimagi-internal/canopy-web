@@ -79,6 +79,8 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         ]} />
         <DailyBars title="Messages sent" days={days} layers={[{ key: 'messages', label: 'Messages', className: 'fill-primary' }]} />
         <DailyBars title="Active people" days={days} rangeTotal={t.active_users} layers={[{ key: 'active_users', label: 'People', className: 'fill-primary' }]} />
+        <DailyBars title="Active agents" days={days} rangeTotal={t.active_agents} layers={[{ key: 'active_agents', label: 'Agents', className: 'fill-primary' }]} />
+        <DailyBars title="Built agents" days={days} rangeTotal={t.built_agents} layers={[{ key: 'built_agents', label: 'Built', className: 'fill-primary' }]} />
       </section>
 
       <section aria-label="Where turns came from">
