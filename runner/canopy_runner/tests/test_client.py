@@ -169,3 +169,43 @@ def test_a_connection_cut_mid_response_is_transient_and_retried(monkeypatch, mak
         c.finish("t-1", note="done")
     assert exc.value.transient is True
     assert len(calls) == RETRY_ATTEMPTS
+
+
+# --- runner-mailboxes: reused for MAILBOXES_TTL_SECONDS --------------------------
+
+
+def test_runner_mailboxes_is_fetched_once_per_ttl(monkeypatch):
+    c = Client("http://x", "tok")
+    calls = []
+
+    def fake_call_api(path, *, method, **_kw):
+        calls.append((method, path))
+        return 200, {"items": [{"address": "a@x.org", "watch_topic": "t"}]}
+
+    clock = [1000.0]
+    monkeypatch.setattr(c, "_call_api", fake_call_api)
+    monkeypatch.setattr(client_mod.time, "monotonic", lambda: clock[0])
+
+    assert c.runner_mailboxes() == [{"address": "a@x.org", "watch_topic": "t"}]
+    clock[0] += client_mod.MAILBOXES_TTL_SECONDS - 1
+    c.runner_mailboxes()
+    assert calls == [("GET", "/inbound/runner-mailboxes")]
+    clock[0] += 2
+    c.runner_mailboxes()
+    assert len(calls) == 2
+
+
+def test_a_failed_runner_mailboxes_fetch_raises_and_caches_nothing(monkeypatch):
+    c = Client("http://x", "tok")
+    answers = [ClientError("boom", transient=True), (200, {"items": [{"address": "b@x.org"}]})]
+
+    def fake_call_api(path, *, method, **_kw):
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    monkeypatch.setattr(c, "_call_api", fake_call_api)
+    with pytest.raises(ClientError):
+        c.runner_mailboxes()
+    assert c.runner_mailboxes() == [{"address": "b@x.org"}]
