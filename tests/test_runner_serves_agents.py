@@ -175,3 +175,24 @@ def test_a_retired_box_runs_nothing(fleet):
 
 def test_someone_elses_box_is_not_yours_to_ask_about(fleet):
     assert _agents(fleet["cloud"], as_user=fleet["laptop"].owner).status_code == 404
+
+
+def test_a_shared_read_asks_each_owners_license_once(fleet, monkeypatch):
+    """Every private box of one owner asks the same license: with `ServingFacts` it is
+    read once per (agent, owner), not once per box (a keeper asked it per pair)."""
+    from apps.agents.credentials import licenses
+
+    ws = Workspace.objects.get(slug="dimagi")
+    owner = _user("lic")
+    WorkspaceMembership.objects.create(workspace=ws, user=owner, role=WorkspaceMembership.EDITOR)
+    boxes = [_runner(owner, f"lic-{i}", ws, kind=Runner.EMDASH) for i in range(4)]
+    Runner.objects.filter(pk__in=[b.pk for b in boxes]).update(private=True)
+    boxes = list(Runner.objects.filter(pk__in=[b.pk for b in boxes]).select_related("owner"))
+    agent = Agent.objects.create(slug="lic-agent", name="L", workspace=ws, owner=_user("other"))
+    asked = []
+    monkeypatch.setattr(licenses, "active", lambda a, u: asked.append((a.pk, u.pk)) or object())
+    facts = routing.ServingFacts(boxes, [agent])
+    assert all(device_keys.private_runner_licensed(b, agent, facts) for b in boxes)
+    assert asked == [(agent.pk, owner.pk)]
+    assert device_keys.private_runner_licensed(boxes[0], agent)  # alone: reads its own
+    assert len(asked) == 2
