@@ -335,11 +335,11 @@ jobs:
     name: Backend pytest (PostgreSQL)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # Most of it is the walk-back migration tests (`-m needs_migrations`), which re-render the project state for every
-    # operation they replay; that grows with each model that points at users, sessions or workspaces (the brain added
-    # a dozen). They take 15-20 minutes on main, and a PR that adds a migration misses the test DB cache and replays
-    # every migration first (about 4 more), so a tighter cap ejects green PRs from the queue.
-    timeout-minutes: 40
+    # This job is the merge queue's critical path, and its cost is the walk-back migration tests
+    # (`-m needs_migrations`): each re-renders the project state for every operation it replays, about a minute
+    # apiece and growing with every model. So each is deleted once its migration deploys (CLAUDE.md § Migrations).
+    # A PR that adds a migration misses the test DB cache and replays every migration first (about 4 minutes).
+    timeout-minutes: 25
     services:
       postgres:
         image: pgvector/pgvector:pg18
