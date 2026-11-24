@@ -111,20 +111,24 @@ class _McpWithoutSlash:
 
 import contextlib  # noqa: E402
 
+from apps.common import health as _health  # noqa: E402
 from apps.common import ticks as _ticks  # noqa: E402
 
 
 @contextlib.asynccontextmanager
 async def _lifespan(app):
-    """The MCP session manager and the off-request clock (apps/common/ticks.py:
-    every app's registered periodic jobs), for the life of the process."""
+    """The MCP session manager, the off-request clock (apps/common/ticks.py:
+    every app's registered periodic jobs) and the health heartbeat
+    (apps/common/health.py), for the life of the process."""
     async with _mcp_app.lifespan(app), _project_mcp_app.lifespan(app), _gateway_mcp_app.lifespan(app):
-        async with _ticks.running():
+        async with _ticks.running(), _health.heartbeat():
             yield
 
 
 application = Starlette(
-    middleware=[Middleware(_McpWithoutSlash)],
+    # /health/ is answered on the event loop, ahead of routing and Django, so the
+    # ALB check cannot queue behind slow requests (apps/common/health.py).
+    middleware=[Middleware(_health.HealthMiddleware), Middleware(_McpWithoutSlash)],
     routes=[
         # The DPoP gate: a host-grant token (canopy-web as a host of its own
         # MCP, apps/host_grants/self_host.py) arrives as `Authorization: DPoP`; the
