@@ -16,7 +16,7 @@ The mail stack's HTTPS subscriptions send a `SubscriptionConfirmation` the momen
        MailInboundBucket=canopy-inbound-mail-858923557655 \
        MailInboundTopicArn=arn:aws:sns:us-east-1:858923557655:canopy-inbound-mail \
        MailEventsTopicArn=arn:aws:sns:us-east-1:858923557655:canopy-mail-events
-   gh workflow run "Deploy to Labs (AWS)" --ref main
+   gh workflow run "Deploy to Labs (AWS)" --ref main -f reason="mail domain onboarding" -f session="<who is deploying>"
    ```
    The workflow overrides only `ImageTag`, so the `Mail*` values persist across later deploys. Confirm `/api/openapi.json` lists `/api/mail/domains/{workspace}`.
 2. **Deploy the mail stack** with a labs admin login (the deploy role holds no `ses:*`):
