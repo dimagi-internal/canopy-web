@@ -333,6 +333,10 @@ Resources:
       HealthCheckIntervalSeconds: 5
       HealthyThresholdCount: 2
       HealthCheckTimeoutSeconds: 4
+      # Admission stays fast (2 x 5s above), but eviction waits for ~30s of
+      # sustained non-response: a saturated worker recovers, and evicting it
+      # turns slowness into a full outage.
+      UnhealthyThresholdCount: 6
       Matcher: { HttpCode: "200" }
       TargetGroupAttributes:
         # THE BIG ONE: deregistration_delay defaults to 300s and was never set
@@ -436,8 +440,11 @@ Resources:
     DeletionPolicy: Retain
     Properties:
       Family: labs-jj-canopy-web
-      Cpu: "1024"
-      Memory: "2048"
+      # 2 vCPU / 4 GB: one task carries the whole fleet's runner polling, and
+      # at 1 vCPU it ran saturated, where the ASGI worker stops answering and
+      # the health check evicts it. Fargate pairs 2 vCPU with 4-16 GB.
+      Cpu: "2048"
+      Memory: "4096"
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
       ExecutionRoleArn: !Ref ExecutionRoleArn
