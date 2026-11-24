@@ -12,7 +12,6 @@ from canopy_runner import failure_log
 from canopy_runner import hooks
 from canopy_runner import emdash
 from canopy_runner import main as main_mod
-from canopy_runner.client import ClientError
 from canopy_runner.config import Config
 from canopy_runner.main import run_once
 
