@@ -130,5 +130,13 @@ EXPOSE 8000
 # --no-access-log: uvicorn's access line carries the client address and the full
 # path and query — a `/share/<token>` link, a `?ticket=` — into CloudWatch. No
 # log line may (apps/common/log_redact.py); SLOW_REQUEST and the ALB cover timing.
+# --timeout-keep-alive 620: the shared ALB keeps its connection to a task open
+# for up to 600s idle (idle_timeout.timeout_seconds) and reuses it. uvicorn's
+# default closes an idle connection after 5s, so the ALB sometimes sends a
+# request down a connection the task is closing at that instant, and the caller
+# gets a 502 the app never saw (access log: target_status "-", response time
+# -1, a few ms of target time). The target must outlast the ALB, so the ALB is
+# always the side that closes. Keep this above the ALB's idle timeout.
 CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", \
-     "--ws-ping-interval", "5", "--ws-ping-timeout", "20", "--no-access-log"]
+     "--ws-ping-interval", "5", "--ws-ping-timeout", "20", "--no-access-log", \
+     "--timeout-keep-alive", "620"]
