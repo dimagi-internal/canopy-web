@@ -12,13 +12,14 @@ import datetime as dt
 import logging
 import uuid
 
-from django.db.models import OuterRef, Q, Subquery
+from django.db.models import OuterRef, Prefetch, Q, Subquery
 from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
 from apps.agents.holding import runner_may_hold_agent
+from apps.agents.models import Agent
 from apps.api.route_gates import gate
 from apps.canopy_sessions import control, handoff
 from apps.canopy_sessions import services as chat_services
@@ -277,6 +278,9 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     )
     bindings = (
         RunnerBinding.objects.select_related("session")
+        # `emdash_project` reads an agent chat's agent slug: one read of every agent's slug,
+        # not one per binding (an agent's box backs hundreds of its chats).
+        .prefetch_related(Prefetch("session__agent", queryset=Agent.objects.only("id", "slug")))
         .filter(runner=runner)
         .filter(Q(session__status=Session.ACTIVE) | Q(session_id__in=full))
         # Its person deleted its words: never asked of this box again, coached or not.
