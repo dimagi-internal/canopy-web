@@ -59,6 +59,41 @@ _cdp_down_ticks = 0
 _cdp_down_signalled = False
 
 
+#: The last heartbeat this loop sent: when, what it said that matters (its key),
+#: and the reply. `run_once` beats every `heartbeat_seconds`, or at once when that
+#: state changes, and reuses the reply in between.
+_beat: dict = {"at": None, "key": None, "reply": {}}
+
+
+def _frozen(value):
+    """A hashable, order-stable form of a heartbeat field, for a beat's key."""
+    if value is None:
+        return None
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _reset_heartbeat_state() -> None:
+    """Forget the last heartbeat, so the next tick sends one (and between tests)."""
+    _beat.update(at=None, key=None, reply={})
+
+
+def _beat_due(cfg: Config, key, now: float) -> bool:
+    """Send a heartbeat this tick? When none was sent yet, `heartbeat_seconds` have
+    passed, or what it reports changed (health, readiness, the turns it renews, the
+    repos and mailboxes it offers). The server reads a box as online for
+    HEARTBEAT_ONLINE_WINDOW (90s) after a beat, so the cadence stays well inside it."""
+    every = float(cfg.heartbeat_seconds or 0)
+    return (_beat["at"] is None or key != _beat["key"] or every <= 0
+            or now - _beat["at"] >= every)
+
+
+def _beaten(key, reply, now: float) -> dict:
+    """Record a heartbeat just sent; returns its reply."""
+    reply = reply if isinstance(reply, dict) else {}
+    _beat.update(at=now, key=key, reply=reply)
+    return reply
+
+
 def _reset_cdp_health_state() -> None:
     """Clear the CDP-down throttle (on recovery, and between tests)."""
     global _cdp_down_ticks, _cdp_down_signalled
@@ -600,6 +635,7 @@ def run_once(cfg: Config, client: Client) -> str:
     from .cdp_control import cdp_healthy, host_id
 
     global _cdp_down_ticks, _cdp_down_signalled
+    now = time.monotonic()
     # A claude-cli box runs Claude itself: emdash being down costs it nothing.
     healthy = not desktop.needs_emdash() or cdp_healthy(port=cfg.cdp_port)
     host = host_id()
@@ -615,23 +651,37 @@ def run_once(cfg: Config, client: Client) -> str:
         # ("what can this runner do right now"), same tick. The degraded and paused
         # heartbeats below deliberately omit it: omission is a no-op server-side,
         # and a runner that isn't claiming has no use for a refreshed list.
-        me = client.heartbeat(cfg.runner_id, _active_turn_ids(), host=host,
-                              ready=_ready, ready_note=_rnote,
-                              projects=sessions.reported_projects(cfg),
-                              mailboxes_readable=mailbox_probe.readable(),
-                              health=_laptop_health(cfg))
+        active, projects = _active_turn_ids(), sessions.reported_projects(cfg)
+        readable, health = mailbox_probe.readable(), _laptop_health(cfg)
+        key = ("healthy", _ready, _rnote, tuple(sorted(active)), _frozen(projects),
+               _frozen(readable),
+               # `checked_at` moves every tick; what was checked is the change.
+               _frozen({k: v for k, v in health.items() if k != "checked_at"}
+                       if isinstance(health, dict) else health))
+        if _beat_due(cfg, key, now):
+            me = _beaten(key, client.heartbeat(
+                cfg.runner_id, active, host=host, ready=_ready, ready_note=_rnote,
+                projects=projects, mailboxes_readable=readable, health=health), now)
+        else:
+            me = _beat["reply"]
     else:
         _cdp_down_ticks += 1
-        # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
-        # control plane + menu-bar app read ("alive but can't execute"). It's a status field,
-        # overwritten each tick, so it is not spam.
-        me = client.heartbeat(cfg.runner_id, _active_turn_ids(), degraded=True,
-                              note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
-                              host=host, ready=False,
-                              ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
-                              # The inbox still runs with CDP down, so what this box
-                              # can read is still what the doorbell should know.
-                              mailboxes_readable=mailbox_probe.readable())
+        # A degraded heartbeat — the machine-readable surface signal the control plane +
+        # menu-bar app read ("alive but can't execute") — at once on the transition and
+        # then on the heartbeat cadence, like a healthy one.
+        active, readable = _active_turn_ids(), mailbox_probe.readable()
+        key = ("degraded", tuple(sorted(active)), _frozen(readable))
+        if _beat_due(cfg, key, now):
+            me = _beaten(key, client.heartbeat(
+                cfg.runner_id, active, degraded=True,
+                note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
+                host=host, ready=False,
+                ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
+                # The inbox still runs with CDP down, so what this box
+                # can read is still what the doorbell should know.
+                mailboxes_readable=readable), now)
+        else:
+            me = _beat["reply"]
         # ...and ONE loud WARNING after sustained downtime (not per tick), for the human log.
         if _cdp_down_ticks >= CDP_DOWN_SIGNAL_TICKS and not _cdp_down_signalled:
             logger.warning(
@@ -644,7 +694,9 @@ def run_once(cfg: Config, client: Client) -> str:
     # The stops this box owes ride the heartbeat reply too — the durable copy of
     # the `cancel` frame, which a socket that was reconnecting never delivered.
     # Same set the frame feeds, so the executor/bridge acts on it the same way.
-    honour_stops(me)
+    # Only from a fresh reply: a reused one's stops were taken when it arrived.
+    if _beat["at"] == now:
+        honour_stops(me)
 
     # The session runtime canopy-web wants (Supervisor → this runner → Session
     # runtime) rides the heartbeat response; adopting it here is the whole flip.
@@ -743,7 +795,13 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
     # A pause stops STARTING work, it never abandons work already running: the chat
     # pump runs above it, and `_report_sweep` runs in `run_once`'s `finally`, so both
     # keep going while parked.
-    if reconcile_pause(cfg, client, bool((me or {}).get("paused"))):
+    in_force = reconcile_pause(cfg, client, bool((me or {}).get("paused")))
+    if me is _beat["reply"]:
+        # The reply is reused until the next beat: carry a pause this tick pushed
+        # up, or the next tick would read the old `paused` as the server's word
+        # and undo it.
+        me["paused"] = in_force
+    if in_force:
         # Parked on purpose is not broken. The re-arm below never runs while
         # paused, so no NEW watch failure can be raised; retract any this box
         # raised before it was parked so canopy-web shows a quiet runner rather
@@ -1656,7 +1714,7 @@ def main() -> None:
         # runner is indistinguishable from a dead one in the log otherwise, and
         # "nobody remembered to unpause it" is the way this feature hurts you.
         if result == "paused" and not paused:
-            logger.warning("PAUSED — skipping all work (no claim, no inbox, no schedules, "
+            logger.warning("PAUSED — skipping all work (no claim, no inbox, "
                            "no tokens). Resume via the menu-bar app, `canopy runner unpause`, "
                            "or by removing %s.", pause_file)
             paused = True

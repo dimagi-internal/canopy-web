@@ -551,7 +551,7 @@ def test_cdp_recovery_drains_the_backlog(monkeypatch, tmp_path):
 
 def test_cdp_down_warning_is_throttled_to_one(monkeypatch, tmp_path, caplog):
     """A single throttled surface signal after sustained downtime — NOT per-tick spam.
-    The degraded heartbeat still fires every tick (machine signal); the WARNING fires once."""
+    The degraded heartbeat fires on the transition and then on its cadence; the WARNING once."""
     _stub_cdp(monkeypatch, healthy=False)
     cfg = _cdp_loop_cfg(tmp_path)
     client = _CdpLoopClient()
@@ -561,8 +561,56 @@ def test_cdp_down_warning_is_throttled_to_one(monkeypatch, tmp_path, caplog):
         run_once(cfg, client)
     warns = [r for r in caplog.records if "CDP unreachable" in r.getMessage()]
     assert len(warns) == 1  # ONE loud log despite many down ticks
-    assert len(client.heartbeats) == ticks  # ...but a degraded heartbeat every tick
+    assert len(client.heartbeats) == 1  # ...and one degraded heartbeat inside the cadence
     assert all(h["degraded"] for h in client.heartbeats)
+
+
+def test_heartbeat_follows_its_cadence_not_the_tick(monkeypatch, tmp_path):
+    """A healthy box beats once per `heartbeat_seconds`, reusing the reply between."""
+    _stub_cdp(monkeypatch, healthy=True)
+    clock = [1000.0]
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: clock[0])
+    cfg = _cdp_loop_cfg(tmp_path)
+    client = _CdpLoopClient()
+    for _ in range(5):
+        run_once(cfg, client)
+        clock[0] += 5
+    assert len(client.heartbeats) == 1
+    clock[0] += cfg.heartbeat_seconds
+    run_once(cfg, client)
+    assert len(client.heartbeats) == 2
+
+
+def test_a_change_in_what_the_heartbeat_reports_beats_at_once(monkeypatch, tmp_path):
+    """Losing emdash is reported on the tick it happens, not at the next cadence."""
+    _stub_cdp(monkeypatch, healthy=True)
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: 1000.0)
+    cfg = _cdp_loop_cfg(tmp_path)
+    client = _CdpLoopClient()
+    run_once(cfg, client)
+    _stub_cdp(monkeypatch, healthy=False)
+    run_once(cfg, client)
+    assert [h["degraded"] for h in client.heartbeats] == [False, True]
+
+
+def test_a_local_pause_survives_the_reused_reply(monkeypatch, tmp_path):
+    """A pause pushed up between beats is not undone by the older reply's `paused`."""
+    _stub_cdp(monkeypatch, healthy=True)
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: 1000.0)
+    cfg = _cdp_loop_cfg(tmp_path)
+
+    class C(_CdpLoopClient):
+        def set_paused(self, runner_id, paused, note=""):
+            return {"paused": paused}
+
+    client = C()
+    assert run_once(cfg, client) == "idle"
+    sentinel, _mirror = main_mod._pause_paths(cfg)
+    sentinel.touch()
+    assert run_once(cfg, client) == "paused"  # the edge is pushed up
+    assert run_once(cfg, client) == "paused"  # ...and the reused reply keeps it
+    assert sentinel.exists()
+    assert len(client.heartbeats) == 1
 
 
 def test_cdp_recovery_logs_once_and_rearms(monkeypatch, tmp_path, caplog):
