@@ -1,7 +1,12 @@
 name: CI
 
-# Runs backend tests + frontend build ONCE per change: in the merge queue (and
-# on push to main). Deploys are a separate, manual workflow:
+# Runs backend tests + frontend build ONCE per change: in the merge queue.
+# A push to main runs only `Backend pytest (PostgreSQL)`, the job that saves
+# the migrated test DB (and the uv cache) to main's cache for queue runs to
+# restore. Main only moves through the queue (the ruleset has no bypass
+# actors), so the commit a push lands is the very merge-group commit the queue
+# just passed; re-running every suite on it re-proved a tested tree while
+# holding ~8 of the org's 20 concurrent runners. Deploys are a separate, manual workflow:
 # .github/workflows/deploy-labs.yml (GitHub → AWS labs / ECS Fargate).
 #
 # Why not on the PR too. The ruleset requires
@@ -67,7 +72,7 @@ jobs:
   # shard 1 with the other fast static gates — once is enough.
   test-backend:
     name: Backend pytest (${{ matrix.shard }}/3)
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -193,7 +198,7 @@ jobs:
   # setup eight times over and hold eight runners per PR.
   test-runner-packages:
     name: Runner packages
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -524,8 +529,10 @@ jobs:
             exit 1
           fi
 
-      # The source-walking ratchets (no DB, seconds), plus every Django-suite
-      # test file this PR touched. A file deleted by the PR is skipped.
+      # The source-walking ratchets (seconds each), plus every Django-suite
+      # test file this PR touched. A file deleted by the PR is skipped. The
+      # ratchets listed are the ones that fail a PR on its own; in the queue
+      # each such failure also fails every entry built on top of it.
       - name: Guard tests and the test files this PR changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -538,6 +545,12 @@ jobs:
             tests/test_no_test_module_imports.py \
             tests/test_architecture_boundary.py \
             tests/test_canopy_cli_routes_exist.py \
+            tests/test_code_text_is_current.py \
+            tests/test_claude_md_budget.py \
+            tests/test_docs_evidence.py \
+            tests/test_turn_context_words.py \
+            tests/test_personal_project_never_leaks.py \
+            tests/test_guest_members_never_leak.py \
             $CHANGED
 
   pr-guards:
@@ -687,6 +700,12 @@ jobs:
           if [ -z "$FILES" ]; then echo "No source files changed."; exit 0; fi
           npx vitest related --run --passWithNoTests $FILES
 
+      # Scans every source file, so `vitest related` never selects it.
+      - name: Vitest (design-token ratchet)
+        if: steps.changed.outputs.mode == 'related'
+        working-directory: frontend
+        run: npx vitest run src/designTokens.test.ts
+
       - name: Vitest (whole suite — the toolchain changed)
         if: steps.changed.outputs.mode == 'all'
         working-directory: frontend
@@ -697,7 +716,9 @@ jobs:
     needs: [test-backend, test-runner-packages, test-backend-postgres, pr-guards, pr-fast-checks]
     # always(): without it a failed `needs` SKIPS this job, and a skipped
     # required check counts as passing — the gate would wave failures through.
-    if: always()
+    # Not on push: there the suites do not run, and the commit already carries
+    # this check from the merge-group run that passed it.
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -731,7 +752,9 @@ jobs:
   test-frontend-gate:
     name: Frontend build
     needs: [test-frontend, pr-guards, pr-frontend-checks]
-    if: always()
+    # Not on push: there the suites do not run, and the commit already carries
+    # this check from the merge-group run that passed it.
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -820,7 +843,7 @@ jobs:
   # Also runs vault-new-key: real passkey ceremonies, with a virtual authenticator.
   test-e2e-chat:
     name: Browser suite (chat)
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -883,7 +906,7 @@ jobs:
 
   test-frontend:
     name: Frontend tests (${{ matrix.shard }}/2)
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
