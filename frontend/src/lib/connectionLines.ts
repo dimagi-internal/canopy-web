@@ -26,6 +26,12 @@ function googleWords(m: string, path: string): LineWords {
     if (/^sheets\/[^/]+(\/values:batchGet)?$/.test(path)) return { words: 'Read spreadsheets' }
     if (/^docs\/[^/]+$/.test(path)) return { words: 'Read documents' }
   }
+  if (m === 'POST') {
+    if (path === 'gmail/drafts') return { words: 'Write Gmail drafts (never send)' }
+    if (/^sheets\/[^/]+(\/values:batchUpdate|\/values\/[^/]+:append|:batchUpdate)$/.test(path)) return { words: 'Change spreadsheets' }
+    if (/^docs\/[^/]+:batchUpdate$/.test(path)) return { words: 'Change documents' }
+    if (path === 'files') return { words: 'Create files in Drive' }
+  }
   if (m === 'GET' && path === 'files') return { words: 'List files in Drive' }
   if (m === 'GET' && /^files\/[^/]+$/.test(path)) return { words: 'Read file details in Drive' }
   if (m === 'GET' && /^files\/[^/]+\/listLabels$/.test(path)) return { words: "Read files' labels in Drive" }

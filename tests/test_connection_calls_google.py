@@ -92,7 +92,6 @@ def test_refuses_everything_outside_the_drive_list(path):
 
 
 @pytest.mark.parametrize("method,path", [
-    ("POST", "files"),  # create
     ("PATCH", f"files/{FILE}"),  # rename, move
     ("DELETE", f"files/{FILE}"),
     ("POST", f"files/{FILE}"),

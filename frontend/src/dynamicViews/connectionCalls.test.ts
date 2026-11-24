@@ -263,6 +263,17 @@ describe('the same read again', () => {
   })
 })
 
+describe('Google custom methods', () => {
+  const GOOGLE = [{ provider: 'google', as: 'viewer', reads: [], writes: [{ method: 'POST', path: 'sheets/*/values/*:append' }] }]
+  it("a `*:verb` line covers a segment ending in that verb, and only that verb", async () => {
+    const { calls, client } = setup({ active: true, ctx: { declared: GOOGLE } })
+    await calls.handle({ provider: 'google', method: 'POST', path: "sheets/S/values/'Pathway Types'!A:D:append", body: { values: [] } })
+    expect(client.request).toHaveBeenCalledTimes(1)
+    await expect(calls.handle({ provider: 'google', method: 'POST', path: 'sheets/S/values/A1:clear' })).rejects.toThrow("didn't declare")
+    await expect(calls.handle({ provider: 'google', method: 'POST', path: 'sheets/S/values/:append' })).rejects.toThrow("didn't declare")
+  })
+})
+
 describe('bulk calls', () => {
   it("a query's next page is covered by the query and needs no click", async () => {
     const { calls, client } = setup({ active: false })

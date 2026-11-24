@@ -62,11 +62,15 @@ class GoogleProvider(Provider):
         f"{_SCOPE}calendar.readonly": "Read calendars",
         # An agent reading a meeting transcript's Doc in a turn, on a connection the person lent it; and a
         # screen reading the viewer's Sheets and Docs (`calls.GOOGLE_RULES`), which both APIs accept it for.
-        # (No separate spreadsheets/documents scopes: every choice at once must fit `Connection.scopes`.)
         f"{_SCOPE}drive.readonly": "Read files in Drive",
         # A screen listing a folder tree and changing files' labels as the viewer (`calls.GOOGLE_RULES`).
         f"{_SCOPE}drive.metadata": "See and change file details and labels in Drive (not contents)",
         f"{_SCOPE}calendar.events": "Edit calendar events",
+        # The Sales app's writes from screens (`calls.GOOGLE_RULES`): Sheets values (Motions, the Email
+        # Logger's reconcile, Coach, snippets) and an outreach Doc made and filled (Compose).
+        f"{_SCOPE}spreadsheets": "Read and change spreadsheets",
+        f"{_SCOPE}documents": "Read and change documents",
+        f"{_SCOPE}drive.file": "Create files in Drive (and use only those)",
     }
     rotates_refresh_token = False
     # Revoking at Google ends every token of that account on this OAuth client, so

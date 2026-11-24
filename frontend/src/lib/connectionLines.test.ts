@@ -70,7 +70,13 @@ describe('Gmail, Calendar, Sheets and Docs lines', () => {
     [{ method: 'GET', path: 'sheets/*' }, 'Read spreadsheets'],
     [{ method: 'GET', path: 'sheets/*/values:batchGet' }, 'Read spreadsheets'],
     [{ method: 'GET', path: 'docs/*' }, 'Read documents'],
-    [{ method: 'POST', path: 'gmail/drafts' }, 'Other Google access: POST gmail/drafts'],
+    [{ method: 'POST', path: 'gmail/drafts' }, 'Write Gmail drafts (never send)'],
+    [{ method: 'POST', path: 'sheets/*/values:batchUpdate' }, 'Change spreadsheets'],
+    [{ method: 'POST', path: 'sheets/*/values/*:append' }, 'Change spreadsheets'],
+    [{ method: 'POST', path: 'sheets/*:batchUpdate' }, 'Change spreadsheets'],
+    [{ method: 'POST', path: 'docs/*:batchUpdate' }, 'Change documents'],
+    [{ method: 'POST', path: 'files' }, 'Create files in Drive'],
+    [{ method: 'POST', path: 'gmail/messages/send' }, 'Other Google access: POST gmail/messages/send'],
   ])('%j reads as %s', (line, text) => {
     expect(describeLine(line, 'you', 'google')).toBe(text)
   })
