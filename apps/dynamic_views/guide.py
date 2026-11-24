@@ -226,6 +226,18 @@ GOOGLE DRIVE CALLS
     "reads": [{"method": "GET", "path": "files"}, {"method": "GET", "path": "files/*"},
               {"method": "GET", "path": "files/*/listLabels"}],
     "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
+- Gmail, Calendar, Sheets and Docs, reads only, on the same account: the path's first segment names
+  the API and the rest is under its root.
+    gmail/profile, gmail/messages (q, maxResults, pageToken, labelIds, includeSpamTrash, fields),
+    gmail/messages/<id>, gmail/threads/<id> (format, metadataHeaders, fields) — the viewer's mailbox
+    calendar/calendars/primary, calendar/calendars/primary/events (q, timeMin, timeMax, singleEvents,
+    orderBy, maxResults, pageToken, timeZone, showDeleted, updatedMin, iCalUID, fields)
+    sheets/<id> (fields), sheets/<id>/values:batchGet (ranges — repeat it as a list —, majorDimension,
+    valueRenderOption, dateTimeRenderOption, fields)
+    docs/<id> (fields, suggestionsViewMode)
+  Declare each as a read with * for the id (gmail/messages/*, sheets/*/values:batchGet). The
+  workspace's Google app must ask for each one's read scope (Read mail, Read calendars, Read
+  spreadsheets, Read documents).
 - It never uses a stored Google connection: only an hour of access the viewer grants for their own
   screens. Without one (or once it ends) the call rejects with code "not_connected" (or
   "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url) in
