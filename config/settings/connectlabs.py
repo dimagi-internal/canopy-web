@@ -74,10 +74,7 @@ CSRF_TRUSTED_ORIGINS = ["https://canopy.dimagi.com", "https://labs.connect.dimag
 STATIC_URL = "/static/"
 
 # Shared RDS (a dedicated canopy_web database on labs-jj-postgres).
-# One psycopg connection pool per process (config/db_pool.py).
-from config.db_pool import apply as _pooled  # noqa: E402
-
-DATABASES = _pooled({"default": env.db("DATABASE_URL")}, env)
+DATABASES = {"default": env.db("DATABASE_URL")}
 
 # Shared ElastiCache Redis. canopy uses a dedicated DB index (REDIS_URL ends in
 # /1) so its keyspace doesn't collide with ace/connect-labs. The Channels layer
