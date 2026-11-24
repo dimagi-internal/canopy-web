@@ -261,7 +261,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+      - uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
 
       # The Dockerfile's base images come from public.ecr.aws. Pulled anonymously
       # they share a per-IP data quota with every other GitHub-hosted runner, and
@@ -271,7 +271,7 @@ jobs:
       # (deploy/aws/deploy_roles.py `PublicEcrLoginTakesNoResource`, applied by
       # hand), the build falls back to today's anonymous pull rather than stopping.
       - name: Log in to public ECR (higher pull limit)
-        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+        uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
         continue-on-error: true
         with:
           registry-type: public
