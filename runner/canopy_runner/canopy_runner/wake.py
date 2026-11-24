@@ -2,10 +2,13 @@
 
 A daemon thread holds a socket to canopy-web's runner control channel
 (/ws/runner/{id}/) and sets `event` on every `wake` frame, so the poll loop can
-claim IMMEDIATELY instead of waiting out poll_seconds. Deliberately additive: it
-does NOT claim, heartbeat, or execute — the existing loop still owns all of that
-(and remains the fallback). A wake we miss (socket down, no websocket-client
-installed) only costs latency, never correctness — the loop's timeout still fires.
+claim IMMEDIATELY instead of waiting out poll_seconds. It does NOT claim or
+execute — the loop owns that (and remains the fallback). The loop may send its
+heartbeat through it (`send_json`); the `heartbeat.ack` lands in `last_ack`. Every
+frame's `v` (the runner's sync version) and every doorbell reach `sync_box`
+(runner_sync.py), so the loop reads `/sync` when there is something to read. A wake
+we miss (socket down, no websocket-client installed) only costs latency, never
+correctness — the loop's timeout still fires.
 
 Kept stdlib-friendly: the one dependency (websocket-client) is imported lazily, so
 the runner still starts (poll-only) if it isn't installed.
@@ -30,6 +33,11 @@ def jittered(seconds: float) -> float:
 logger = logging.getLogger(__name__)
 
 
+#: Frames that ring for something `/sync` does not hold: a queued turn (the claim),
+#: a mailbox (the inbox), a release (the updater).
+NOT_SYNC_DOORBELLS = frozenset({"wake", "check_inbox", "update_available"})
+
+
 def ws_url(base_url: str, runner_id: str) -> str:
     b = base_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1).rstrip("/")
     return f"{b}/ws/runner/{runner_id}/"
@@ -50,6 +58,15 @@ class WakeListener:
         # True while the socket is up. The poll loop only backs off when idle if
         # this holds: without the channel, the poll IS the only way work arrives.
         self.connected = False
+        # runner_sync.SyncBox, set by the loop: told each `v` and each doorbell.
+        self.sync_box = None
+        # Every `wake` frame bumps it, so the loop can tell a wake from its own timeout.
+        self.wakes = 0
+        # The newest `heartbeat.ack` and how many have arrived.
+        self.last_ack: dict | None = None
+        self.acks = 0
+        self._ws = None
+        self._send_lock = threading.Lock()
 
     def _handle(self, raw: str) -> None:
         """Set the wake event on a `wake` frame; route other control frames (cancel,
@@ -58,10 +75,35 @@ class WakeListener:
             msg = json.loads(raw)
         except (ValueError, TypeError):
             return
+        if not isinstance(msg, dict):
+            return
+        box = self.sync_box
+        if box is not None and "v" in msg:
+            box.see(msg.get("v"))
+        if msg.get("type") == "heartbeat.ack":
+            self.last_ack = msg
+            self.acks += 1
+            return
+        if box is not None and msg.get("type") and msg.get("type") not in NOT_SYNC_DOORBELLS:
+            box.nudge()  # a doorbell: the rows it rang for are on `/sync`
         if msg.get("type") == "wake":
+            self.wakes += 1
             self.event.set()
         elif self.on_control is not None and msg.get("type"):
             self.on_control(msg)
+
+    def send_json(self, msg: dict) -> bool:
+        """Send one frame on the socket; False when it is down or the send failed."""
+        ws = self._ws
+        if ws is None or not self.connected:
+            return False
+        try:
+            with self._send_lock:
+                ws.send(json.dumps(msg))
+            return True
+        except Exception:  # noqa: BLE001 — the reader notices a dead socket and reopens
+            logger.debug("control socket send failed", exc_info=True)
+            return False
 
     def start(self) -> bool:
         """Begin listening. Returns False (poll-only) if websocket-client is absent."""
@@ -118,13 +160,17 @@ class WakeListener:
                 self._stop.wait(jittered(15))
                 continue
             logger.info("wake listener connected: %s", self._url)
+            self._ws = ws
             self.connected = True
+            if self.sync_box is not None:
+                self.sync_box.nudge()  # frames sent while it was down are lost: read /sync
             try:
                 self._serve(ws, websocket)
             except Exception as exc:  # noqa: BLE001 — a socket error is recoverable
                 logger.debug("wake ws loop error (%s); reconnecting", exc)
             finally:
                 self.connected = False
+                self._ws = None
                 try:
                     ws.close()
                 except Exception:  # noqa: BLE001

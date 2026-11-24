@@ -165,5 +165,7 @@ def _fresh_heartbeat_state():
     starts with none sent, so its first tick beats."""
     from canopy_runner import main
     main._reset_heartbeat_state()
+    main._control = None
     yield
     main._reset_heartbeat_state()
+    main._control = None

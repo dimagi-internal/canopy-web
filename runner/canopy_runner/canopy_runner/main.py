@@ -60,9 +60,25 @@ _cdp_down_signalled = False
 
 
 #: The last heartbeat this loop sent: when, what it said that matters (its key),
-#: and the reply. `run_once` beats every `heartbeat_seconds`, or at once when that
-#: state changes, and reuses the reply in between.
-_beat: dict = {"at": None, "key": None, "reply": {}}
+#: the reply, when the last REST beat went (`rest_at`) and how many socket acks were
+#: folded into the reply (`acks`). `run_once` beats on its cadence (`_beat_every`),
+#: or at once when that state changes, and reuses the reply in between.
+_beat: dict = {"at": None, "key": None, "reply": {}, "rest_at": None, "acks": 0}
+
+#: The control socket (wake.WakeListener) once `main` starts it; None in a one-shot run.
+_control = None
+
+#: With `/sync` and no socket, the REST heartbeat carries `v`, so it beats this often.
+REST_ALONE_HEARTBEAT_SECONDS = 15.0
+#: While the socket carries the beat, a REST beat this often still refreshes the
+#: reply fields the socket's ack does not hold (status, remedy, engine, private…).
+REST_REFRESH_SECONDS = 300.0
+#: The socket's `heartbeat.ack` fields folded into the reused reply.
+ACK_FIELDS = ("paused", "paused_note", "refresh_pending", "cancel_turn_ids")
+#: While `/sync` and the socket are up, the claim runs on a `wake` frame, after a
+#: tick that ran a turn, and at least this often: the safety claim.
+SAFETY_CLAIM_SECONDS = 60.0
+_claim: dict = {"at": None, "wakes": 0, "last": ""}
 
 
 def _frozen(value):
@@ -73,25 +89,78 @@ def _frozen(value):
 
 
 def _reset_heartbeat_state() -> None:
-    """Forget the last heartbeat, so the next tick sends one (and between tests)."""
-    _beat.update(at=None, key=None, reply={})
+    """Forget the last heartbeat and claim, so the next tick does both (and between tests)."""
+    _beat.update(at=None, key=None, reply={}, rest_at=None, acks=0)
+    _claim.update(at=None, wakes=0, last="")
 
 
-def _beat_due(cfg: Config, key, now: float) -> bool:
-    """Send a heartbeat this tick? When none was sent yet, `heartbeat_seconds` have
-    passed, or what it reports changed (health, readiness, the turns it renews, the
-    repos and mailboxes it offers). The server reads a box as online for
-    HEARTBEAT_ONLINE_WINDOW (90s) after a beat, so the cadence stays well inside it."""
+def _syncing(client) -> bool:
+    box = getattr(client, "sync_box", None)
+    return box is not None and box.active
+
+
+def _socket_up() -> bool:
+    return _control is not None and bool(getattr(_control, "connected", False))
+
+
+def _beat_every(cfg: Config, client) -> float:
+    """The heartbeat cadence: `heartbeat_seconds` (30) while the socket is up or the
+    server has no `/sync`; REST_ALONE_HEARTBEAT_SECONDS (15) when the REST beat is
+    the only thing carrying `v`. The server reads a box as online for
+    HEARTBEAT_ONLINE_WINDOW (90s) after a beat, so both stay well inside it."""
     every = float(cfg.heartbeat_seconds or 0)
-    return (_beat["at"] is None or key != _beat["key"] or every <= 0
-            or now - _beat["at"] >= every)
+    if _syncing(client) and not _socket_up():
+        every = min(every, REST_ALONE_HEARTBEAT_SECONDS) if every > 0 else every
+    return every
 
 
-def _beaten(key, reply, now: float) -> dict:
-    """Record a heartbeat just sent; returns its reply."""
+def _send_beat(cfg: Config, client, key, now: float, active: list[str], **fields) -> tuple[dict, bool]:
+    """Send a heartbeat if one is due — over the control socket while it is up and the
+    server reads `/sync`, else over REST — and return (the reply to act on, whether
+    it is fresh). Due when none was sent yet, the cadence passed, or what it reports
+    changed (health, readiness, the turns it renews, the repos and mailboxes it
+    offers). Between beats the reply is reused; a socket ack that arrived since is
+    folded into it, and counts as fresh."""
+    fresh = False
+    acks = int(getattr(_control, "acks", 0) or 0) if _control is not None else 0
+    if acks != _beat["acks"]:
+        _beat["acks"] = acks
+        ack = getattr(_control, "last_ack", None) or {}
+        _beat["reply"].update({f: ack[f] for f in ACK_FIELDS if f in ack})
+        fresh = True
+    every = _beat_every(cfg, client)
+    if not (_beat["at"] is None or key != _beat["key"] or every <= 0 or now - _beat["at"] >= every):
+        return _beat["reply"], fresh
+    if (_syncing(client) and _socket_up() and _beat["rest_at"] is not None
+            and now - _beat["rest_at"] < REST_REFRESH_SECONDS):
+        if _control.send_json({"action": "heartbeat", **client.heartbeat_body(active, **fields)}):
+            _beat.update(at=now, key=key)
+            return _beat["reply"], fresh
+    reply = client.heartbeat(cfg.runner_id, active, **fields)
     reply = reply if isinstance(reply, dict) else {}
-    _beat.update(at=now, key=key, reply=reply)
-    return reply
+    _beat.update(at=now, key=key, reply=reply, rest_at=now)
+    return reply, True
+
+
+def _claim_due(client, now: float) -> bool:
+    """Claim this tick? Always, unless the server reads `/sync` and the socket is up:
+    then on a `wake` frame, after a tick that ran a turn (more may be queued), and
+    every SAFETY_CLAIM_SECONDS, which catches a wake the socket dropped."""
+    if not (_syncing(client) and _socket_up()):
+        return True
+    wakes = int(getattr(_control, "wakes", 0) or 0)
+    return (_claim["at"] is None or wakes != _claim["wakes"] or _claim["last"] != "idle"
+            or now - _claim["at"] >= SAFETY_CLAIM_SECONDS)
+
+
+def _sync_now(cfg: Config, client) -> None:
+    """Read `/sync` when it moved (runner_sync.py); the stops it names are honoured
+    at once, and the drains read the rest."""
+    box = getattr(client, "sync_box", None)
+    if box is None:
+        return
+    if box.refresh(client, cfg.runner_id):
+        honour_stops({"cancel_turn_ids": box.take("cancel_turn_ids")})
 
 
 def _reset_cdp_health_state() -> None:
@@ -658,12 +727,9 @@ def run_once(cfg: Config, client: Client) -> str:
                # `checked_at` moves every tick; what was checked is the change.
                _frozen({k: v for k, v in health.items() if k != "checked_at"}
                        if isinstance(health, dict) else health))
-        if _beat_due(cfg, key, now):
-            me = _beaten(key, client.heartbeat(
-                cfg.runner_id, active, host=host, ready=_ready, ready_note=_rnote,
-                projects=projects, mailboxes_readable=readable, health=health), now)
-        else:
-            me = _beat["reply"]
+        me, fresh = _send_beat(cfg, client, key, now, active, host=host, ready=_ready,
+                               ready_note=_rnote, projects=projects,
+                               mailboxes_readable=readable, health=health)
     else:
         _cdp_down_ticks += 1
         # A degraded heartbeat — the machine-readable surface signal the control plane +
@@ -671,17 +737,13 @@ def run_once(cfg: Config, client: Client) -> str:
         # then on the heartbeat cadence, like a healthy one.
         active, readable = _active_turn_ids(), mailbox_probe.readable()
         key = ("degraded", tuple(sorted(active)), _frozen(readable))
-        if _beat_due(cfg, key, now):
-            me = _beaten(key, client.heartbeat(
-                cfg.runner_id, active, degraded=True,
-                note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
-                host=host, ready=False,
-                ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
-                # The inbox still runs with CDP down, so what this box
-                # can read is still what the doorbell should know.
-                mailboxes_readable=readable), now)
-        else:
-            me = _beat["reply"]
+        me, fresh = _send_beat(cfg, client, key, now, active, degraded=True,
+                               note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
+                               host=host, ready=False,
+                               ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
+                               # The inbox still runs with CDP down, so what this box
+                               # can read is still what the doorbell should know.
+                               mailboxes_readable=readable)
         # ...and ONE loud WARNING after sustained downtime (not per tick), for the human log.
         if _cdp_down_ticks >= CDP_DOWN_SIGNAL_TICKS and not _cdp_down_signalled:
             logger.warning(
@@ -695,7 +757,7 @@ def run_once(cfg: Config, client: Client) -> str:
     # the `cancel` frame, which a socket that was reconnecting never delivered.
     # Same set the frame feeds, so the executor/bridge acts on it the same way.
     # Only from a fresh reply: a reused one's stops were taken when it arrived.
-    if _beat["at"] == now:
+    if fresh:
         honour_stops(me)
 
     # The session runtime canopy-web wants (Supervisor → this runner → Session
@@ -766,6 +828,9 @@ def _report_sweep(cfg: Config, client: Client) -> None:
     # filed as a session of its own.
     _step("deferred records", execute.retry_unrecorded, cfg, client)
     _step("session report", sessions.maybe_report_sessions, cfg, client)
+    # The drains below read the newest `/sync` answer when canopy-web serves it
+    # (Client.sync_*), and their own routes when it does not.
+    _step("sync", _sync_now, cfg, client)
     _step("stream sync", streams.sync_session_streams, cfg, client)
     _step("menu answers", streams.drain_menu_answers, cfg, client)
     _step("closes", streams.drain_closes, cfg, client)
@@ -836,7 +901,13 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
         # logged in" back. The server refuses this box too (`Runner.signed_out`),
         # but only once a heartbeat has carried the mark; this closes the gap.
         return "signed_out"
-    return _claim_and_execute(cfg, client, paused)
+    now = time.monotonic()
+    if not _claim_due(client, now):
+        return "idle"
+    _claim.update(at=now, wakes=int(getattr(_control, "wakes", 0) or 0))
+    result = _claim_and_execute(cfg, client, paused)
+    _claim["last"] = result
+    return result
 
 
 def drain_one(cfg: Config, client: Client) -> str:
@@ -1651,7 +1722,15 @@ def main() -> None:
 
     waker = WakeListener(cfg.base_url, credential, cfg.runner_id)
     waker.on_control = make_control_handler(cfg, waker, client)
+    # The runner's work through `/sync` (runner_sync.py): the client's drains read
+    # its answer, and the socket tells it every `v` and doorbell.
+    from .runner_sync import SyncBox
+
+    client.sync_box = waker.sync_box = SyncBox()
+    global _control
     wake_on = waker.start()
+    if wake_on:
+        _control = waker
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")
     hooks.start_hook_listener(cfg, client)
