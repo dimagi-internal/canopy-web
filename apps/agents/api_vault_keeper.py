@@ -16,7 +16,7 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.harness.runner_queries import runner_or_404
 
-from .credentials import accounts, delegations, vault_keeper, vault_members, zk
+from .credentials import accounts, delegations, licenses, vault_keeper, vault_members, zk
 from .models import Agent, Vault
 from .route_refusals import zk_problem
 from .schemas import (
@@ -44,7 +44,9 @@ def get_vault_keeper_work(request: HttpRequest, runner_id: uuid.UUID) -> VaultKe
     The box decides whom to trust; canopy-web only lists."""
 
     runner = runner_or_404(request, runner_id)
-    return VaultKeeperOut(agents=vault_keeper.work(runner), delegated=accounts.keeper_work(runner))
+    # Every vault and delegated entry asks the same owners' licenses of their boxes.
+    with licenses.read_once():
+        return VaultKeeperOut(agents=vault_keeper.work(runner), delegated=accounts.keeper_work(runner))
 
 
 @router.put("/runners/{runner_id}/vault-keeper/{slug}/delegated/{name}", response=DelegatedResealOut,
