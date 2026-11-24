@@ -72,9 +72,10 @@ RUNNERS_FILE = os.environ.get("CANOPY_RUNNERS_FILE", "/etc/canopy-runner/runners
 UNIT_PATH = pathlib.Path(os.environ.get("CANOPY_SYSTEMD_DIR", "/etc/systemd/system")) / "canopy-aws-broker.service"
 #: name -> role NAME in this machine's account (or a full role ARN). The only roles
 #: this broker will ever assume. Override (JSON) with CANOPY_AWS_BROKER_ROLES.
-#: Read-only roles only: `labs-readwrite` is canopy-web's alone (apps/agents/api_aws.py),
-#: because this broker cannot verify which agent a runner says it is.
-DEFAULT_ROLES = {"labs-read": "labs-jj-observe-readonly", "labs-observe": "labs-jj-observe-readonly"}
+#: EMPTY: every agent AWS role is fenced (labs-read included, 2026-11-24) and canopy-web
+#: vends them all (apps/agents/api_aws.py). This broker cannot verify which agent a runner
+#: says it is, so it cannot honour an approval; it answers every role with an error.
+DEFAULT_ROLES: dict[str, str] = {}
 SESSION_SECONDS = 3600
 REFRESH_BEFORE = 300
 MAX_CONNECTIONS = 16
