@@ -212,7 +212,12 @@ def embed_self(request: HttpRequest) -> EmbedSelfOut:
     `/api/embed/agents`, which answers for the caller and is the only place
     that intersects the app's allowlist with the viewer's memberships.
     """
-    app = _self_app()
+    # Off for a session a token made (`is_machine`): the Canopy Runner app's panel
+    # signs in that way, from the runner's token. `/api/embed/token` refuses such a
+    # session by design, so offering the button there only led to a 403 on click.
+    from apps.common.views_debug import is_machine  # noqa: PLC0415 — loads the session store
+
+    app = None if is_machine(request) else _self_app()
     return EmbedSelfOut(
         enabled=app is not None,
         app=app.name if app else "",
