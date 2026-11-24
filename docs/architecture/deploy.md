@@ -109,9 +109,9 @@ A grant canopy needs goes into the role stack, or into the owning stack's `TaskR
 
 ## CI and merging
 
-CI (`.github/workflows/ci.yml`) runs on every PR, in the merge queue, and on push to `main`. Required checks: **Backend tests** (which also verifies `frontend/src/api/generated.ts` is fresh and the `dimagi-canopy` SDK version bump) and **Frontend build** (which also enforces the `canopy-ui`/`canopy-client` version bump).
+CI (`.github/workflows/ci.yml`) runs on every PR and in the merge queue; a push to `main` runs only `Backend pytest (PostgreSQL)`, to save the migrated test DB to main's cache (main moves only through the queue, so the pushed commit is the one the queue already passed). Required checks: **Backend tests** (which also verifies `frontend/src/api/generated.ts` is fresh and the `dimagi-canopy` SDK version bump) and **Frontend build** (which also enforces the `canopy-ui`/`canopy-client` version bump).
 
-The full suites run once, in the merge queue, sharded so no job sets the wait alone (`.github/workflows/ci.yml` lists the jobs). On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the import ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
+The full suites run once, in the merge queue, sharded so no job sets the wait alone (`.github/workflows/ci.yml` lists the jobs). On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the source-walking ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed; the design-token ratchet always). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
 
 ### Every PR: arm auto-merge, no strategy flag
 
