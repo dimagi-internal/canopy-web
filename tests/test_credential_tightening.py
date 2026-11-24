@@ -171,7 +171,7 @@ def test_a_pat_cannot_mint_the_panels_token_either(user):
 def test_a_token_minted_session_is_not_offered_the_panel(user):
     """The Runner app's panel signs in through `/api/debug/mint-session/`. That
     session can never mint the panel's token, so the button must not show there:
-    it used to, and every click was a 403."""
+    shown, every click would be a 403."""
     _shown_app()
     minted = bearer_client(PersonalToken.create_for_user(user=user, label="runner")[0]).post(
         "/api/debug/mint-session/").json()
