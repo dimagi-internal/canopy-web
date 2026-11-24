@@ -72,13 +72,24 @@ class Box:
                                f'echo "/dev/root 100 10 90 $(cat "{self.disk_pct}")% /"\n')
         self.legacy_busy = tmp_path / "legacy-busy"
         self._write_stub("pgrep", f'[ -e "{self.legacy_busy}" ]\n')
+        # gcloud: a fake installer, so no test ever runs apt (a CI runner has
+        # passwordless sudo and would really install it).
+        self.gcloud = tmp_path / "usr-bin" / "gcloud"
+        self.gcloud_log = tmp_path / "gcloud-install.log"
+        self.gcloud_fails = tmp_path / "gcloud-fails"
+        self._write_stub("fake-gcloud-install",
+                         f'echo install >> "{self.gcloud_log}"\n'
+                         f'[ -e "{self.gcloud_fails}" ] && exit 1\n'
+                         f'mkdir -p "{self.gcloud.parent}" && printf "#!/bin/sh\\n" > "{self.gcloud}" '
+                         f'&& chmod +x "{self.gcloud}"\n')
         self.seed_repo(GOOD_RUNNER)
 
     def env(self) -> dict:
         """What every run sets beside its own variables: the root-level files go here."""
         return {"NEEDRESTART_CONF": str(self.needrestart_conf), "PRIV_CMD": "",
                 "TMPFILES_CONF": str(self.tmpfiles_conf), "LEGACY_HOME": str(self.legacy_home),
-                "DISK_USAGE_ROOT": str(self.root)}
+                "DISK_USAGE_ROOT": str(self.root), "GCLOUD_PATH": str(self.gcloud),
+                "GCLOUD_INSTALLER": str(self.bin / "fake-gcloud-install")}
 
     def _write_stub(self, name: str, body: str) -> None:
         path = self.bin / name
@@ -769,6 +780,58 @@ def test_a_failed_write_never_fails_the_tick(box):
         box.needrestart_conf.parent.chmod(0o755)
     assert out.returncode == 0
     assert "could not write" in out.stdout + out.stderr
+
+
+# --- gcloud -----------------------------------------------------------------
+# An agent (gshubdesk) reads a Google Cloud project with its own service account,
+# so every box carries the gcloud binary. Root's tick is the one place that can
+# install it on a box of several runners, where no runner user has sudo.
+def _gcloud_installs(box) -> int:
+    return len(box.gcloud_log.read_text().splitlines()) if box.gcloud_log.exists() else 0
+
+
+def test_a_tick_installs_gcloud_when_the_box_lacks_it(box):
+    out = box.run()
+    assert out.returncode == 0
+    assert box.gcloud.exists()
+    assert "gcloud installed" in out.stdout + out.stderr
+
+
+def test_a_box_of_runners_gets_gcloud_too(runners_box):
+    assert runners_box.run().returncode == 0
+    assert runners_box.gcloud.exists()
+
+
+def test_gcloud_is_installed_once(box):
+    box.run()
+    box.run()
+    assert _gcloud_installs(box) == 1
+
+
+def test_a_full_disk_skips_the_install(box):
+    box.disk_pct.write_text("85")
+    out = box.run()
+    assert out.returncode == 0
+    assert _gcloud_installs(box) == 0
+    assert "85% full" in out.stdout + out.stderr
+
+
+def test_a_failed_gcloud_install_never_fails_the_tick(box):
+    box.gcloud_fails.write_text("")
+    out = box.run()
+    assert out.returncode == 0
+    assert "could not install gcloud" in out.stdout + out.stderr
+
+
+def test_check_mode_installs_no_gcloud(box):
+    box.run("--check")
+    assert _gcloud_installs(box) == 0
+
+
+def test_new_boxes_get_gcloud_from_the_template():
+    text = (SCRIPT.parent / "runner.cfn.yaml").read_text()
+    assert "apt-get install -y google-cloud-cli" in text
+    assert "apt-get install -y -qq google-cloud-cli" in SCRIPT.read_text()
 
 
 def test_new_boxes_get_the_same_rule_from_the_template():
