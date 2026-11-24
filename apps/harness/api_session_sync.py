@@ -231,7 +231,7 @@ def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportS
     skipped: list = []
     count = session_sync.replace_reported_sessions(
         runner, ws, payload.sessions, payload.archived, complete=payload.complete,
-        skipped=skipped,
+        skipped=skipped, digest=session_sync.report_digest(payload.model_dump_json()),
     )
     return SessionReportOut(count=count, skipped=len(skipped))
 

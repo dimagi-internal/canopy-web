@@ -153,7 +153,8 @@ def _on_sessions_reported(sender, runner, **kwargs):
     their supervisor group. One broadcast reaches every device the user has open
     (phone + desktop + menubar) instead of each polling. Already post-commit (the
     sender fires inside its own on_commit), so publish directly."""
-    if not runner.owner_id:
+    # A report identical to the last (`changed=False`) changes nothing a viewer sees.
+    if not runner.owner_id or not kwargs.get("changed", True):
         return
     # Local imports keep this module import-cycle-free and the serialization co-located
     # with where the GET /sessions endpoint reads the same rows.

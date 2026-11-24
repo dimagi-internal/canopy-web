@@ -10,12 +10,15 @@ turn's lifecycle (enqueue, heartbeat, finish, cancel).
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import logging
 import re
+import time
 import uuid
 from dataclasses import dataclass
 
 from canopy_transcript import BLOCK_STRIDE, contract
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import F, Max, Q
 from django.utils import timezone
@@ -797,9 +800,79 @@ def _unlinked_chat_binding(runner: Runner, s, project: str):
     return binding
 
 
+#: The longest an unchanged report may stand in for the full reconcile below. A
+#: report identical to the last one only restamps liveness (`_replay_unchanged`);
+#: what the reconcile corrects from the SERVER's side (a session archived or moved
+#: by someone else, a repo newly opted in, a title to repair, a stale menu) waits
+#: at most this long.
+REPORT_RECONCILE_S = 300
+
+
+def report_digest(body: str) -> str:
+    """The fingerprint `replace_reported_sessions(digest=)` compares reports by: a
+    hash of the report exactly as the runner sent it (sessions, archived, complete)."""
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def _report_memo_key(runner) -> str:
+    return f"harness:session-report:{runner.pk}"
+
+
+def _replay_unchanged(runner: Runner, digest: str, skipped: list | None) -> int | None:
+    """The cheap path for a report identical to the last one this runner sent, while
+    that one's reconcile still stands: stamp liveness on the same bindings, clear a
+    close asked of a session that is not open, and say a report arrived. No row
+    locks and no rebuild. None when the full path must run: a different report, no
+    memo, the memo expired (`REPORT_RECONCILE_S`, or the moment a session's derived
+    running state flips), or a binding it named no longer being this runner's."""
+    try:
+        memo = cache.get(_report_memo_key(runner))
+    except Exception:  # noqa: BLE001 — a cache outage costs the shortcut, never liveness
+        logger.warning("session-report memo unreadable for runner %s", runner.pk, exc_info=True)
+        return None
+    if not memo or memo.get("digest") != digest or time.time() >= memo.get("until", 0):
+        return None
+    now = timezone.now()
+    ids = memo["ids"]
+    if ids and (RunnerBinding.objects.filter(pk__in=ids, runner=runner)
+                .update(live_seen_at=now, reported_at=now)) != len(ids):
+        _forget_report(runner)
+        return None
+    Runner.objects.filter(pk=runner.pk).update(sessions_reported_at=now)
+    RunnerBinding.objects.filter(runner=runner, close_requested=True).exclude(
+        id__in=ids).update(close_requested=False)
+    if skipped is not None:
+        skipped.extend(memo["skipped"])
+
+    def _fire_reported():
+        from apps.harness.signals import sessions_reported
+
+        sessions_reported.send(sender=Runner, runner=runner, changed=False)
+
+    transaction.on_commit(_fire_reported)
+    return memo["count"]
+
+
+def _remember_report(runner: Runner, digest: str, *, ids: list, count: int, skipped: list,
+                     until: float) -> None:
+    try:
+        cache.set(_report_memo_key(runner),
+                  {"digest": digest, "ids": ids, "count": count, "skipped": skipped, "until": until},
+                  timeout=REPORT_RECONCILE_S)
+    except Exception:  # noqa: BLE001
+        logger.warning("session-report memo unwritable for runner %s", runner.pk, exc_info=True)
+
+
+def _forget_report(runner: Runner) -> None:
+    try:
+        cache.delete(_report_memo_key(runner))
+    except Exception:  # noqa: BLE001
+        logger.warning("session-report memo undeletable for runner %s", runner.pk, exc_info=True)
+
+
 def replace_reported_sessions(
     runner: Runner, workspace, sessions: list, archived: list[str] | None = None,
-    complete: bool = False, skipped: list | None = None,
+    complete: bool = False, skipped: list | None = None, digest: str = "",
 ) -> int:
     """Upsert a durable Session(origin=runner) + RunnerBinding per reported
     session. Sessions that fell off the report keep their Session row but have
@@ -825,6 +898,18 @@ def replace_reported_sessions(
     (that would orphan the agent thread's reuse lookup and fork a duplicate
     session on its next turn)."""
     from apps.canopy_sessions import transcript_read  # noqa: PLC0415 — cycle: transcript_read -> harness
+    # `digest` (the API passes it) lets a report identical to the last one skip the
+    # reconcile: see `_replay_unchanged`. Without one, every call runs in full.
+    if digest:
+        replayed = _replay_unchanged(runner, digest, skipped)
+        if replayed is not None:
+            return replayed
+        if skipped is None:
+            skipped = []
+    # The earliest moment a session's derived running state flips with no new report
+    # (`transcript_read.engine_says_running` on a blank `agent_status`): a replay of
+    # this report would miss that edge, so the memo ends there.
+    flips_at: float | None = None
     # Record that this runner PARTICIPATES in the wholesale report — the observer
     # session staleness is derived against (see Runner.sessions_reported_at and
     # canopy_sessions.staleness.unseen_q). Stamped BEFORE the early-outs and
@@ -1071,6 +1156,10 @@ def replace_reported_sessions(
             if was_running and not transcript_read.engine_says_running(binding):
                 went_quiet.append(binding.session_id)
             binding.last_interacted_at = _aware(s.last_interacted_at)
+            if (not binding.agent_status and binding.last_interacted_at
+                    and transcript_read.engine_says_running(binding)):
+                edge = (binding.last_interacted_at + transcript_read.RUNNING_WINDOW).timestamp()
+                flips_at = edge if flips_at is None else min(flips_at, edge)
             binding.live_seen_at = timezone.now()
             # The one write site. See RunnerBinding.reported_at — `close` branches
             # on this, and it is only trustworthy because record_session leaves it
@@ -1184,9 +1273,13 @@ def replace_reported_sessions(
         missing = (RunnerBinding.objects.filter(runner=runner)
                    .exclude(session_key="").exclude(id__in=touched_ids)
                    .exclude(session__status=Session.ARCHIVED))
-        missing.update(missed_reports=F("missed_reports") + 1)
+        struck = missing.update(missed_reports=F("missed_reports") + 1)
         gone = Session.objects.filter(runner_binding__in=missing.filter(missed_reports__gte=2))
         ids = list(gone.values_list("id", flat=True))
+        # A first strike needs a second complete report to land, so this one must
+        # not be replayed: the next, identical, report has to count.
+        if struck != len(ids):
+            digest = ""
         newly_closed += ids
         gone.update(status=Session.ARCHIVED)
         lifecycle.record_many(lifecycle.CLOSED, ids, by=runner,
@@ -1240,7 +1333,7 @@ def replace_reported_sessions(
     def _fire_reported():
         from apps.harness.signals import sessions_reported
 
-        sessions_reported.send(sender=Runner, runner=runner)
+        sessions_reported.send(sender=Runner, runner=runner, changed=True)
         _publish_menu_changes(menu_changes, new_asks)
         if went_quiet:
             from apps.canopy_sessions.status_feed import publish_idle  # noqa: PLC0415 — as _publish_menu_changes: realtime imports harness
@@ -1251,6 +1344,11 @@ def replace_reported_sessions(
     transaction.on_commit(_fire_reported)
     if newly_closed:
         transaction.on_commit(lambda: fire_sessions_closed(newly_closed))
+    if digest:
+        until = time.time() + REPORT_RECONCILE_S
+        _remember_report(runner, digest, ids=touched_ids, count=len(deduped),
+                         skipped=list(skipped or []),
+                         until=until if flips_at is None else min(until, flips_at))
     return len(deduped)
 
 
