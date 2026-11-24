@@ -10,6 +10,9 @@ compared by nobody: they are `apps/agents/refusals.py`'s, and Stage 4 rewrote th
 
 A difference means someone's access would change. The fix is in the resolver, never here.
 
+The walks (marked `nightly`) run every night in `.github/workflows/nightly-walks.yml`, not in the merge
+queue; the session cases below run in both.
+
 One change is on purpose: the `session_writer` rule is absent, in the resolver
 and in the reference alike. `test_being_added_to_an_admins_session_no_longer_raises_access` names the cases
 that changed.
@@ -281,6 +284,7 @@ MATRIX_SLUGS = ["m-none", "m-editors", "m-eva", "m-hal", "m-eva-confined", "m-ha
 FIXTURE_SLUGS = [row["slug"] for row in FIXTURE_ROWS]
 
 
+@pytest.mark.nightly
 @pytest.mark.parametrize("slug", MATRIX_SLUGS)
 def test_every_case_of_the_access_matrix(people, slug):
     agent = next(a for a in _matrix_agents(people) if a.slug == slug)
@@ -288,6 +292,7 @@ def test_every_case_of_the_access_matrix(people, slug):
     assert not wrong, f"{len(wrong)} of {count} differ:\n" + "\n".join(wrong[:30])
 
 
+@pytest.mark.nightly
 @pytest.mark.parametrize("slug", FIXTURE_SLUGS)
 def test_every_agent_shape_in_the_fixture(people, slug):
     agent = _fixture_agents(people, only=slug)[0]
@@ -426,6 +431,7 @@ def _facts(ctx) -> dict:
     return {"granted_by": ctx.basis, "role": ctx.standing.agent_role, "source": ctx.standing.source}
 
 
+@pytest.mark.nightly
 @pytest.mark.parametrize("slug", ["all-kinds", "m-hal", "l-use-status", "m-none"])
 def test_a_stamped_turn_keeps_its_stamp_and_reports_what_the_envelope_reports(people, slug):
     agent = next(a for a in _matrix_agents(people) if a.slug == slug)
