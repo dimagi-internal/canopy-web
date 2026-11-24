@@ -860,9 +860,9 @@ CANOPY_AWS_ROLE_SUMMARIES = env.json("CANOPY_AWS_ROLE_SUMMARIES", default={
 })
 # Fenced roles: name -> the agents that get the role with no approval. A listed role goes to
 # the agents named, and to any other agent only while it holds a grant a person approved with a
-# passkey (POST /api/agents/{slug}/aws-role-requests). Every role is fenced (Jonathan,
-# 2026-11-24): labs-read is standing only for the devops agents, Ada and Hal; the write roles
-# are request-only for every agent. labs-observe is labs-read's old name and is fenced the same.
+# passkey (POST /api/agents/{slug}/aws-role-requests). Every role is fenced: labs-read is
+# standing only for the devops agents, Ada and Hal; the write roles are request-only for
+# every agent. labs-observe is labs-read's old name and is fenced the same.
 CANOPY_AWS_ROLE_AGENTS = env.json("CANOPY_AWS_ROLE_AGENTS", default={
     "labs-read": ["ada", "hal"],
     "labs-observe": ["ada", "hal"],
