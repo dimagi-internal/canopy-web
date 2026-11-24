@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   getKeyset: vi.fn(), putKeyset: vi.fn(), getZkState: vi.fn(), enableZk: vi.fn(), addZkWraps: vi.fn(),
-  putZkValues: vi.fn(), rotateZk: vi.fn(), addZkEndorsements: vi.fn(),
+  putZkValues: vi.fn(), rotateZk: vi.fn(), addZkEndorsements: vi.fn(), addMyZkWraps: vi.fn(),
 }))
 vi.mock('@/api/vault', () => api)
 const { approveRunnerDeviceKey } = vi.hoisted(() => ({ approveRunnerDeviceKey: vi.fn() }))
@@ -201,6 +201,51 @@ describe('approve = wrap', () => {
     const [slug, items] = api.addZkEndorsements.mock.calls[0]
     expect(slug).toBe('gshubdesk')
     expect(items[0]).toMatchObject({ kind: 'device', target: device.jkt, key_jkt: device.jkt })
+  })
+
+  it('a member hands their own machine the key from their own copy, in the same touch', async () => {
+    // Nobody else is asked: the approval returns MY member wrap, my browser opens it and
+    // wraps the vault key to the machine, which then opens it with its own key.
+    const me = await principal(), device = await principal()
+    const vk = zk.randomBytes(32)
+    const myWrap = await zk.wrapEcdhEs(vk, me.publicJwk, zk.memberInfo(AGENT_ID, 1, USER))
+    const prfOut = zk.randomBytes(32)
+    const seal = await zk.sealUserKey(me.scalar, USER, 'cred-1', prfOut)
+    api.getKeyset.mockResolvedValue({ user_id: USER, exists: true, public_jwk: me.publicJwk, prf_input: 'cHJm',
+                                      seals: [seal], passkeys: [] })
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: prfOut })
+    approveRunnerDeviceKey.mockResolvedValue({ id: 'dk1', status: 'active', zk_pending_agents: [],
+      zk_vouch_agents: [{ slug: 'eva', agent_id: AGENT_ID, kv: 1, my_wrap: myWrap }],
+      ecdh_jkt: device.jkt, ecdh_public_jwk: device.publicJwk })
+    api.addZkEndorsements.mockResolvedValue({ stored: 1 })
+    api.addMyZkWraps.mockResolvedValue({ granted: 1 })
+    const out = await ops.approveAndGrant('dk1', [], vi.fn())
+    expect(out.vouched).toEqual(['eva'])
+    expect(api.addZkWraps).not.toHaveBeenCalled()          // the managers' grant is not used
+    const [slug, body] = api.addMyZkWraps.mock.calls[0]
+    expect(slug).toBe('eva')
+    expect(body.kv).toBe(1)
+    expect(body.wraps).toHaveLength(1)
+    expect(body.wraps[0]).toMatchObject({ kind: 'device', target: 'dk1' })
+    const opened = await zk.unwrapEcdhEs(body.wraps[0].wrap, device.privateKey, device.publicJwk,
+      zk.deviceInfo(AGENT_ID, 1, device.jkt))
+    expect(Array.from(opened)).toEqual(Array.from(vk))
+  })
+
+  it('without my own copy the machine is only signed for, and the keeper grants it', async () => {
+    const me = await principal(), device = await principal()
+    const prfOut = zk.randomBytes(32)
+    const seal = await zk.sealUserKey(me.scalar, USER, 'cred-1', prfOut)
+    api.getKeyset.mockResolvedValue({ user_id: USER, exists: true, public_jwk: me.publicJwk, prf_input: 'cHJm',
+                                      seals: [seal], passkeys: [] })
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: prfOut })
+    approveRunnerDeviceKey.mockResolvedValue({ id: 'dk1', status: 'active', zk_pending_agents: [],
+      zk_vouch_agents: [{ slug: 'eva', agent_id: AGENT_ID, kv: 1, my_wrap: null }],
+      ecdh_jkt: device.jkt, ecdh_public_jwk: device.publicJwk })
+    api.addZkEndorsements.mockResolvedValue({ stored: 1 })
+    const out = await ops.approveAndGrant('dk1', [], vi.fn())
+    expect(out.vouched).toEqual(['eva'])
+    expect(api.addMyZkWraps).not.toHaveBeenCalled()
   })
 
   it('a key no zero-knowledge agent waits on is just approved', async () => {

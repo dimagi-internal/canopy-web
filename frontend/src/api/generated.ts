@@ -7730,6 +7730,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/vault/zk/wraps/mine": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Give your own approved machine the vault key, from your own copy
+         * @description `{kv, wraps: [{kind: device, target, wrap}]}`: device wraps, each to a machine of
+         *     yours this agent waits on, made in your browser from your own copy of the vault key.
+         *     You must hold that copy (409 `zk_no_copy`); a machine that is not yours is 403
+         *     `zk_not_your_machine`, and one that already holds a copy is 409 `zk_not_pending`.
+         */
+        readonly post: operations["add_my_device_zk_wraps"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/vault/zk/pins": {
         readonly parameters: {
             readonly query?: never;
@@ -35632,6 +35655,15 @@ export interface components {
             readonly slug: string;
             /** Agent Id */
             readonly agent_id: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /** My Wrap */
+            readonly my_wrap?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * RunnerDeviceKeyOut
@@ -36055,6 +36087,11 @@ export interface components {
             readonly kv: number;
             /** Wraps */
             readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
+        };
+        /** ZkMyWrapsOut */
+        readonly ZkMyWrapsOut: {
+            /** Granted */
+            readonly granted: number;
         };
         /** VaultKeeperPinsIn */
         readonly VaultKeeperPinsIn: {
@@ -66942,6 +66979,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly add_my_device_zk_wraps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkWrapsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkMyWrapsOut"];
                 };
             };
         };

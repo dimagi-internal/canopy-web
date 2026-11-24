@@ -2,6 +2,7 @@
 import { approveRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { } from '@/auth/webauthn'
 import {
+  addMyZkWraps,
   addZkEndorsements,
   addZkWraps,
   fulfilSecretRequest,
@@ -14,7 +15,10 @@ import { } from '@/api/problem'
 import type { Assessment } from './trust'
 import {
   endorse,
+  memberInfo,
   sealValue,
+  unwrapEcdhEs,
+  type EcdhWrap,
   parseRecoveryCode,
   unwrapRecovery,
   type RecoveryWrap,
@@ -135,14 +139,14 @@ export async function approveAndGrant(keyId: string, agents: string[], prompt: U
   return { key, granted, failed, vouched }
 }
 
-export type VouchAgent = { slug: string; agent_id: string }
+export type VouchAgent = { slug: string; agent_id: string; kv?: number; my_wrap?: Record<string, unknown> | null }
 
 /**
  * Sign "this machine — mine — may read this agent" for each agent whose vault I am a
- * member of without managing it (`zk_vouch_agents`). A keeper (a box that holds the
- * vault key and works for a manager) then passes the key on with nobody asked.
- * Returns the
- * slugs it signed for.
+ * member of without managing it (`zk_vouch_agents`), and, when I hold my own copy of
+ * its vault key (`my_wrap`), hand the key to the machine myself: nobody else is asked.
+ * Without a copy, a keeper (a box that holds the vault key and works for a manager)
+ * passes it on to the signed machine. Returns the slugs it signed for.
  */
 export async function vouchForMyMachine(key: RunnerDeviceKeyOut, agents: readonly VouchAgent[], me: Unlocked): Promise<string[]> {
   if (!key.ecdh_jkt || !key.ecdh_public_jwk) return []
@@ -151,8 +155,24 @@ export async function vouchForMyMachine(key: RunnerDeviceKeyOut, agents: readonl
     const n = await endorseQuietly(a.slug, a.agent_id, me,
       [{ kind: 'device', target: key.ecdh_jkt, publicJwk: key.ecdh_public_jwk as Jwk }])
     if (n) done.push(a.slug)
+    await grantMyMachine(key, a, me)
   }
   return done
+}
+
+/** Wrap the vault key to my own machine from MY copy of it; best effort (a keeper is the
+ *  fallback), so a refusal or an old copy never fails the approval. */
+export async function grantMyMachine(key: RunnerDeviceKeyOut, a: VouchAgent, me: Unlocked): Promise<boolean> {
+  if (!a.my_wrap || !a.kv || !key.ecdh_jkt || !key.ecdh_public_jwk) return false
+  try {
+    const vk = await unwrapEcdhEs(a.my_wrap as unknown as EcdhWrap, me.privateKey, me.publicJwk,
+      memberInfo(a.agent_id, a.kv, me.userId))
+    const wrap = await wrapTo(vk, a.agent_id, a.kv,
+      { kind: 'device', target: String(key.id), publicJwk: key.ecdh_public_jwk as Jwk, ecdhJkt: key.ecdh_jkt })
+    return (await addMyZkWraps(a.slug, { kv: a.kv, wraps: [wrap] })).granted > 0
+  } catch {
+    return false
+  }
 }
 
 /** Sign "this machine may read this agent" with my own key; best effort. */
