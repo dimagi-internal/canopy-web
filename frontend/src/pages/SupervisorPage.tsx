@@ -126,14 +126,19 @@ export default function SupervisorPage(): JSX.Element {
   // one line. The Runners screen lists them with <AlertList>, which polls itself.
   const { data: openAlerts } = usePolled(() => loadAlerts(undefined, 'open'), { ms: 30_000 })
 
-  // Re-poll runners so the table's facts (code, branch, readiness) follow without
-  // a reload — they ride the REST runner, not the live socket overlay.
-  // A failed re-poll keeps last-good; the mount fetch owns first-error surfacing.
-  usePolled(() => listRunners().then(setRunners).catch(() => {}), { ms: 30_000, immediate: false })
-
   // Live overlay: snapshot + runner/waiting deltas over WS. Falls back silently
   // to the mount fetch above until the socket delivers a snapshot.
   const live = useLiveSupervisor()
+
+  // Re-poll runners so the table's facts (code, branch, readiness) follow without
+  // a reload — they ride the REST runner, not the live socket overlay. The fleet
+  // list is the costliest read canopy-web serves, so with the socket carrying
+  // status the slower facts are re-read every minute.
+  // A failed re-poll keeps last-good; the mount fetch owns first-error surfacing.
+  usePolled(() => listRunners().then(setRunners).catch(() => {}), {
+    ms: live.connected ? 60_000 : 30_000,
+    immediate: false,
+  })
   const liveById = useMemo(
     () => Object.fromEntries(live.runners.map((r) => [r.id, r] as const)),
     [live.runners],
