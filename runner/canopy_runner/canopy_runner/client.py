@@ -245,6 +245,9 @@ class Client:
         # agent's confined turns (`stored_agents.ensure_emdash_project`).
         from .stored_agents import STORED_PROJECTS_VERSION
         body["stored_projects"] = STORED_PROJECTS_VERSION
+        # The reply this loop reads is the slim one (`RunnerHeartbeatSlimOut`): its
+        # fields are exactly what server_status, honour_stops and the observers read.
+        body["slim_reply"] = 1
         # The model this box's sessions start on (`claude_model.configured`), so
         # the chat can size a session's context window. Every beat, absent = "".
         from . import claude_model

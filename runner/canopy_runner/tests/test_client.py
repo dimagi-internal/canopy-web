@@ -209,3 +209,15 @@ def test_a_failed_runner_mailboxes_fetch_raises_and_caches_nothing(monkeypatch):
     with pytest.raises(ClientError):
         c.runner_mailboxes()
     assert c.runner_mailboxes() == [{"address": "b@x.org"}]
+def test_heartbeat_asks_for_the_slim_reply(monkeypatch):
+    """The loop reads only the slim reply's fields (RunnerHeartbeatSlimOut)."""
+    c = Client("http://x", "tok")
+    sent = {}
+
+    def fake_call(method, path, body=None, **_kw):
+        sent.update(body or {})
+        return 200, {"status": "online"}
+
+    monkeypatch.setattr(c, "_call", fake_call)
+    c.heartbeat("r-1", [])
+    assert sent["slim_reply"] == 1
