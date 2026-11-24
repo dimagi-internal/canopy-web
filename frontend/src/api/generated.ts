@@ -41424,6 +41424,10 @@ export interface components {
             readonly messages: number;
             /** Active Users */
             readonly active_users: number;
+            /** Active Agents */
+            readonly active_agents: number;
+            /** Built Agents */
+            readonly built_agents: number;
             /** Done */
             readonly done: number;
             /** Failed */

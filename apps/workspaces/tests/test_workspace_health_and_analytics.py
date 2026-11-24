@@ -219,6 +219,7 @@ def test_analytics_counts_turns_people_and_tokens_across_the_tree(tree, django_c
     assert body["totals"]["input_tokens"] == 300 and "cost_usd" not in body["totals"]
     assert body["totals"]["sessions_with_usage"] == 1
     assert len(body["series"]) == 7 and body["series"][-1]["turns"] == 3
+    assert body["series"][-1]["active_agents"] == 2 and body["series"][0]["active_agents"] == 0
     users = {u["email"]: u for u in body["users"]}
     assert users["b@dimagi.com"]["turns"] == 1 and users["b@dimagi.com"]["input_tokens"] == 300
     assert users["b@dimagi.com"]["top"] == ["hal"]
@@ -583,3 +584,7 @@ def test_analytics_counts_the_agents_built_in_the_tree_and_the_new_ones(tree):
 
     only_root = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=90&tree=false").json()
     assert (only_root["totals"]["built_agents"], only_root["totals"]["new_agents"]) == (1, 1)
+    # The daily series counts what was built by the end of each day.
+    assert [d["built_agents"] for d in body["series"]] == [1] * 6 + [2]  # hal was built today
+    built = [d["built_agents"] for d in only_root["series"]]
+    assert built[0] == 0 and built[-1] == 1 and built.index(1) == 90 - 61
