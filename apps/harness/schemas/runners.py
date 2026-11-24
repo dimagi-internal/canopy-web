@@ -313,6 +313,27 @@ class RunnerCliOut(Schema):
     known: bool = True
 
 
+def github_readiness(obj) -> list[tuple[str, str, str]]:
+    """`(slug, status, detail)` of `delegations.readiness` for each agent the box
+    runs, by slug. Uses what `api_runners_fleet.prime_github_readiness` stamped on
+    the row when a listing read the lot; a row it was not called on reads its own."""
+    from apps.agents.credentials import delegations
+
+    from ..routing import agents_routed_to_of
+
+    routed = getattr(obj, "_routed_agents", None)
+    if routed is None:
+        routed = agents_routed_to_of([obj])[obj.pk]
+    memo = getattr(obj, "_readiness_memo", None)
+    memo = {} if memo is None else memo
+    out = []
+    for agent in routed:
+        if agent.pk not in memo:
+            memo[agent.pk] = delegations.readiness(agent)
+        out.append((agent.slug, *memo[agent.pk]))
+    return out
+
+
 class RunnerOut(Schema):
     id: uuid.UUID
     name: str
@@ -579,15 +600,9 @@ class RunnerOut(Schema):
         # asks about at boot. Served from the box's report it would stay red for a
         # token lent after that boot, under a fresh `health_received_at`.
         # So it is answered here, from the rows, on every read.
-        from apps.agents.credentials import delegations
-
-        from ..routing import agents_routed_to
-
         checks = {n: c for n, c in checks.items() if n != "github" and not n.startswith("github.")}
-        for agent in agents_routed_to(obj):
-            status, detail = delegations.readiness(agent)
-            checks[f"github.{agent.slug}"] = HealthCheck(
-                name=f"github.{agent.slug}", status=status, detail=detail)
+        for slug, status, detail in github_readiness(obj):
+            checks[f"github.{slug}"] = HealthCheck(name=f"github.{slug}", status=status, detail=detail)
         return checks
 
     @staticmethod

@@ -94,5 +94,6 @@ from .routing_projects import (  # noqa: F401
 from .routing_serving import (  # noqa: F401
     ServingFacts,
     agents_routed_to,
+    agents_routed_to_of,
     runner_routes_agent,
 )

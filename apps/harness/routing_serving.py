@@ -12,6 +12,7 @@ from .models import (
     Runner,
     RunnerAssignment,
     Turn,
+    WorkspaceRunnerOrder,
 )
 from .routing_machine import _MACHINE_AGENT_RUNNERS, prime_machine_runners, serves_refusal
 from .routing_orders import agents_following_runner, inherited_orders, runner_tenant_slugs, runner_tenant_slugs_of
@@ -147,3 +148,43 @@ def agents_routed_to(runner: Runner):
     held = [a.id for a in candidates
             if runner_may_hold_agent(runner, a) and not serves_refusal(runner, a.slug)]
     return Agent.objects.filter(id__in=held).select_related("owner").order_by("slug")
+
+
+def agents_routed_to_of(runners) -> dict:
+    """`agents_routed_to` for many runners at once, {runner pk: [agents by slug]}:
+    tenants, assignment rows and every owner's standing read once for the lot
+    (`runner_tenant_slugs_of`, `Standings`), so a fleet listing does not pay a
+    membership walk per (runner, agent) pair. Pass runners with
+    `prefetch_related("declared_flags", "enrollments")` to skip a query each."""
+    runners = list(runners)
+    out: dict = {r.pk: [] for r in runners}
+    live = [r for r in runners
+            if r.status != Runner.RETIRED and r.owner_id and not r.directed_only()]
+    if not live:
+        return out
+    tenants = runner_tenant_slugs_of(live)
+    live = [r for r in live if tenants[r.pk]]
+    if not live:
+        return out
+    listed: dict = {r.pk: set() for r in live}
+    for rid, aid in (RunnerAssignment.objects.filter(runner__in=live, enabled=True)
+                     .values_list("runner_id", "agent_id")):
+        listed[rid].add(aid)
+    # `agents_following_runner` answers empty for a box no workspace order lists:
+    # ask it only of the boxes one does.
+    ordered = set(WorkspaceRunnerOrder.objects.filter(runner__in=live, enabled=True)
+                  .values_list("runner_id", flat=True))
+    for r in live:
+        if r.pk in ordered:
+            listed[r.pk] |= agents_following_runner(r)
+    ids = set().union(*listed.values())
+    if not ids:
+        return out
+    agents = list(Agent.objects.filter(id__in=ids).select_related("owner").order_by("slug"))
+    standings = Standings({r.owner for r in live}, agents)
+    for r in live:
+        out[r.pk] = [a for a in agents
+                     if a.id in listed[r.pk] and a.workspace_id in tenants[r.pk]
+                     and runner_may_hold_agent(r, a, standings=standings)
+                     and not serves_refusal(r, a.slug)]
+    return out
