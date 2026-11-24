@@ -148,7 +148,9 @@ const matches = (line: DeclaredLine, method: string, path: string) => {
   const want = String(line.path).split('/')
   // A query's next page is covered by the query (the server's `Rule.declared_as`).
   const got = method === 'GET' && /^query\/[^/]+$/.test(path) ? ['query'] : path.split('/')
-  return want.length === got.length && want.every((w, i) => w === '*' || w === got[i])
+  // `*:verb` stands for one segment ending in Google's custom method (`sheets/*/values/*:append`).
+  return want.length === got.length && want.every((w, i) => w === '*' || w === got[i] ||
+    (w.startsWith('*:') && got[i].length > w.length - 1 && got[i].endsWith(w.slice(1))))
 }
 
 const COMPOSITE = /^composite\/(batch|sobjects)(\/[^/]+)?$/

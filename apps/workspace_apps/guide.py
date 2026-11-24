@@ -85,7 +85,10 @@ includeItemsFromAllDrives, includeLabels, maxResults). GOOGLE READS: the same ac
 Calendar, Sheets and Docs, reads only, the path's first segment naming the API: GET gmail/profile,
 gmail/messages, gmail/messages/<id>, gmail/threads/<id> (the viewer's mailbox); GET
 calendar/calendars/primary, calendar/calendars/primary/events; GET sheets/<id>,
-sheets/<id>/values:batchGet (query ranges); GET docs/<id>. Each API takes only its own query names.
+sheets/<id>/values:batchGet (query ranges); GET docs/<id>. GOOGLE WRITES (a click): POST gmail/drafts
+(never a send), POST sheets/<id>/values:batchUpdate, sheets/<id>/values/<A1 range>:append,
+sheets/<id>:batchUpdate, docs/<id>:batchUpdate, files; declare a custom method as *:verb
+(sheets/*/values/*:append). Each API takes only its own query names.
 It runs only on an hour of access the viewer grants (never a stored connection): without one the
 rejection has e.connect_url, as above.
 

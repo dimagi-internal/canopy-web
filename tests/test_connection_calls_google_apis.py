@@ -65,7 +65,7 @@ def test_the_api_roots_are_fixed():
 
 @pytest.mark.parametrize("path", [
     # Gmail: anything that sends, drafts, changes, or names another mailbox
-    "gmail/messages/send", "gmail/drafts", "gmail/messages/import", "gmail/messages/batchDelete",
+    "gmail/messages/send", "gmail/drafts/send", "gmail/messages/import", "gmail/messages/batchDelete",
     f"gmail/messages/{MSG}/trash", f"gmail/messages/{MSG}/modify", f"gmail/messages/{MSG}/attachments",
     "gmail/settings", "gmail/labels", "gmail/history", "gmail/threads", f"gmail/messages/{MSG.upper()}",
     "gmail/v1/users/me/messages", "gmail/users/other@example.com/messages", "gmail",
@@ -74,9 +74,9 @@ def test_the_api_roots_are_fixed():
     "calendar/calendars/primary/events/abc", "calendar/calendars/primary/events/quickAdd",
     "calendar/v3/calendars/primary",
     # Sheets / Docs: writes and anything beyond the two reads
-    f"sheets/{SHEET}/values", f"sheets/{SHEET}/values/Sheet1", f"sheets/{SHEET}:batchUpdate",
-    f"sheets/{SHEET}/values:append", f"sheets/{SHEET}/values:batchUpdate", f"sheets/{SHEET}/values:batchClear",
-    f"sheets/{SHEET}/sheets", "sheets", f"docs/{DOC}:batchUpdate", "docs", f"docs/{DOC}/x",
+    f"sheets/{SHEET}/values", f"sheets/{SHEET}/values/Sheet1", f"sheets/{SHEET}/values:append",
+    f"sheets/{SHEET}/values:batchClear", f"sheets/{SHEET}/values/A1:clear", f"sheets/{SHEET}:copyTo",
+    f"sheets/{SHEET}/sheets", "sheets", "docs", f"docs/{DOC}/x", f"docs/{DOC}:copy",
     # a custom method that isn't a rule's literal
     "files:batchGet", f"files/{SHEET}:copy",
 ])
@@ -86,7 +86,7 @@ def test_refuses_everything_outside_the_list(path):
             calls.match("google", method, path)
 
 
-@pytest.mark.parametrize("method,path", [(m, p) for _, p, _, _ in ALLOWED for m in ("POST", "PATCH", "DELETE")])
+@pytest.mark.parametrize("method,path", [(m, p) for _, p, _, _ in ALLOWED for m in ("PATCH", "DELETE")])
 def test_every_new_rule_is_get_only(method, path):
     with pytest.raises(NotAllowed):
         calls.match("google", method, path)
@@ -157,7 +157,7 @@ def test_each_api_takes_its_own_names(path, query):
     ("gmail/messages", "access_token"), ("gmail/messages", "pageSize"), ("gmail/messages", "includeGridData"),
     ("calendar/calendars/primary/events", "alt"), ("calendar/calendars/primary/events", "sendUpdates"),
     (f"sheets/{SHEET}", "includeGridData"), (f"sheets/{SHEET}/values:batchGet", "alt"),
-    (f"sheets/{SHEET}/values:batchGet", "valueInputOption"), (f"docs/{DOC}", "alt"),
+    (f"sheets/{SHEET}/values:batchGet", "uploadType"), (f"docs/{DOC}", "alt"),
     (f"docs/{DOC}", "q"), ("files", "ranges"), ("files", "format"),
 ])
 def test_a_name_another_api_takes_is_refused(path, key):
@@ -176,8 +176,8 @@ def test_drive_names_are_unchanged_without_a_path():
 # ---- the provider ----------------------------------------------------------------------------
 
 def test_an_app_may_ask_for_each_read_scope():
-    # Sheets and Docs reads ride `drive.readonly`, which both APIs accept.
-    for scope in ("gmail.readonly", "calendar.readonly", "drive.readonly"):
+    for scope in ("gmail.readonly", "calendar.readonly", "drive.readonly", "gmail.compose", "spreadsheets",
+                  "documents", "drive.file"):
         assert f"https://www.googleapis.com/auth/{scope}" in GoogleProvider.scope_choices
     assert (GoogleProvider.server_use_default, GoogleProvider.server_calls) == (False, False)
 
@@ -201,7 +201,7 @@ def test_the_sales_apps_declaration_is_valid():
 @pytest.mark.parametrize("entry,says", [
     ({**SALES, "as": "shared", "agent": "eva"}, "viewer's own account only"),
     ({"provider": "google", "writes": [{"method": "GET", "path": "gmail/messages"}]}, "a read, not a write"),
-    ({"provider": "google", "reads": [{"method": "POST", "path": "gmail/drafts"}]}, ""),
+    ({"provider": "google", "reads": [{"method": "POST", "path": "gmail/drafts"}]}, "a write, not a read"),
     ({"provider": "google", "reads": [{"method": "GET", "path": "gmail/*"}]}, ""),
     ({"provider": "google", "reads": [{"method": "GET", "path": "calendar/calendars/*/events"}]}, ""),
     ({"provider": "google", "reads": [{"method": "GET", "path": "sheets/*/values/*"}]}, ""),
@@ -313,9 +313,9 @@ def test_an_undeclared_read_is_refused(g):
 @pytest.mark.parametrize("over", [
     {"query": {"alt": "media"}},
     {"path": "gmail/messages/send", "method": "POST", "body": {"raw": "x"}},
-    {"path": "gmail/drafts", "method": "POST", "body": {}},
+    {"path": "gmail/drafts/send", "method": "POST", "body": {}},
     {"path": "calendar/calendars/someone@example.com/events"},
-    {"path": f"sheets/{SHEET}/values:append", "method": "POST", "body": {}},
+    {"path": f"sheets/{SHEET}/values:batchClear", "method": "POST", "body": {}},
 ])
 def test_refused_before_any_token_is_read(g, over):
     with mock.patch.object(temporary, "token_of") as token, Salesforce() as google:

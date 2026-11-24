@@ -235,9 +235,14 @@ GOOGLE DRIVE CALLS
     sheets/<id> (fields), sheets/<id>/values:batchGet (ranges — repeat it as a list —, majorDimension,
     valueRenderOption, dateTimeRenderOption, fields)
     docs/<id> (fields, suggestionsViewMode)
-  Declare each as a read with * for the id (gmail/messages/*, sheets/*/values:batchGet). The
-  workspace's Google app must ask for each one's read scope (Read mail, Read calendars, and Read
-  files in Drive for Sheets and Docs).
+  Declare each as a read with * for the id (gmail/messages/*, sheets/*/values:batchGet).
+- Writes (each a click, as any): POST gmail/drafts (body {message: {raw, threadId?}}; a draft or a
+  reply, never a send), POST sheets/<id>/values:batchUpdate (query valueInputOption...), POST
+  sheets/<id>/values/<A1 range>:append (valueInputOption, insertDataOption), POST
+  sheets/<id>:batchUpdate, POST docs/<id>:batchUpdate, POST files (a new file's metadata). Declare a
+  custom method with *:verb: sheets/*/values/*:append, docs/*:batchUpdate, sheets/*:batchUpdate.
+  The workspace's Google app must ask for each API's scope (Read mail, Write drafts, Read calendars,
+  Read files in Drive, Read and change spreadsheets, Read and change documents, Create files in Drive).
 - It never uses a stored Google connection: only an hour of access the viewer grants for their own
   screens. Without one (or once it ends) the call rejects with code "not_connected" (or
   "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url) in

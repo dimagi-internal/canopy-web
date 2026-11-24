@@ -68,9 +68,11 @@ class Rule:
 # meaning of a URL (`/ . ? # % \\ @ : ;` spaces, control characters, non-ASCII) is
 # outside it, so a decoded path is safe to join and to match segment by segment.
 _SEGMENT = re.compile(r"[A-Za-z0-9_\-]+")
-# A Google segment may end in a custom method (`values:batchGet`). Only a rule's literal segment can
-# match one (no placeholder admits `:`), so this never lets a caller choose where a call goes.
-_GOOGLE_SEGMENT = re.compile(r"[A-Za-z0-9_\-]+(?::[A-Za-z]+)?")
+# A Google segment may end in a custom method (`values:batchGet`, `<id>:batchUpdate`), and a Sheets
+# range is A1 notation (`'Pathway Types'!A2:D`), so a Google segment may also hold a space and
+# `' ! : $`. Still no `/ . ? # % \\ @`, so nothing in it can move the host or the path; only a rule's
+# literal or its `{range}` placeholder can match one of these, and it is quoted when sent.
+_GOOGLE_SEGMENT = re.compile(r"[A-Za-z0-9_\-' !:$]{1,200}")
 
 _SF_ID = re.compile(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?")
 _SF_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
@@ -83,12 +85,15 @@ _DRIVE_ID = re.compile(r"[A-Za-z0-9_\-]{19,64}")
 # A Gmail message or thread id: lowercase hex (16 today). Gmail's own words under `messages/` and
 # `threads/` (`send`, `import`, `batchDelete`, `trash`) are not hex, so they never fit it.
 _GMAIL_ID = re.compile(r"[0-9a-f]{8,32}")
+# A Sheets range in A1 notation (`Pathways!A:K`, `'Pathway Types'!A2:D100`).
+_A1_RANGE = re.compile(r"[A-Za-z0-9_\-' !:$]{1,200}")
 
 # Placeholders in a pattern, per provider: a segment that must fit this expression.
 _PLACEHOLDERS = {
     "salesforce": {"{type}": _SF_TYPE, "{id}": _SF_ID, "{name}": _SF_NAME, "{locator}": _SF_LOCATOR},
-    "google": {"{id}": _DRIVE_ID, "{gid}": _GMAIL_ID},
+    "google": {"{id}": _DRIVE_ID, "{gid}": _GMAIL_ID, "{range}": _A1_RANGE},
 }
+# `{x}:verb` in a pattern: placeholder `{x}` followed by Google's custom method `:verb` (`{id}:batchUpdate`).
 # `...` as the last segment: zero or more further ordinary segments.
 _REST = "..."
 
@@ -132,20 +137,26 @@ SALESFORCE_RULES = _rules(
 )
 
 # Google, the viewer's own account only (`VIEWER_ONLY`), on its short-lived access (`TEMPORARY_ONLY`):
-# Drive v3 file metadata and labels (no content, no sharing); and reads of Gmail, Calendar, Sheets and
-# Docs — what the Sales app's screens read (the chrome-sales port). No mail is sent, no draft made, no
-# event, cell or document changed from a screen: a write is added here only when a screen needs it,
-# with its own test. Each API's paths are relative to its root in `GOOGLE_API_ROOTS`.
+# Drive v3 file metadata and labels (no content, no sharing); reads of Gmail, Calendar, Sheets and
+# Docs; and the writes the Sales app's screens make (the chrome-sales port): a Gmail draft (a new
+# message or a reply; never a send), Sheets values written or appended and a spreadsheet's own
+# batchUpdate, a Doc's batchUpdate, and a new Drive file (Compose's outreach Doc). Every write is a
+# click and a lease, as any. Nothing sends mail, shares a file, deletes one or touches a calendar.
+# Each API's paths are relative to its root in `GOOGLE_API_ROOTS`.
 GOOGLE_RULES = _rules(
     ("GET", "files", "read", "files"),
     ("GET", "files/{id}", "read", "files"),
     ("GET", "files/{id}/listLabels", "read", "labels"),
     ("POST", "files/{id}/modifyLabels", "write", "labels"),
+    # A new file's metadata (an empty Doc: Compose's outreach drafts). Never content: no upload root.
+    ("POST", "files", "write", "files"),
     # Gmail: the viewer's address, a search, one message, one thread.
     ("GET", "gmail/profile", "read", "gmail"),
     ("GET", "gmail/messages", "read", "gmail"),
     ("GET", "gmail/messages/{gid}", "read", "gmail"),
     ("GET", "gmail/threads/{gid}", "read", "gmail"),
+    # A draft (a reply when its message names a threadId). There is no rule to send one.
+    ("POST", "gmail/drafts", "write", "gmail"),
     # Calendar: the viewer's primary calendar and its events, nobody else's.
     ("GET", "calendar/calendars/primary", "read", "calendar"),
     ("GET", "calendar/calendars/primary/events", "read", "calendar"),
@@ -153,8 +164,12 @@ GOOGLE_RULES = _rules(
     # a path segment).
     ("GET", "sheets/{id}", "read", "sheets"),
     ("GET", "sheets/{id}/values:batchGet", "read", "sheets"),
+    ("POST", "sheets/{id}/values:batchUpdate", "write", "sheets"),
+    ("POST", "sheets/{id}/values/{range}:append", "write", "sheets"),
+    ("POST", "sheets/{id}:batchUpdate", "write", "sheets"),
     # Docs: one document.
     ("GET", "docs/{id}", "read", "docs"),
+    ("POST", "docs/{id}:batchUpdate", "write", "docs"),
 )
 
 _RULES = {"salesforce": SALESFORCE_RULES, "google": GOOGLE_RULES}
@@ -178,7 +193,9 @@ GOOGLE_QUERY_NAMES_BY_API = {
                         "metadataHeaders", "fields"}),
     "calendar": frozenset({"q", "timeMin", "timeMax", "singleEvents", "orderBy", "maxResults", "pageToken",
                            "timeZone", "showDeleted", "updatedMin", "iCalUID", "fields"}),
-    "sheets": frozenset({"ranges", "majorDimension", "valueRenderOption", "dateTimeRenderOption", "fields"}),
+    "sheets": frozenset({"ranges", "majorDimension", "valueRenderOption", "dateTimeRenderOption", "fields",
+                         "valueInputOption", "insertDataOption", "includeValuesInResponse",
+                         "responseValueRenderOption", "responseDateTimeRenderOption"}),
     "docs": frozenset({"fields", "suggestionsViewMode"}),
 }
 
@@ -261,10 +278,21 @@ def _fits(pattern: str, segments: list[str], placeholders: dict[str, re.Pattern]
     if len(segments) < len(want) or (not rest and len(segments) != len(want)):
         return False
     for token, seg in zip(want, segments):
-        expr = placeholders.get(token)
-        if not (expr.fullmatch(seg) if expr else token == seg):
+        if not _fits_one(token, seg, placeholders):
             return False
     return True
+
+
+def _fits_one(token: str, seg: str, placeholders: dict[str, re.Pattern]) -> bool:
+    expr = placeholders.get(token)
+    if expr is not None:
+        return bool(expr.fullmatch(seg))
+    name, colon, verb = token.partition("}:")
+    if colon and name.startswith("{"):  # `{id}:batchUpdate`: the placeholder, then exactly `:verb`
+        expr = placeholders.get(name + "}")
+        suffix = ":" + verb
+        return expr is not None and seg.endswith(suffix) and bool(expr.fullmatch(seg[:-len(suffix)]))
+    return token == seg
 
 
 def _rules_for(provider: object) -> tuple[Rule, ...]:
@@ -298,6 +326,16 @@ def match(provider: str, method: str, path: str) -> Match:
     raise NotAllowed("Screens may not call that path.")
 
 
+def _quote_google(seg: str, token: str) -> str:
+    """One Google segment, quoted. A custom method the rule spells (`values:batchGet`, `{id}:batchUpdate`,
+    `{range}:append`) keeps its own `:`; every other `:` (one inside an A1 range) is encoded, as
+    Google's own clients send it."""
+    _, colon, verb = token.rpartition(":")
+    if colon and "/" not in verb and seg.endswith(":" + verb):
+        return quote(seg[:-len(verb) - 1], safe="") + ":" + verb
+    return quote(seg, safe="")
+
+
 def build_url(provider: str, instance_url: str, path: str, query: object, *, method: str) -> str:
     """The one URL the call goes to. The call must pass `match`; the host is the
     connection's own sealed instance URL, which must pass the provider's host
@@ -314,8 +352,8 @@ def build_url(provider: str, instance_url: str, path: str, query: object, *, met
             raise NotAllowed("This connection's Google address cannot be used.")
         api = google_api(allowed.path)
         root, rest = (DRIVE_API_ROOT, segments) if api == "drive" else (GOOGLE_API_ROOTS[api], segments[1:])
-        # `:` stays as it is: only a rule's literal custom method (`values:batchGet`) can carry one.
-        url = f"{root}/" + "/".join(quote(s, safe=":") for s in rest)
+        tokens = allowed.rule.pattern.split("/")[len(segments) - len(rest):]
+        url = f"{root}/" + "/".join(_quote_google(seg, tok) for seg, tok in zip(rest, tokens))
         return url + ("?" + urlencode(params, doseq=True) if params else "")
     base, _host = _instance_url(instance_url if isinstance(instance_url, str) else "")
     if not base:
