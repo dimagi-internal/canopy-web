@@ -21,8 +21,8 @@ from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
+from tests.fixtures.fake_github import FakeGitHub
 from tests.fixtures.machines import a_machine
-from tests.test_agent_delegations import FakeGitHub
 
 pytestmark = pytest.mark.django_db
 
