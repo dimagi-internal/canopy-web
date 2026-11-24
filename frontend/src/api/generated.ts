@@ -8637,7 +8637,7 @@ export interface paths {
         /**
          * At most an hour of a named AWS role, as this agent
          * @description Short-lived AWS keys for ONE role named in canopy-web's settings (`labs-read` = read-only,
-         *     non-sensitive labs observability, on ask; `labs-readwrite` and `labs-config` are fenced), with
+         *     `labs-readwrite` = admin minus guardrails, `labs-config` = app secrets; all fenced), with
          *     the agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). A fenced role goes to
          *     the agents listed for it, and to another agent only while it holds a live grant a person
          *     approved (`POST /api/agents/{slug}/aws-role-requests`), for at most the grant's remaining time.
@@ -8671,8 +8671,8 @@ export interface paths {
          *     reason and how long it should last. It files an approval (kind `agent.aws_role`) that an owner of
          *     the agent's workspace or a canopy superuser approves on its page (`approval_url`) with a passkey;
          *     then `POST aws-credentials` vends the role to this agent until the grant ends. 404 for a role
-         *     canopy-web does not vend; 422 for a role vended on ask (`labs-read`) or one this agent already
-         *     gets with no approval. While a request for the same role is pending, asking again returns it (200).
+         *     canopy-web does not vend; 422 for a role vended on ask (none today: every role is fenced) or one
+         *     this agent already gets with no approval. While a request for the same role is pending, asking again returns it (200).
          */
         readonly post: operations["request_aws_role"];
         readonly delete?: never;

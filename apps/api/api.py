@@ -518,7 +518,7 @@ api.add_router("/a2a", a2a_router)
 api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the agents namespace
 api.add_router("/agent-runs", agent_run_docs_router)  # run documents (DDD runs), cross-agent
 api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
-api.add_router("/agents", agent_aws_router)  # at most an hour of a named AWS role (labs-read, labs-readwrite)
+api.add_router("/agents", agent_aws_router)  # at most an hour of a named AWS role (labs-read, labs-readwrite, labs-config)
 api.add_router("/agents", agent_aws_roles_router)  # ask a person for a fenced AWS role; the grant aws-credentials reads
 # The mint's callback is NOT agent-scoped: Google requires every redirect URI
 # to be registered exactly, so one fixed path serves the whole fleet and the

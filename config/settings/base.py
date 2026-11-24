@@ -848,21 +848,24 @@ CANOPY_AWS_ROLES = env.json("CANOPY_AWS_ROLES", default={
 # (connect-labs infra/labs-observe-readonly.yml, labs-agent-readwrite.yml, labs-agent-config.yml).
 # `labs-observe` is labs-read's old name, kept so older canopy CLIs and profiles keep working.
 CANOPY_AWS_ROLE_SUMMARIES = env.json("CANOPY_AWS_ROLE_SUMMARIES", default={
-    "labs-read": "Read labs metrics, alarms, and resource and RDS metadata. No log events, object "
-                 "bodies, secrets, task environments or database content.",
-    "labs-observe": "Read labs metrics, alarms, and resource and RDS metadata. No log events, object "
-                    "bodies, secrets, task environments or database content.",
-    "labs-readwrite": "Make and change agent-named RDS copies of labs production and run one psql "
-                      "client task. Production is a source only; IAM changes are denied.",
+    "labs-read": "Read everything in labs (AWS ReadOnlyAccess): raw app and load-balancer logs, S3 "
+                 "objects, task definitions, CloudTrail. No secret values, no exec, no writes.",
+    "labs-observe": "Read everything in labs (AWS ReadOnlyAccess): raw app and load-balancer logs, S3 "
+                    "objects, task definitions, CloudTrail. No secret values, no exec, no writes.",
+    "labs-readwrite": "Administer labs (AWS AdministratorAccess) minus guardrails: no org, SSO or IAM-user "
+                      "changes, no edits to the access roles, no audit tampering, production database "
+                      "and backups not deletable, no snapshot sharing.",
     "labs-config": "Create and update labs app secrets named labs-jj-app-*. It never reads a secret "
                    "value, deletes nothing and changes no IAM.",
 })
-# Fenced roles: name -> the agents that get the role with no approval. A role not listed
-# here goes to any agent that may ask (labs-read). A listed role goes to the agents named,
-# and to any other agent only while it holds a grant a person approved
-# (POST /api/agents/{slug}/aws-role-requests). Every list is empty: a fenced role is
-# requested when needed and approved by a person, never a standing allowlist.
+# Fenced roles: name -> the agents that get the role with no approval. A listed role goes to
+# the agents named, and to any other agent only while it holds a grant a person approved with a
+# passkey (POST /api/agents/{slug}/aws-role-requests). Every role is fenced: labs-read is
+# standing only for the devops agents, Ada and Hal; the write roles are request-only for
+# every agent. labs-observe is labs-read's old name and is fenced the same.
 CANOPY_AWS_ROLE_AGENTS = env.json("CANOPY_AWS_ROLE_AGENTS", default={
+    "labs-read": ["ada", "hal"],
+    "labs-observe": ["ada", "hal"],
     "labs-readwrite": [],
     "labs-config": [],
 })
