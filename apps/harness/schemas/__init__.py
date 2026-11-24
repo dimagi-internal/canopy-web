@@ -189,6 +189,7 @@ from .runners import (  # noqa: F401
     RunnerEngineIn,
     RunnerFlagsIn,
     RunnerHealthIn,
+    RunnerHeartbeatSlimOut,
     RunnerIn,
     RunnerNameIn,
     RunnerOnlyAgentsIn,

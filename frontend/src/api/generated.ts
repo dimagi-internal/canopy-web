@@ -46546,6 +46546,72 @@ export interface components {
              */
             readonly can_control: boolean;
         };
+        /**
+         * RunnerHeartbeatSlimOut
+         * @description The heartbeat reply a runner that sends `slim_reply: 1` gets: only what the
+         *     laptop (`runner/canopy_runner`) and the cloud box (`runner/ec2`) read off it.
+         *     Each field means what it means on `RunnerOut`, and is read by the same
+         *     resolver; none of the fleet-page fields (health checks, roots, open sessions)
+         *     is computed.
+         */
+        readonly RunnerHeartbeatSlimOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Host */
+            readonly host: string;
+            /**
+             * Engine
+             * @default emdash
+             */
+            readonly engine: string;
+            /** Status */
+            readonly status: string;
+            /** Status Note */
+            readonly status_note: string;
+            /** Ready */
+            readonly ready: boolean;
+            /** Ready Note */
+            readonly ready_note: string;
+            /**
+             * Remedy
+             * @default
+             */
+            readonly remedy: string;
+            /** Paused */
+            readonly paused: boolean;
+            /** Paused Note */
+            readonly paused_note: string;
+            /**
+             * Private
+             * @default false
+             */
+            readonly private: boolean;
+            /** Private Runner Id */
+            readonly private_runner_id?: string | null;
+            /**
+             * Key Waiting
+             * @default
+             */
+            readonly key_waiting: string;
+            /** Report Projects */
+            readonly report_projects?: readonly string[] | null;
+            /** Refresh Pending */
+            readonly refresh_pending?: boolean | null;
+            /** Cancel Turn Ids */
+            readonly cancel_turn_ids?: readonly string[] | null;
+            /** Add Projects */
+            readonly add_projects?: readonly components["schemas"]["RunnerProjectAskOut"][] | null;
+            /**
+             * Expected Canopy Version
+             * @default
+             */
+            readonly expected_canopy_version: string;
+        };
         /** HeartbeatIn */
         readonly HeartbeatIn: {
             /**
@@ -46628,6 +46694,11 @@ export interface components {
              * @default 0
              */
             readonly stored_projects: number;
+            /**
+             * Slim Reply
+             * @default 0
+             */
+            readonly slim_reply: number;
             /** Clis */
             readonly clis?: {
                 readonly [key: string]: unknown;
@@ -76664,7 +76735,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["RunnerOut"];
+                    readonly "application/json": components["schemas"]["RunnerOut"] | components["schemas"]["RunnerHeartbeatSlimOut"];
                 };
             };
         };

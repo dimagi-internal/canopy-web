@@ -670,6 +670,43 @@ class RunnerOut(Schema):
         return obj.live_status
 
 
+class RunnerHeartbeatSlimOut(Schema):
+    """The heartbeat reply a runner that sends `slim_reply: 1` gets: only what the
+    laptop (`runner/canopy_runner`) and the cloud box (`runner/ec2`) read off it.
+    Each field means what it means on `RunnerOut`, and is read by the same
+    resolver; none of the fleet-page fields (health checks, roots, open sessions)
+    is computed."""
+
+    id: uuid.UUID
+    name: str
+    host: str
+    engine: str = "emdash"
+    status: str
+    status_note: str
+    ready: bool
+    ready_note: str
+    remedy: str = ""
+    paused: bool
+    paused_note: str
+    private: bool = False
+    private_runner_id: uuid.UUID | None = None
+    key_waiting: str = ""
+    report_projects: list[str] | None = None
+    refresh_pending: bool | None = None
+    cancel_turn_ids: list[str] | None = None
+    add_projects: list[RunnerProjectAskOut] | None = None
+    expected_canopy_version: str = ""
+
+    resolve_status = staticmethod(RunnerOut.resolve_status)
+    resolve_private_runner_id = staticmethod(RunnerOut.resolve_private_runner_id)
+    resolve_key_waiting = staticmethod(RunnerOut.resolve_key_waiting)
+    resolve_report_projects = staticmethod(RunnerOut.resolve_report_projects)
+    resolve_refresh_pending = staticmethod(RunnerOut.resolve_refresh_pending)
+    resolve_cancel_turn_ids = staticmethod(RunnerOut.resolve_cancel_turn_ids)
+    resolve_add_projects = staticmethod(RunnerOut.resolve_add_projects)
+    resolve_expected_canopy_version = staticmethod(RunnerOut.resolve_expected_canopy_version)
+
+
 class FleetHoldIn(Schema):
     # What you are tracing, so whoever finds the fleet silent knows why and when to
     # release it. Same argument as PauseIn's note, at fleet scale.
@@ -766,6 +803,10 @@ class HeartbeatIn(Schema):
     # runs that agent's confined turns (`clis.laptop_cannot_confine_stored`). Absent (older
     # code) means 0: such a laptop is never handed one.
     stored_projects: int = 0
+    # 1 = this runner's code reads only the fields of `RunnerHeartbeatSlimOut`, so the
+    # reply is that instead of the whole `RunnerOut`. Absent (older code) means 0: the
+    # whole row, as before.
+    slim_reply: int = 0
     # Which agent CLIs this box has, signed in and confining (`clis.sanitize`):
     # {"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}.
     # A level like `profiles`: absent (older code) means the box is read as Claude
