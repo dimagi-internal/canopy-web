@@ -7,7 +7,10 @@ export type PollPeriod<T> = number | null | ((last: { data: T | undefined; error
 
 export interface PolledOptions<T> {
   /** Poll period in ms, counted from the end of the previous fetch (a slow
-   *  call never piles up behind itself). Changing it does not refetch: a new
+   *  call never piles up behind itself). A fixed number backs off while fetches
+   *  fail: each failure in a row doubles it, up to `MAX_BACKOFF_MS` (or `ms`
+   *  itself when that is longer); a success restores it. A function decides for
+   *  itself. Changing it does not refetch: a new
    *  number takes over from the next tick (or starts the timer if none is
    *  running), `null` stops the timer. */
   ms: PollPeriod<T>
@@ -37,9 +40,18 @@ export interface Polled<T> {
   setData: (next: T | undefined | ((prev: T | undefined) => T | undefined)) => void
 }
 
+/** The longest a failing fixed-period poll waits between tries. */
+export const MAX_BACKOFF_MS = 300_000
+
+/** The wait after `failures` failed fetches in a row, for a fixed period `ms`. */
+export function backedOff(ms: number, failures: number): number {
+  if (failures <= 0) return ms
+  return Math.min(ms * 2 ** Math.min(failures, 20), Math.max(ms, MAX_BACKOFF_MS))
+}
+
 const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
 
-/** Poll `fn` every `ms` while the page is visible.
+/** Poll `fn` every `ms` while the page is visible, backing off while it fails.
  *
  *  While `document.visibilityState === 'hidden'` nothing is fetched: the timer
  *  stops, and coming back fetches at once and restarts it. /supervisor is a
@@ -68,6 +80,7 @@ export function usePolled<T>(fn: (signal: AbortSignal) => Promise<T>, opts: Poll
     let timer: ReturnType<typeof setTimeout> | null = null
     let inflight: Promise<void> | null = null
     let last: { data: T | undefined; error: Error | null } = { data: undefined, error: null }
+    let failures = 0
 
     const stop = () => {
       if (timer) clearTimeout(timer)
@@ -77,7 +90,7 @@ export function usePolled<T>(fn: (signal: AbortSignal) => Promise<T>, opts: Poll
       stop()
       if (ctrl.signal.aborted || isHidden()) return
       const p = msRef.current
-      const period = typeof p === 'function' ? p(last) : p
+      const period = typeof p === 'function' ? p(last) : p === null ? null : backedOff(p, failures)
       if (period === null) return
       timer = setTimeout(() => void run(), period)
     }
@@ -89,12 +102,14 @@ export function usePolled<T>(fn: (signal: AbortSignal) => Promise<T>, opts: Poll
           const out = await fnRef.current(ctrl.signal)
           if (ctrl.signal.aborted) return
           last = { data: out, error: null }
+          failures = 0
           setData(out)
           setError(null)
         } catch (e) {
           if (ctrl.signal.aborted) return
           const err = e instanceof Error ? e : new Error(String(e))
           last = { data: last.data, error: err }
+          failures += 1
           setError(err)
         } finally {
           inflight = null
