@@ -3,7 +3,7 @@
 One iteration (run_once):
   1. preflight emdash's CDP health — unhealthy => degraded heartbeat, skip the
      claim (queued turns wait rather than being claimed-then-burned), still poll
-     the inbox + fire schedules so inbound work keeps enqueuing
+     the inbox so inbound work keeps enqueuing
   2. heartbeat (with the macOS host, for session-reuse ownership)
   3. report the open emdash sessions the phone can continue (throttled)
   4. claim at most one queued turn and route it to an emdash session (reuse or
@@ -505,31 +505,6 @@ def _clear_watch_failures(cfg: Config, client: Client) -> None:
     _save_watch_state(state_path, state, failures)
 
 
-def _fire_due_schedules(cfg: Config, client: Client, paused: set[str] | None = None) -> None:
-    """Scheduled-turn trigger: sync the schedules this runner may fire, evaluate each
-    cron locally, and report any due slot so the server materializes the turn.
-
-    Unthrottled on purpose — unlike the inbox (a subprocess per mailbox), this is one
-    HTTP GET, the same cost class as the claim it rides alongside, and the poll IS the
-    tick: throttling it would just add latency to every slot. Best-effort — a failing
-    sync (server down, token expired) logs and is skipped, never crashes the loop.
-
-    Only reached when NOT globally paused: main()'s pause sentinel `continue`s before
-    run_once, so a paused runner never fires (which would queue turns that all execute
-    the instant it resumes). Per-agent pause is honored inside check_schedules.
-    """
-    now = dt.datetime.now(dt.UTC)
-    try:
-        # Import INSIDE the guard, not above it: canopy_cron is scheduling's ONLY
-        # dependency, and a missing/broken one (an un-synced laptop env, a bad
-        # install) must disable scheduling alone — not crash claiming and the inbox
-        # with it. The import is the most likely failure, so it has to be caught too.
-        from . import schedules as schedules_mod
-        schedules_mod.check_schedules(client, cfg.runner_id, now=now, paused=frozenset(paused or ()))
-    except Exception as exc:  # noqa: BLE001 — scheduling never kills claiming or the inbox
-        logger.warning("scheduling unavailable this tick (claiming + inbox continue): %s", exc)
-
-
 def _mark_in_flight(cfg: Config, *, extra: int = 0) -> None:
     """Publish how much work this runner is carrying, for the auto-updater.
 
@@ -619,8 +594,8 @@ def run_once(cfg: Config, client: Client) -> str:
     emdash (or one launched without --remote-debugging-port) can't run work. If we claimed
     anyway, execute would hit the CDP-connect failure and fail the turn — and a failed turn
     is NOT auto-re-claimed, so one outage would burn a turn per hit agent. So we PREFLIGHT: an unhealthy CDP skips the claim for this tick,
-    leaving queued turns queued to auto-drain when emdash returns. Inbox + schedule polling
-    still run (inbound work keeps ENQUEUING); only the claim is gated."""
+    leaving queued turns queued to auto-drain when emdash returns. Inbox polling
+    still runs (inbound work keeps ENQUEUING); only the claim is gated."""
     from . import readiness
     from .cdp_control import cdp_healthy, host_id
 
@@ -759,12 +734,11 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
     # with the server's `paused` (read off the heartbeat response we just got), and
     # obey whatever is in force.
     #
-    # Gating HERE, above the inbox and schedule triggers, is the point. The server
-    # already refuses to hand a paused runner any turn, so routing is safe without
-    # us — but both of those triggers ENQUEUE turns rather than executing them, so
-    # a runner that kept polling while parked would build a backlog it cannot touch
-    # and then stampede the instant it resumes. That is the same hazard the
-    # per-agent pause names in `check_schedules`.
+    # Gating HERE, above the inbox trigger, is the point. The server already
+    # refuses to hand a paused runner any turn, so routing is safe without us —
+    # but the inbox ENQUEUES turns rather than executing them, so a runner that
+    # kept polling while parked would build a backlog it cannot touch and then
+    # stampede the instant it resumes.
     #
     # A pause stops STARTING work, it never abandons work already running: the chat
     # pump runs above it, and `_report_sweep` runs in `run_once`'s `finally`, so both
@@ -793,7 +767,8 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
     # an Item dispatches its work server-side (in the decide transaction), so there
     # is no resolved review for the runner to poll. DDD findings reviews are applied
     # by the DDD orchestrator, never here.
-    _step("schedules", _fire_due_schedules, cfg, client, paused=paused)
+    # Schedules are canopy-web's: its own clock fires every due slot
+    # (apps/harness/schedule_clock.py) and the turn arrives through the claim.
     if not healthy:
         return "cdp_down"  # nothing claimed -> nothing burned; queued turns stay queued
     from . import readiness
@@ -809,8 +784,7 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
 def drain_one(cfg: Config, client: Client) -> str:
     """Take exactly ONE queued turn, then exit — the "take a single turn" primitive.
 
-    Unlike --once (a full loop iteration), this does NOT poll the inbox or fire
-    schedules, so it can only run a turn that is ALREADY queued (dispatch one from the
+    Unlike --once (a full loop iteration), this does NOT poll the inbox, so it can only run a turn that is ALREADY queued (dispatch one from the
     composer/API first); it never enqueues or spawns work you didn't ask for. It also
     runs while the daemon is paused — the global PAUSED sentinel gates main()'s loop, not
     this — so you can take one turn with the fleet otherwise off. Per-agent pauses ARE
@@ -934,8 +908,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="path to runner.json")
     parser.add_argument("--once", action="store_true", help="single iteration (for cron/tests)")
     parser.add_argument("--drain-one", action="store_true",
-                        help="claim + run exactly ONE queued turn, then exit (no inbox poll, "
-                             "no schedules; runs even while paused)")
+                        help="claim + run exactly ONE queued turn, then exit (no inbox poll; "
+                             "runs even while paused)")
     parser.add_argument("--log-file", default="", help=argparse.SUPPRESS)
 
     subparsers = parser.add_subparsers(dest="command")
