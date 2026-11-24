@@ -214,4 +214,5 @@ markers = [
     "needs_migrations: needs the real migration history; CI runs it separately",
     "guard: a structural guard over the source tree or the docs (import direction, gates, vocabulary, budgets); `pytest -m guard` runs them alone",
     "explicit_opt_in: sees the real ProjectOptIn default (nothing) instead of conftest's opt-in",
+    "nightly: an exhaustive walk too slow for the merge queue; nightly-walks.yml runs it every night and files a failure as an issue",
 ]

@@ -184,10 +184,11 @@ jobs:
       - name: Run pytest
         # -n auto: one worker per core (pytest-xdist). Each worker builds its own
         # in-memory test DB, so the suite is isolated per worker; serially it was
-        # ~160s here, nearly all of it single-threaded.
+        # ~160s here, nearly all of it single-threaded. `nightly` walks run in
+        # nightly-walks.yml instead. --durations names whatever holds a shard up.
         env:
           PYTEST_SHARD: ${{ matrix.shard }}/3
-        run: uv run pytest -n auto --nomigrations -m "not needs_migrations"
+        run: uv run pytest -n auto --nomigrations -m "not needs_migrations and not nightly" --durations=15 --durations-min=5
 
   # The standalone in-repo packages. None of them touches Django or a
   # database: each runs from its own dir against its own declared deps.

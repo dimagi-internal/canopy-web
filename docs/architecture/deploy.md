@@ -133,6 +133,8 @@ CI (`.github/workflows/ci.yml`) runs on every PR and in the merge queue; a push 
 
 The full suites run once, in the merge queue, sharded so no job sets the wait alone (`.github/workflows/ci.yml` lists the jobs). On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the source-walking ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed; the design-token ratchet always). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
 
+Tests marked `nightly` (the exhaustive access walks) are left out of the queue and run every night in `.github/workflows/nightly-walks.yml`, which keeps one open issue (label `nightly-walks`) while they fail. The queue's backend shards print every test over 5 seconds, so a shard that runs long names its cause.
+
 ### Every PR: arm auto-merge, no strategy flag
 
 ```bash
