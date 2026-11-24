@@ -1,6 +1,6 @@
 """What a view or app page declares it may ask a connection to do.
 
-A screen that calls Salesforce or Google Drive through canopy-web says so up front, in a
+A screen that calls Salesforce or Google through canopy-web says so up front, in a
 `connections` declaration saved with the view (or in an app manifest):
 
     [{"provider": "salesforce", "as": "viewer" | "shared", "agent": "<slug>",
@@ -50,8 +50,9 @@ AS_VALUES = ("viewer", "shared")
 AGENT_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
 # One id-shaped segment standing in for `*` when a pattern is checked: for Salesforce it fits an
-# id and an object name both, so a read's `*` may be either; for Google, a Drive id.
-_PLACEHOLDER = {"salesforce": "A00000000000000", "google": "A000000000000000000000000000"}
+# id and an object name both, so a read's `*` may be either; for Google, a Drive id and a Gmail id
+# both (lowercase hex of a Drive id's length).
+_PLACEHOLDER = {"salesforce": "A00000000000000", "google": "a000000000000000000000000000"}
 _ENTRY_KEYS = {"provider", "as", "agent", "reads", "writes"}
 
 

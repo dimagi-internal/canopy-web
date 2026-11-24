@@ -1,4 +1,4 @@
-/** Plain words for a Salesforce or Google Drive call a screen declares: "Read Leads", never `GET sobjects/Lead/*`. */
+/** Plain words for a Salesforce or Google call a screen declares: "Read Leads", never `GET sobjects/Lead/*`. */
 export interface DeclaredLine {
   method: string
   path: string
@@ -16,8 +16,16 @@ function plural(type: string): string {
   return `${type}s`
 }
 
-/** The Drive calls a screen may declare (apps/connections/calls.py `GOOGLE_RULES`). */
-function driveWords(m: string, path: string): LineWords {
+/** The Google calls a screen may declare (apps/connections/calls.py `GOOGLE_RULES`). */
+function googleWords(m: string, path: string): LineWords {
+  if (m === 'GET') {
+    if (path === 'gmail/profile') return { words: 'See your Gmail address' }
+    if (path === 'gmail/messages' || /^gmail\/(messages|threads)\/[^/]+$/.test(path)) return { words: 'Read your mail' }
+    if (path === 'calendar/calendars/primary') return { words: 'See your calendar' }
+    if (path === 'calendar/calendars/primary/events') return { words: 'Read your calendar events' }
+    if (/^sheets\/[^/]+(\/values:batchGet)?$/.test(path)) return { words: 'Read spreadsheets' }
+    if (/^docs\/[^/]+$/.test(path)) return { words: 'Read documents' }
+  }
   if (m === 'GET' && path === 'files') return { words: 'List files in Drive' }
   if (m === 'GET' && /^files\/[^/]+$/.test(path)) return { words: 'Read file details in Drive' }
   if (m === 'GET' && /^files\/[^/]+\/listLabels$/.test(path)) return { words: "Read files' labels in Drive" }
@@ -28,7 +36,7 @@ function driveWords(m: string, path: string): LineWords {
 /** `who`: whose records a search reaches, "you" or the agent the screen acts as. Salesforce unless `provider` says. */
 export function lineWords({ method, path }: DeclaredLine, who = 'you', provider = 'salesforce'): LineWords {
   const m = method.toUpperCase()
-  if (provider === 'google') return driveWords(m, path)
+  if (provider === 'google') return googleWords(m, path)
   if (m === 'GET' && path === 'sobjects/*/*') return { words: 'Read any record' }
   const object = path.match(/^sobjects\/([A-Za-z0-9_]+)(\/\*)?$/)
   if (object) {

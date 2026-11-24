@@ -60,7 +60,9 @@ class GoogleProvider(Provider):
         f"{_SCOPE}gmail.send": "Send mail",
         f"{_SCOPE}gmail.modify": "Label and archive mail",
         f"{_SCOPE}calendar.readonly": "Read calendars",
-        # An agent reading a meeting transcript's Doc in a turn, on a connection the person lent it.
+        # An agent reading a meeting transcript's Doc in a turn, on a connection the person lent it; and a
+        # screen reading the viewer's Sheets and Docs (`calls.GOOGLE_RULES`), which both APIs accept it for.
+        # (No separate spreadsheets/documents scopes: every choice at once must fit `Connection.scopes`.)
         f"{_SCOPE}drive.readonly": "Read files in Drive",
         # A screen listing a folder tree and changing files' labels as the viewer (`calls.GOOGLE_RULES`).
         f"{_SCOPE}drive.metadata": "See and change file details and labels in Drive (not contents)",
@@ -72,8 +74,12 @@ class GoogleProvider(Provider):
     revokes_refused_grant = False
     temporary_access = True
     server_use_default = False
-    # A screen's Drive call never uses a sealed connection: only the viewer's own short-lived
-    # access (`calls.TEMPORARY_ONLY`, `temporary.for_screens`), so there is no switch to show.
+    # A screen's Google call (Drive, Gmail, Calendar, Sheets, Docs) never uses a sealed connection: only
+    # the viewer's own short-lived access (`calls.TEMPORARY_ONLY`, `temporary.for_screens`), so there is
+    # no switch to show. Turning this on is the whole of letting canopy-web use a person's stored Google
+    # connection: Settings then shows "canopy-web can use this", and a screen with no hour live calls on
+    # the stored connection with that switch on (`call_service._on_temporary`). See
+    # docs/architecture/vault-connections.md § Calls from screens.
     server_calls = False
     option_fields = (
         # Empty (the default): any Google account, including personal @gmail.com

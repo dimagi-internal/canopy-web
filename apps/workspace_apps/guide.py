@@ -81,8 +81,13 @@ relative to https://www.googleapis.com/drive/v3/: reads GET files, GET files/<id
 files/<id>/listLabels; write POST files/<id>/modifyLabels (a click, as any write). Declare paths
 with * for the id (files/*/modifyLabels). Query names are limited to Drive's listing ones (q,
 pageSize, pageToken, fields, orderBy, spaces, corpora, driveId, supportsAllDrives,
-includeItemsFromAllDrives, includeLabels, maxResults). It runs only on an hour of access the viewer
-grants (never a stored connection): without one the rejection has e.connect_url, as above.
+includeItemsFromAllDrives, includeLabels, maxResults). GOOGLE READS: the same account's Gmail,
+Calendar, Sheets and Docs, reads only, the path's first segment naming the API: GET gmail/profile,
+gmail/messages, gmail/messages/<id>, gmail/threads/<id> (the viewer's mailbox); GET
+calendar/calendars/primary, calendar/calendars/primary/events; GET sheets/<id>,
+sheets/<id>/values:batchGet (query ranges); GET docs/<id>. Each API takes only its own query names.
+It runs only on an hour of access the viewer grants (never a stored connection): without one the
+rejection has e.connect_url, as above.
 
 BROWSER EXTENSION: when the manifest declares `browser` for a member page, the Dimagi Canopy
 extension's side panel shows that page beside a matching tab, and there canopy.browser is set

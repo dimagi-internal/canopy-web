@@ -57,6 +57,23 @@ describe('Google Drive lines', () => {
   ])('%j reads as %s', (line, text) => {
     expect(describeLine(line, 'you', 'google')).toBe(text)
   })
+})
+
+describe('Gmail, Calendar, Sheets and Docs lines', () => {
+  it.each([
+    [{ method: 'GET', path: 'gmail/profile' }, 'See your Gmail address'],
+    [{ method: 'GET', path: 'gmail/messages' }, 'Read your mail'],
+    [{ method: 'GET', path: 'gmail/messages/*' }, 'Read your mail'],
+    [{ method: 'GET', path: 'gmail/threads/*' }, 'Read your mail'],
+    [{ method: 'GET', path: 'calendar/calendars/primary' }, 'See your calendar'],
+    [{ method: 'GET', path: 'calendar/calendars/primary/events' }, 'Read your calendar events'],
+    [{ method: 'GET', path: 'sheets/*' }, 'Read spreadsheets'],
+    [{ method: 'GET', path: 'sheets/*/values:batchGet' }, 'Read spreadsheets'],
+    [{ method: 'GET', path: 'docs/*' }, 'Read documents'],
+    [{ method: 'POST', path: 'gmail/drafts' }, 'Other Google access: POST gmail/drafts'],
+  ])('%j reads as %s', (line, text) => {
+    expect(describeLine(line, 'you', 'google')).toBe(text)
+  })
 
   it('describeLines uses the entry\'s provider, never Salesforce words', () => {
     expect(describeLines({ provider: 'google', reads: [{ method: 'GET', path: 'files' }], writes: [{ method: 'POST', path: 'files/*/modifyLabels' }] })
