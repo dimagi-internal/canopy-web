@@ -944,6 +944,31 @@ def test_app_features_unreadable_cache_is_none(tmp_path, content):
     assert "unknown" in desktop.describe_app_features(None)
 
 
+def test_runtime_show_prints_the_gate_when_canopy_web_times_out(monkeypatch, capsys):
+    """The gate is read from this Mac alone; a canopy-web timeout must not hide it."""
+    from canopy_runner import main
+    from canopy_runner.client import ClientError
+
+    class Slow:
+        def __init__(self, *a, **k):
+            pass
+
+        def list_runners(self):
+            raise ClientError("GET /runners/ -> timed out", transient=True)
+
+    monkeypatch.setattr(main.Config, "load", staticmethod(
+        lambda path: SimpleNamespace(base_url="https://x", runner_id="r-1")))
+    monkeypatch.setattr(main.RunnerCredential, "for_config", staticmethod(lambda cfg: None))
+    monkeypatch.setattr(main, "Client", Slow)
+    monkeypatch.setattr(desktop, "app_features", lambda: {
+        "fetched_at": 1, "start_session": True, "idle_timeout": 0})
+    rc = main.runtime_cmd(SimpleNamespace(config="x", action="show", engine=""))
+    out = capsys.readouterr()
+    assert rc == 1
+    assert "start_session ON" in out.out
+    assert "runtime unknown" in out.err and "timed out" in out.err
+
+
 def test_a_long_reply_is_cut_with_a_marker_linking_the_turn(cfg):
     """A cut reply must not read as a whole one (a bare `[:2000]` note would) and its reader dispatched follow-ups to get the rest."""
     cfg.base_url = "https://canopy.example.org"

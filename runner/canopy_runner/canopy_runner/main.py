@@ -1244,9 +1244,17 @@ def runtime_cmd(args) -> int:
         print(f"{row.get('name', cfg.runner_id)}: new sessions now open in "
               f"{row.get('engine', args.engine)} (live sessions stay where they are)")
         return 0
-    row = next((r for r in client.list_runners() if r.get("id") == cfg.runner_id), {})
-    print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
+    # The app's gate is read from this Mac alone, so it prints first: a slow or
+    # failing canopy-web must not hide it.
     print(desktop.describe_app_features(desktop.app_features()))
+    try:
+        runners = client.list_runners()
+    except ClientError as exc:
+        print(f"{cfg.runner_id}: runtime unknown, canopy-web did not answer ({exc})",
+              file=sys.stderr)
+        return 1
+    row = next((r for r in runners if r.get("id") == cfg.runner_id), {})
+    print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
     return 0
 
 
