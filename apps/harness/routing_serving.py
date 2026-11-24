@@ -12,10 +12,15 @@ from .models import (
     Runner,
     RunnerAssignment,
     Turn,
-    WorkspaceRunnerOrder,
 )
 from .routing_machine import _MACHINE_AGENT_RUNNERS, prime_machine_runners, serves_refusal
-from .routing_orders import agents_following_runner, inherited_orders, runner_tenant_slugs, runner_tenant_slugs_of
+from .routing_orders import (
+    agents_following_runner,
+    agents_following_runners,
+    inherited_orders,
+    runner_tenant_slugs,
+    runner_tenant_slugs_of,
+)
 
 # ---- which agents a box runs: ONE rule ---------------------------------------
 #
@@ -170,13 +175,8 @@ def agents_routed_to_of(runners) -> dict:
     for rid, aid in (RunnerAssignment.objects.filter(runner__in=live, enabled=True)
                      .values_list("runner_id", "agent_id")):
         listed[rid].add(aid)
-    # `agents_following_runner` answers empty for a box no workspace order lists:
-    # ask it only of the boxes one does.
-    ordered = set(WorkspaceRunnerOrder.objects.filter(runner__in=live, enabled=True)
-                  .values_list("runner_id", flat=True))
-    for r in live:
-        if r.pk in ordered:
-            listed[r.pk] |= agents_following_runner(r)
+    for rid, following in agents_following_runners(live).items():
+        listed[rid] |= following
     ids = set().union(*listed.values())
     if not ids:
         return out

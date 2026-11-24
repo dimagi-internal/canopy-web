@@ -90,3 +90,30 @@ def test_many_runners_route_the_same_agents_as_one_at_a_time(fleet):
     assert "a2" not in [a.slug for a in bulk[plain.pk]]
     assert bulk[viewers.pk] == []
     assert "lone" in [a.slug for a in bulk[follower.pk]]
+
+
+def test_boxes_on_a_workspace_order_cost_the_same_three_or_nine(fleet):
+    """Agents with no order of their own follow the workspace's. Each box on that
+    order is asked which agents follow it, and the inherited orders and every owner's
+    standing are read once for the lot, not once per box and per (box, agent) pair."""
+    users = get_user_model().objects
+
+    def box(i):
+        owner = users.create_user(username=f"o{i}", email=f"o{i}@dimagi.com")
+        WorkspaceMembership.objects.create(workspace=fleet["ws"], user=owner,
+                                           role=WorkspaceMembership.OWNER if i % 2 else WorkspaceMembership.VIEWER)
+        r = _runner(fleet, i, owner=owner, assign=False)
+        WorkspaceRunnerOrder.objects.create(workspace=fleet["ws"], runner=r, rank=i, enabled=True)
+        return r
+
+    for i in range(3):
+        box(i)
+    few, rows = _list_queries(fleet["jj"])
+    for i in range(3, 9):
+        box(i)
+    many, rows = _list_queries(fleet["jj"])
+    assert len(rows) == 9
+    assert many == few, (few, many)
+    # The viewers' boxes may not hold the agents; the owners' boxes run all six.
+    held = {r["name"]: {n for n in r["health_checks"] if n.startswith("github.")} for r in rows}
+    assert held["r1"] == {f"github.a{i}" for i in range(6)} and held["r2"] == set()
