@@ -99,7 +99,21 @@ def _runner_rows(request: HttpRequest, qs) -> list:
         # and the drill panel are gated by different routes.
         r.can_administer = r.pk in administered
     runner_repos.annotate_for_caller(request.user, rows, administered)
+    prime_github_readiness([r for r in rows if r.health])
     return _with_roots(request, rows)
+
+
+def prime_github_readiness(runners) -> None:
+    """Read the `github.<slug>` health checks of every row at once
+    (`schemas.runners.github_readiness`): the agents each box runs from one read of
+    the lot (`routing.agents_routed_to_of`), and each agent's readiness once however
+    many boxes run it."""
+    rows = list(runners)
+    routed = routing.agents_routed_to_of(rows)
+    shared: dict = {}
+    for r in rows:
+        r._routed_agents = routed[r.pk]
+        r._readiness_memo = shared
 
 
 @router.patch("/runners/{runner_id}", response=RunnerOut)
