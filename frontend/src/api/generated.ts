@@ -77708,6 +77708,9 @@ export interface operations {
                 readonly limit?: number;
                 readonly huddle?: string | null;
                 readonly parent_turn?: string | null;
+                readonly before?: string | null;
+                readonly since?: string | null;
+                readonly runner?: string | null;
             };
             readonly header?: never;
             readonly path?: never;
