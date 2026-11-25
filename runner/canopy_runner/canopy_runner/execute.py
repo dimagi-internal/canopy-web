@@ -1327,8 +1327,15 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         reader.offset = pre_send[1]
     else:
         reader.seek_end()  # byte-equivalent of the old start_index snapshot, without re-reading
+    # A caller's confined session answers only through its profile's tools. Seed what
+    # the session already had (a reused session's startup deltas are behind the
+    # reader), so the bridge can hold and fail an answer written without them.
+    required = chat_bridge.required_mcp_tools(caller.confined_profile(turn))
+    seen, deltas = (chat_bridge.tools_in_transcript(str(path), reader.offset)
+                    if required else (set(), 0))
     chat_bridge.IN_FLIGHT[turn_id] = chat_bridge.LiveBridge(
         turn_id=turn_id, task=task, reader=reader, project=target,
+        required_tools=required, tools_seen=seen, tools_reported=bool(deltas),
     )
     logger.info("chat turn=%s bridging from task=%s (agent=%s)", turn_id, task, target)
     return f"chat:{turn_id}:{task}"

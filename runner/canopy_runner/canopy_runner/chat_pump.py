@@ -169,6 +169,18 @@ def pump_chat_bridges(cfg: Config, client: Client) -> None:
             # its final tick is exactly the part a cost aggregator needs (the
             # `result` line carries the turn's totals).
             flush_turn_transcript(client, bridge, final=True)
+            if bridge.done_reason == "missing_tools":
+                # FAILED, so a caller such as labs' worker-chat bridge hands the
+                # thread to a person; the error event says why on the client's stream.
+                try:
+                    client.post_events(turn_id, [{"kind": "error", "payload": {
+                        "detail": "this session could not reach its data tools; "
+                                  "the message was not answered"}}])
+                except Exception:  # noqa: BLE001 — finishing failed is what matters
+                    logger.warning("chat turn=%s: could not post the error", turn_id,
+                                   exc_info=True)
+                finish_chat_bridge(cfg, client, bridge, status="failed", note=bridge.note)
+                continue
             finish_chat_bridge(cfg, client, bridge, status="done", note=bridge.note)
 
 
