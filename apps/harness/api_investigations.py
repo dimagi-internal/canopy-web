@@ -16,6 +16,8 @@ debugger agent's admins, and the debugger's own canopy login
 """
 from __future__ import annotations
 
+import uuid
+
 from django.contrib.auth import get_user_model
 from django.http import HttpRequest
 from ninja import Router
@@ -24,11 +26,13 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
 from apps.api.route_gates import gate
+from apps.canopy_sessions.models import Session
 from apps.workspaces import services as wsvc
 
 from . import auto_debug
-from .models import FailureInvestigation
+from .models import FailureInvestigation, Turn
 from .schemas import (
+    FailureInvestigationDetailOut,
     FailureInvestigationOut,
     HandOffInvestigationIn,
     InvestigationStatus,
@@ -69,13 +73,52 @@ def list_failure_investigations(request: HttpRequest, status: InvestigationStatu
     return paginate(qs.order_by("-last_seen", "-id"), offset=clamp_offset(offset), limit=clamp_limit(limit))
 
 
-@router.get("/{investigation_id}", response=FailureInvestigationOut,
+@router.get("/{investigation_id}", response=FailureInvestigationDetailOut,
             summary="Get one failure investigation")
 @gate("logs.read", "agent-admin")
 def get_failure_investigation(request: HttpRequest, investigation_id: int):
     """One investigation: the normalized failure, its latest raw note, the recent
-    failed turns, the agents and runners it hit, and its debug turn."""
-    return _investigation_or_404(request, investigation_id)
+    failed turns, the agents and runners it hit, and its debug turn.
+
+    `failed_turns` says, per recent failed turn, which agent, channel, kind of
+    caller, profile, mode and runner it was: metadata, never content. Those turns'
+    own routes stay behind the chat ACL (a private chat is its people's), so this
+    is how the people who debug a failure can still tell one kind of turn from
+    another."""
+    inv = _investigation_or_404(request, investigation_id)
+    inv.failed_turns = _failed_turns(inv)
+    return inv
+
+
+def _failed_turns(inv: FailureInvestigation) -> list[dict]:
+    ids = []
+    for raw in inv.turn_ids or []:
+        try:
+            ids.append(uuid.UUID(str(raw)))
+        except ValueError:
+            continue
+    turns = {str(t.pk): t for t in Turn.objects.filter(pk__in=ids).select_related(
+        "agent", "chat_session", "chat_session__agent", "claimed_by")}
+    out = []
+    for raw in inv.turn_ids or []:
+        t = turns.get(str(raw))
+        if t is None:
+            out.append({"id": str(raw)})
+            continue
+        sess = t.chat_session
+        agent = t.agent or (sess.agent if sess is not None else None)
+        own_thread = (sess is not None and sess.origin == Session.ORIGIN_RUNNER
+                      and sess.created_by_id is None)
+        out.append({
+            "id": str(t.pk), "agent": agent.slug if agent else "", "origin": t.origin,
+            "chat": sess is not None, "private_chat": sess is not None and not own_thread,
+            "initiator_kind": t.initiator_kind, "initiator_via": t.initiator_via,
+            "initiator_assurance": t.initiator_assurance, "profile": t.capability,
+            "turn_mode": t.turn_mode, "runner": t.claimed_by.name if t.claimed_by else "",
+            "cli": t.cli, "status": t.status, "created_at": t.created_at,
+            "finished_at": t.finished_at,
+        })
+    return out
 
 
 @router.post("/{investigation_id}/resolve", response=FailureInvestigationOut,

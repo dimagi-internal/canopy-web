@@ -88,6 +88,8 @@ from .fleets import (  # noqa: F401
     RunnerFleetSizeIn,
 )
 from .investigations import (  # noqa: F401
+    FailedTurnOut,
+    FailureInvestigationDetailOut,
     FailureInvestigationOut,
     HandOffInvestigationIn,
     InvestigationStatus,

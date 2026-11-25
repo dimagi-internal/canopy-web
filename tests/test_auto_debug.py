@@ -16,9 +16,9 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.attention.models import Alert, AlertEvent
+from apps.canopy_sessions.models import Session
 from apps.events.models import Event
-from apps.harness import auto_debug, services
-from apps.harness import claim
+from apps.harness import auto_debug, claim, services
 from apps.harness import initiator as who
 from apps.harness.models import FailureInvestigation, Runner, RunnerDrill, Turn, TurnEvent
 from apps.workspaces.models import WorkspaceMembership
@@ -748,3 +748,56 @@ def test_the_prompt_carries_the_runners_lifecycle_events_but_not_paths_or_stderr
     assert "event=adopted executor=acp pid=41 attempt=a1 exited=False" in prompt
     assert "event=exited executor=acp ok=False stop_reason=cancelled" in prompt
     assert "private-path" not in prompt and "quoting a person" not in prompt
+
+
+# ---- what the people who debug a failure may see of its turns ---------------------
+
+
+def test_the_debugger_sees_a_private_chats_failed_turn_as_metadata_not_content(
+        ada, ws, runner, django_capture_on_commit_callbacks):
+    """A failed turn in someone's own chat is behind the chat ACL: its own routes 404
+    for the debugger (and for the agent's own login). The investigation still says
+    what kind of turn failed, on which agent and runner, and never what was said."""
+    ada_login = a_user("ada@dimagi-ai.com")
+    WorkspaceMembership.objects.create(workspace=ws, user=ada_login, role=WorkspaceMembership.EDITOR)
+    Agent.objects.filter(pk=ada.pk).update(user=ada_login)
+    budgy = _agent(ws, "budgy")
+    asker = a_member()
+    chat = Session.objects.create(workspace=ws, agent=budgy, created_by=asker,
+                                  origin=Session.ORIGIN_WEB)
+    turn = Turn.objects.create(
+        chat_session=chat, workspace=ws, origin="canopy_web_chat",
+        idempotency_key=f"chat-{uuid.uuid4()}", prompt="SECRET budget question",
+        status=Turn.RUNNING, claimed_by=runner, claimed_at=timezone.now(),
+        session_key="c-budgy-chat-1", initiator_kind="user", initiator_via="canopy_web_chat",
+        initiator_user=asker, capability="confined", turn_mode="manual")
+    with django_capture_on_commit_callbacks(execute=True):
+        services.finish_turn(turn, status=Turn.FAILED, result_note="sf boom")
+    inv = FailureInvestigation.objects.get()
+    c = _client(ada_login)
+
+    assert c.get(f"/api/harness/turns/{turn.pk}").status_code == 404   # the chat stays its people's
+
+    r = c.get(f"/api/harness/failure-investigations/{inv.pk}")
+    assert r.status_code == 200, r.content
+    [row] = r.json()["failed_turns"]
+    assert row["id"] == str(turn.pk) and row["agent"] == "budgy"
+    assert row["chat"] is True and row["private_chat"] is True
+    assert (row["initiator_kind"], row["profile"], row["turn_mode"]) == ("user", "confined", "manual")
+    assert row["runner"] == runner.name and row["status"] == Turn.FAILED
+    body = r.content.decode()
+    assert "SECRET" not in body and asker.email not in body
+
+
+def test_an_agent_turn_reads_as_not_a_chat_and_a_vanished_turn_as_just_its_id(
+        ada, ws, runner, django_capture_on_commit_callbacks):
+    ada_login = a_user("ada@dimagi-ai.com")
+    WorkspaceMembership.objects.create(workspace=ws, user=ada_login, role=WorkspaceMembership.EDITOR)
+    Agent.objects.filter(pk=ada.pk).update(user=ada_login)
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(_agent(ws, "ace"), runner, "boom")
+    inv = FailureInvestigation.objects.get()
+    FailureInvestigation.objects.filter(pk=inv.pk).update(turn_ids=[*inv.turn_ids, str(uuid.uuid4())])
+    rows = _client(ada_login).get(f"/api/harness/failure-investigations/{inv.pk}").json()["failed_turns"]
+    assert rows[0]["agent"] == "ace" and rows[0]["chat"] is False and rows[0]["private_chat"] is False
+    assert set(rows[1]) >= {"id"} and rows[1]["agent"] == ""
