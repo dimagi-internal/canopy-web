@@ -103,6 +103,7 @@ def test_list_shows_every_provider_set_up_or_not(admin, ws):
         # canopy's public address, never this request's host (an MCP call runs in-process).
         "callback_url": f"{base_url()}/auth/connections/salesforce/w/callback/",
         "connection_count": 0, "updated_at": None, "configured_by_email": "",
+        "shared_with_children": False, "inherited_from": None,
     }
     assert "session timeout" in row["option_fields"][1]["help"]
 

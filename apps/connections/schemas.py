@@ -231,6 +231,14 @@ class ConnectionAppOut(StrictModel):
                     "`login_url`): like `client_id`, they cannot change while `connection_count` is above zero "
                     "(409 `app_locked`).")
     connection_count: int = Field(description="Connections made with this app; removing it disconnects them.")
+    shared_with_children: bool = Field(
+        default=False,
+        description="The workspaces below this one may use this app when they have none of their own: a person "
+                    "there signs in with it for their own screens (an hour of access, as here).")
+    inherited_from: str | None = Field(
+        default=None,
+        description="Set when this workspace has no app of its own and its people's screens use an ancestor's "
+                    "that it shares: that workspace's slug. Change it there.")
     updated_at: datetime | None = None
     configured_by_email: str = Field(default="", description="Who last saved it; empty if unknown.")
 
@@ -251,6 +259,10 @@ class ConnectionAppIn(StrictModel):
     scopes: list[str] = Field(
         default_factory=list,
         description="The full list of extra scopes, from `scope_choices`; replaces the saved list.")
+    shared_with_children: bool | None = Field(
+        default=None,
+        description="Let the workspaces below this one use this app when they have none of their own. Omitted "
+                    "keeps the saved choice.")
 
 
 class TurnConnectionsOut(StrictModel):

@@ -253,3 +253,83 @@ def test_my_connections_lists_one_for_screens_with_no_agent(world, fake):
     _connect_for_screens(world.client)
     body = world.client.get("/api/connections/").json()
     assert [(t["agent"], t["provider"]) for t in body["temporary"]] == [(None, "google")]
+
+
+# ---- a sub-workspace's screens on its parent's app ---------------------------------------------
+
+CHILD_START = "/auth/connections/google/c/start/"
+
+
+@pytest.fixture
+def child(world):
+    """Workspace c below w, and a person who is in c only."""
+    c = Workspace.objects.create(slug="c", display_name="C", created_by=world.lender, parent=world.ws)
+    kid = get_user_model().objects.create_user("kid", email="kid@gmail.com")
+    WorkspaceMembership.objects.create(workspace=c, user=kid, role=WorkspaceMembership.EDITOR)
+    client = Client()
+    client.force_login(kid)
+    return mock.Mock(ws=c, person=kid, client=client)
+
+
+def _share(world, on=True):
+    world.app.shared_with_children = on
+    world.app.save(update_fields=["shared_with_children"])
+
+
+def test_a_parent_app_not_shared_serves_no_child(world, child):
+    with pytest.raises(services.NotConfigured):
+        services.app_serving("c", "google")
+    resp = child.client.get(CHILD_START, {"temporary": "1", "for_screens": "1", "return_to": "/w/c/views/2"})
+    assert "reason=not_configured" in resp["Location"] and resp["Location"].startswith("/w/c/views/2?")
+
+
+def test_a_child_signs_in_for_its_screens_with_the_shared_parent_app(world, child, fake):
+    _share(world)
+    start = child.client.get(CHILD_START, {"temporary": "1", "for_screens": "1", "return_to": "/w/c/views/2"})
+    query = parse_qs(urlparse(start["Location"]).query)
+    # The parent's client, coming back to the parent's callback: the one registered at Google.
+    assert query["client_id"] == ["cid"] and query["redirect_uri"][0].endswith(CALLBACK)
+    done = child.client.get(CALLBACK, {"code": "c", "state": query["state"][0]})
+    assert done["Location"].startswith("/w/c/views/2?") and "status=ok" in done["Location"]
+    row = TemporaryAccess.objects.get(user=child.person)
+    assert row.app == world.app and row.agent is None
+    assert temporary.for_screens(child.person, "google", "c") == row
+    # Not a member of the parent: the hour serves nothing there.
+    assert temporary.for_screens(child.person, "google", "w") is None
+    _share(world, on=False)  # the parent stops sharing: the hour serves the child no longer
+    assert temporary.for_screens(child.person, "google", "c") is None
+
+
+def test_the_childs_own_app_wins_and_a_nearer_refusal_is_not_skipped(world, child):
+    _share(world)
+    assert services.app_serving("c", "google") == world.app
+    grandchild = Workspace.objects.create(slug="gc", display_name="GC", created_by=world.lender, parent=child.ws)
+    assert services.app_serving("gc", "google") == world.app  # passed down through c, which has none
+    own = ConnectionApp.objects.create(workspace=child.ws, provider="google", client_id="cid2", client_secret="s2")
+    assert services.app_serving("c", "google") == own
+    # c's own app is not shared, so gc does not reach past it to w's.
+    with pytest.raises(services.NotConfigured):
+        services.app_serving(grandchild.slug, "google")
+
+
+def test_lending_to_an_agent_in_a_child_still_needs_the_childs_own_app(world, child):
+    _share(world)
+    Agent.objects.create(slug="kidbot", name="K", workspace=child.ws, owner=child.person)
+    resp = child.client.get(CHILD_START, {"temporary": "1", "for_agent": "kidbot", "return_to": "/w/c/views/2"})
+    assert "reason=not_configured" in resp["Location"]
+
+
+def test_settings_show_the_inherited_app_and_save_the_choice(world, child):
+    WorkspaceMembership.objects.filter(workspace=world.ws, user=world.lender).update(role=WorkspaceMembership.OWNER)
+    WorkspaceMembership.objects.create(workspace=child.ws, user=world.lender, role=WorkspaceMembership.OWNER)
+    with mock.patch("apps.passkeys.stepup.is_browser", return_value=False):
+        put = world.client.put("/api/workspaces/w/connection-apps/google", {
+            "client_id": "cid", "options": {"allowed_domains": "gmail.com"}, "shared_with_children": True,
+        }, content_type="application/json")
+    assert put.status_code == 200, put.content
+    assert put.json()["shared_with_children"] is True and put.json()["inherited_from"] is None
+    world.app.refresh_from_db()
+    assert world.app.shared_with_children
+    rows = {a["provider"]: a for a in world.client.get("/api/workspaces/c/connection-apps").json()["apps"]}
+    assert rows["google"]["configured"] is False and rows["google"]["inherited_from"] == "w"
+    assert rows["salesforce"]["inherited_from"] is None

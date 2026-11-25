@@ -53,6 +53,9 @@ class ConnectionApp(models.Model):
     # Extra scopes chosen from the provider's `scope_choices`, space-separated, on
     # top of the ones the provider always asks for.
     scopes = models.CharField(max_length=2000, blank=True, default="")
+    # The workspace's admins let the workspaces below it use this app when they have none of their own
+    # (`services.app_serving`): a person in a sub-workspace signs in with it for their own screens there.
+    shared_with_children = models.BooleanField(default=False)
     configured_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
     )

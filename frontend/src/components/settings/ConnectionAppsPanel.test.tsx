@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { ApiError } from '@/api/problem'
 
 const m = vi.hoisted(() => ({
@@ -110,6 +110,7 @@ describe('ConnectionAppsPanel', () => {
       client_secret: '',
       options: { allowed_domains: 'dimagi.com' },
       scopes: [GMAIL_READ, CAL_READ],
+      shared_with_children: false,
     }))
   })
 
@@ -225,6 +226,23 @@ describe('ConnectionAppsPanel', () => {
     const help = document.getElementById(input.getAttribute('aria-describedby') ?? '')
     expect(help?.textContent).toBe('Comma-separated; empty allows any account.')
     expect(input.closest('label')?.textContent).not.toContain('Comma-separated')
+  })
+
+  it('saves whether the workspaces below may use the app', async () => {
+    show()
+    const card = await screen.findByTestId('connection-app-salesforce')
+    fireEvent.click(within(card).getByLabelText(/Workspaces below this one may use this app/))
+    fireEvent.click(within(card).getByRole('button', { name: 'Save Salesforce' }))
+    await waitFor(() => expect(m.configureConnectionApp).toHaveBeenCalled())
+    expect(m.configureConnectionApp.mock.calls[0][2].shared_with_children).toBe(true)
+  })
+
+  it("says a sub-workspace uses its parent's app when it has none of its own", async () => {
+    m.listConnectionApps.mockResolvedValue([SALESFORCE, { ...GOOGLE, inherited_from: 'dimagi' }])
+    show()
+    const card = await screen.findByTestId('connection-app-google')
+    expect(within(card).getByText("Using dimagi's")).toBeTruthy()
+    expect(within(card).getByText(/which shares it with the\s+workspaces below it/)).toBeTruthy()
   })
 
   it('offers no Remove for a provider that was never set up', async () => {
