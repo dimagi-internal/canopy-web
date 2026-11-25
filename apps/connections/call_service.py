@@ -235,6 +235,13 @@ def _call_on_temporary(user, provider: str, surface: declarations.Surface, match
     row = temporary.for_screens(user, provider, surface.workspace)
     if row is None:
         raise services.NotConnected(f"This page needs your {title} for the next hour. Allow it, then try again.")
+    # An hour allowed before the app's admin ticked another permission: the provider would refuse what
+    # needs it, so ask again now rather than spend a write on a call bound to be refused.
+    if providers.for_app(row.app).missing_scopes(tuple(row.scopes.split())):
+        again = services.ConnectionError("scope_added", f"This page now needs more of your {title} than you "
+                                                        "allowed. Allow it again, then try again.")
+        again.connect_again = True
+        raise again
     if matched.rule.kind == "write":
         _spend_write(user, payload.operation_id, surface)
     sent = _Sent()
