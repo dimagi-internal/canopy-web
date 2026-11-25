@@ -23,7 +23,8 @@ one runs.
   lacks is refused `not_in_mode`; a local operation whose subject isn't on screen (no thread open,
   a different thread, no compose) is refused `not_on_screen`. Neither is retried in the other mode.
   A fallback would hide which way the person's mail went and would make a local failure look like
-  success through the server. Every answer carries the `mode` it ran in.
+  success through the server. Every answer carries the `mode` it ran in, local-only ones included,
+  and an act without a click is refused `needs_click` in either mode.
 - **The person chooses.** The mode is kept per app on this browser (`ModeStore`, `localStorage`
   `canopy.mode:<workspace>/<app>`), default `server`. It is set by the panel's switch or by a page's
   `canopy.mode.set(mode)`, which needs a click like any act. Every page of the app hears the
