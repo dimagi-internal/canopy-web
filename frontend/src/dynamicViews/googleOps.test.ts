@@ -113,6 +113,22 @@ describe('gmail.thread answers one shape in both modes', () => {
   })
 })
 
+describe('local-only operations', () => {
+  it('answer what is on screen marked with their mode, and nothing open is not_on_screen', async () => {
+    const { h, local } = host({ mode: 'local' })
+    local.request.mockResolvedValueOnce({ threadId: THREAD, subject: 'Pilot' })
+    await expect(runGoogleOp('gmail.open_email', {}, h)).resolves.toEqual({ threadId: THREAD, subject: 'Pilot', mode: 'local' })
+    local.request.mockResolvedValueOnce({ to: [], cc: [], bcc: [] })
+    await expect(runGoogleOp('gmail.compose_recipients', {}, h)).resolves.toMatchObject({ mode: 'local', to: [] })
+    local.request.mockResolvedValueOnce({ filled: { subject: false, body: true } })
+    await expect(runGoogleOp('gmail.fill_compose', { bodyText: 'x' }, h)).resolves.toEqual({ filled: { subject: false, body: true }, mode: 'local' })
+    for (const op of ['gmail.open_email', 'gmail.compose_recipients', 'gmail.fill_compose']) {
+      local.request.mockResolvedValueOnce(null)
+      await expect(runGoogleOp(op, { bodyText: 'x' }, h)).rejects.toMatchObject({ code: 'not_on_screen' })
+    }
+  })
+})
+
 describe('gmail.draft', () => {
   it('local: start_compose on screen with the click, unsaved', async () => {
     const { h, local, server } = host({ mode: 'local' })
@@ -152,7 +168,8 @@ describe('gmail.draft', () => {
   it('server: a write with no click is the lease\'s refusal, and nothing is posted', async () => {
     const { h, server } = host()
     server.begin.mockRejectedValueOnce(new Error('This needs a click.'))
-    await expect(runGoogleOp('gmail.draft', { bodyText: 'x' }, h)).rejects.toThrow('This needs a click.')
+    // The same code the browser's refusal of an act carries, so a page tells "click first" apart in either mode.
+    await expect(runGoogleOp('gmail.draft', { bodyText: 'x' }, h)).rejects.toMatchObject({ code: 'needs_click', message: 'This needs a click.' })
     expect(server.call).not.toHaveBeenCalled()
   })
 

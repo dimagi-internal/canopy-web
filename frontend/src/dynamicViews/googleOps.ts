@@ -16,7 +16,7 @@
  * (a write needs a click's lease). This module only chooses between them and shapes the answers.
  * Design: docs/architecture/local-and-server-modes.md.
  */
-import type { CallResult } from './connectionCalls'
+import { NEEDS_CLICK, type CallResult } from './connectionCalls'
 
 export type Mode = 'local' | 'server'
 export const MODES: readonly Mode[] = ['local', 'server']
@@ -145,7 +145,11 @@ export function runGoogleOp(name: unknown, args: unknown, host: OpHost): Promise
       if (!host.local) throw new OpError('not_in_mode', 'Local mode needs the Dimagi Canopy extension\'s panel.')
       return LOCAL[name as string](a, host.local, host.clicked)
     }
-    return SERVER[name as string](a, host)
+    // The server's click refusal carries the same code as the browser's (`needs_click`).
+    return SERVER[name as string](a, host).catch((e: unknown) => {
+      if (e instanceof Error && !(e as { code?: string }).code && e.message === NEEDS_CLICK) throw new OpError('needs_click', NEEDS_CLICK)
+      throw e
+    })
   } catch (e) {
     return Promise.reject(e)
   }
@@ -177,17 +181,22 @@ const LOCAL: Record<string, (a: Record<string, unknown>, tab: Local, clicked: bo
       return send()
     })
   },
-  'gmail.open_email': (_a, tab) => tab.request('read_open_email', {}, false),
+  'gmail.open_email': (_a, tab) => tab.request('read_open_email', {}, false)
+    .then((r) => onScreen(r, 'No email is open in Gmail beside the panel.')),
   'gmail.fill_compose': (a, tab, clicked) => {
     const bodyText = text(a.bodyText, 'bodyText')
     const mode = a.mode === 'replace' ? 'replace' : 'insert'
     return tab.request('fill_compose', { bodyText, mode, ...(a.subject != null ? { subject: String(a.subject) } : {}) }, clicked)
-      .then((r) => {
-        if (r == null) throw new OpError('not_on_screen', 'No compose window is open in Gmail beside the panel.')
-        return r
-      })
+      .then((r) => onScreen(r, 'No compose window is open in Gmail beside the panel.'))
   },
-  'gmail.compose_recipients': (_a, tab) => tab.request('compose_recipients', {}, false),
+  'gmail.compose_recipients': (_a, tab) => tab.request('compose_recipients', {}, false)
+    .then((r) => onScreen(r, 'No compose window is open in Gmail beside the panel.')),
+}
+
+/** A local-only answer: what the adapter read, marked with its mode; nothing there is `not_on_screen`. */
+function onScreen(r: unknown, nothing: string): Record<string, unknown> {
+  if (r == null || typeof r !== 'object') throw new OpError('not_on_screen', nothing)
+  return { ...(r as Record<string, unknown>), mode: 'local' }
 }
 
 interface LocalPerson { name?: string; email?: string }
