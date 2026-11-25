@@ -69,6 +69,7 @@ import codecs
 import contextlib
 import datetime
 import fcntl
+import fnmatch
 import functools
 import glob
 import hashlib
@@ -5718,6 +5719,12 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     workdir.mkdir(parents=True, exist_ok=True)
     resume = (resume_session_id
               if resume_session_id and _resume_target_exists(workdir, resume_session_id) else None)
+    # A confined turn's reply is held until the session is known to have the MCP tools
+    # its profile works through (`_ConfinedToolsGate`): one without them answers a
+    # caller from nothing, and that must fail to a person, not reach them.
+    gate = _ConfinedToolsGate.for_turn(getattr(_TURN_ENV, "confined", None), emit)
+    if gate is not None:
+        emit = gate.emit
 
     def on_session(session_id: str) -> None:
         _announce_session(turn_id, session_id)
@@ -5792,6 +5799,14 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _log(f"turn {turn_id[:8]}: the API refused the turn ({fault}), per its transcript")
         _CREDENTIAL_FAULT[turn_id] = fault
         return False, final_text, res.session_id
+    if gate is not None:
+        missing = gate.settle(workdir, res.session_id)
+        if missing:
+            _log(f"turn {turn_id[:8]}: {missing}")
+            # FAILED, so a host site such as labs' worker-chat bridge hands the
+            # conversation to a person; the error event says why on the stream.
+            gate.fail_event()
+            return False, missing, res.session_id
     limit = res.rate_limit
     if limit:
         _log(f"turn {turn_id[:8]}: rate limit {limit.get('status')} ({limit.get('rateLimitType')})")
@@ -5807,6 +5822,88 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 _CAP_RESET_HINT[turn_id] = float(resets)
     return res.ok, final_text, res.session_id
 
+
+
+class _ConfinedToolsGate:
+    """Holds a confined turn's assistant text until the session is known to have
+    the MCP tools its profile works through, then releases it or drops it.
+
+    The cloud runner's counterpart of the laptop's chat_bridge check.
+    A confined session whose canopy-web MCP did not authenticate has only that
+    server's `authenticate` placeholders: no `who_is_asking`, no `site_*`. Its agent
+    then answers a caller from nothing ("I can't see your payment record") and the
+    turn ends done, so the host site never hands the conversation to a person.
+    Claude Code records the session's deferred tools in its transcript
+    (`deferred_tools_delta`); `settle` reads them once the turn has ended.
+
+    A transcript that reports no tool list at all is not judged (an older CLI, or
+    every tool loaded eagerly): the text is released as before."""
+
+    def __init__(self, required: tuple[str, ...], emit):
+        self.required = required
+        self._emit = emit
+        self._held: list[dict] = []
+
+    @classmethod
+    def for_turn(cls, confined: dict | None, emit) -> "_ConfinedToolsGate | None":
+        if confined is None:
+            return None
+        required = tuple(t for t in (confined.get("tools") or [])
+                         if isinstance(t, str) and t.startswith("mcp__"))
+        return cls(required, emit) if required else None
+
+    def emit(self, events) -> None:
+        held = [e for e in events if isinstance(e, dict) and e.get("kind") == "assistant"]
+        rest = [e for e in events if not (isinstance(e, dict) and e.get("kind") == "assistant")]
+        self._held.extend(held)
+        if rest:
+            self._emit(rest)
+
+    def fail_event(self) -> None:
+        self._emit([{"kind": "error", "payload": {
+            "detail": "this session could not reach its data tools; the message was not answered"}}])
+
+    def settle(self, cwd, session_id: str) -> str:
+        """Release the held text and return "", or drop it and return why the turn fails."""
+        seen, reported = _transcript_deferred_tools(cwd, session_id)
+        if not reported or any(fnmatch.fnmatchcase(name, pat)
+                               for name in seen for pat in self.required):
+            held, self._held = self._held, []
+            if held:
+                self._emit(held)
+            return ""
+        self._held.clear()
+        mcp = sorted(n for n in seen if n.startswith("mcp__"))
+        return ("missing_tools: the confined session has none of its profile's tools ("
+                + ", ".join(self.required) + "); its MCP tools were: " + (", ".join(mcp) or "none")
+                + ". Its reply was withheld so the conversation goes to a person.")
+
+
+def _transcript_deferred_tools(cwd, session_id: str) -> tuple[set[str], int]:
+    """The deferred tools a session's transcript says it had, and how many
+    `deferred_tools_delta` records said so (0: the transcript reported none)."""
+    ct = _transcript_core()
+    seen: set[str] = set()
+    if ct is None or not session_id or cwd is None:
+        return seen, 0
+    try:
+        path = ct.resolve_cli_transcript(cwd, session_id, claude_home=CLAUDE_PROJECTS_HOME)
+        lines = pathlib.Path(path).read_bytes().splitlines() if path is not None else []
+    except Exception:  # noqa: BLE001 — a transcript that cannot be read reports nothing
+        return seen, 0
+    deltas = 0
+    for raw in lines:
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        att = rec.get("attachment") if isinstance(rec, dict) and rec.get("type") == "attachment" else None
+        if not isinstance(att, dict) or att.get("type") != "deferred_tools_delta":
+            continue
+        deltas += 1
+        seen.update(n for n in att.get("addedNames") or [] if isinstance(n, str))
+        seen.difference_update(n for n in att.get("removedNames") or [] if isinstance(n, str))
+    return seen, deltas
 
 # ── an ACP ask in a chat: posted to the session, answered like a laptop's ─────
 # A laptop's agent draws its dialog on a terminal and the runner reports it; here
