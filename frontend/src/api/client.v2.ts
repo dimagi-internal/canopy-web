@@ -95,6 +95,8 @@ function isPublicLinkRoute(): boolean {
     p.startsWith("/invite/") ||
     p === "/about" ||
     p === "/get-started" ||
+    // The browser extension's side panel: framed, so it shows its own sign-in.
+    p === "/ext/panel" || p === "/ext/panel/" ||
     isScopedViewerPath(p)
   );
 }

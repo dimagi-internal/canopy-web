@@ -118,6 +118,14 @@ def get(key: str) -> Kind:
     return kind
 
 
+def needs_step_up(key: str) -> bool:
+    """Whether approving a request of kind `key` needs a passkey (`Kind.step_up`); an unknown kind does not."""
+    try:
+        return get(key).step_up
+    except KindError:
+        return False
+
+
 def parse(key: str, params: dict):
     """(kind, validated params) — or KindError saying what is wrong, in words an agent can fix."""
     kind = get(key)
@@ -148,6 +156,6 @@ def _load() -> None:
     global _loaded
     if _loaded:
         return
-    from . import agent_admin, agent_turns, vault_attach, workspace_members  # noqa: F401, PLC0415 — registers the kinds
+    from . import agent_admin, agent_aws_role, agent_turns, vault_attach, workspace_members  # noqa: F401, PLC0415 — registers the kinds
 
     _loaded = True

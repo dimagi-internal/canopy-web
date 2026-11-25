@@ -51,7 +51,7 @@ def test_set_narrative_visibility_cascades(db, owner):
     w1 = _wt(owner, drive_file_id="f1", visibility="private")
     w2 = _wt(owner, drive_file_id="f2", visibility="private", run_id="demo-2026-06-09-002")
     r1 = _rev(owner, visibility="private")
-    wt_n, rev_n = aggregate.set_narrative_visibility("demo", "link")
+    wt_n, rev_n = aggregate.set_narrative_visibility("demo", "link", workspace_slugs=aggregate.EVERY_WORKSPACE)
     assert (wt_n, rev_n) == (2, 1)
     w1.refresh_from_db(); w2.refresh_from_db(); r1.refresh_from_db()
     assert w1.visibility == w2.visibility == "link"
@@ -61,12 +61,12 @@ def test_set_narrative_visibility_cascades(db, owner):
 def test_aggregate_visibility_public_private_mixed(db, owner):
     _wt(owner, drive_file_id="fa", visibility="link")
     _rev(owner, visibility="link")
-    assert aggregate.build_narrative("demo")["visibility"] == "public"
-    aggregate.set_narrative_visibility("demo", "private")
-    assert aggregate.build_narrative("demo")["visibility"] == "private"
+    assert aggregate.build_narrative("demo", workspace_slugs=aggregate.EVERY_WORKSPACE)["visibility"] == "public"
+    aggregate.set_narrative_visibility("demo", "private", workspace_slugs=aggregate.EVERY_WORKSPACE)
+    assert aggregate.build_narrative("demo", workspace_slugs=aggregate.EVERY_WORKSPACE)["visibility"] == "private"
     # Make one row disagree -> mixed.
     Walkthrough.objects.filter(narrative_slug="demo").update(visibility="link")
-    assert aggregate.build_narrative("demo")["visibility"] == "mixed"
+    assert aggregate.build_narrative("demo", workspace_slugs=aggregate.EVERY_WORKSPACE)["visibility"] == "mixed"
 
 
 @override_settings(REQUIRE_AUTH=True)

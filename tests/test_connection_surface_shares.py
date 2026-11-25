@@ -28,6 +28,8 @@ from tests.fixtures.connection_calls import Answer, Salesforce, TokensWorld
 from tests.fixtures.connections import FakeSF, sealed_to_owner, sf_app
 
 pytestmark = pytest.mark.django_db
+#: What `Answer` sends as `Sforce-Limit-Info`, which comes back to the page as `limits`.
+LIMITS = "api-usage=1/15000"
 
 J = "application/json"
 CALL = "/api/connections/salesforce/request"
@@ -372,7 +374,7 @@ def test_shared_read_by_member(w):
     with FakeSF(), Salesforce(Answer(body={"totalSize": 2})) as sf:
         r = call(w)
     assert r.status_code == 200, r.content
-    assert r.json() == {"status": 200, "body": {"totalSize": 2}}
+    assert r.json() == {"status": 200, "body": {"totalSize": 2}, "limits": LIMITS}
     assert len(sf.calls) == 1
 
 

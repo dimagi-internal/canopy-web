@@ -23,10 +23,19 @@
    state) answers it as `application/problem+json`, like every error here.
    Ninja documents every response as `application/json`; this says what is
    actually sent.
+
+4. **A response's default description is the same on every Python.** Ninja
+   describes a response by the stdlib reason phrase (`http.client.responses`),
+   which Python 3.13 renamed for 413, 414, 416 and 422; the document uses the
+   pinned RFC 9110 phrase (`apps/api/errors.py::reason_phrase`) instead, so
+   `generated.ts` does not depend on the interpreter that dumped the schema.
 """
 from __future__ import annotations
 
+from http.client import responses as _STDLIB_PHRASES
 from typing import Any
+
+from .errors import reason_phrase
 
 NO_NUL_PATTERN = r"^[^\x00]*$"
 
@@ -52,7 +61,19 @@ def correct(schema: dict[str, Any]) -> dict[str, Any]:
             for node in inputs:
                 _refuse_nul(node, components, marked)
             _problems_as_problem_json(operation.setdefault("responses", {}))
+            _pinned_descriptions(operation["responses"])
     return schema
+
+
+def _pinned_descriptions(responses: dict[Any, Any]) -> None:
+    for status, response in responses.items():
+        try:
+            code = int(status)
+        except (TypeError, ValueError):
+            continue
+        # Only Ninja's default (the stdlib phrase); a description a route wrote stays.
+        if isinstance(response, dict) and response.get("description") == _STDLIB_PHRASES.get(code):
+            response["description"] = reason_phrase(code) or response["description"]
 
 
 def _problems_as_problem_json(responses: dict[Any, Any]) -> None:

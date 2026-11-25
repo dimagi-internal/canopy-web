@@ -166,6 +166,10 @@ class SettingChange(models.Model):
     ``also_deleted``), unless its handler reported its own (`audit.note_change`).
     Empty when nothing it wrote changed — the request body is then the record."""
 
+    acting = models.JSONField(default=dict, blank=True)
+    """Who acted, when the actor is an agent in its own turn the route let act for the person it answers to
+    (`audit.note_acting`): ``{"agent", "turn", "for_id", "for"}`` (ids and addresses only). Empty otherwise."""
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

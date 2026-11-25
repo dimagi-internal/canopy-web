@@ -19,6 +19,8 @@ from django.views.decorators.http import require_http_methods
 from apps.common.client_ip import client_ip
 from apps.common.script_prefix import self_full_path
 from apps.common.views_debug import is_machine
+from apps.passkeys import stepup
+from apps.passkeys.models import Passkey
 
 from . import mcp_oauth
 
@@ -108,20 +110,40 @@ def authorize(request: HttpRequest) -> HttpResponse:
                       {"reason": "Sign in to canopy in your browser to approve this."}, status=403)
 
     if request.method == "GET":
-        return render(request, "tokens/mcp_authorize.html", {
-            "client_name": req.client.display_name,
-            "redirect_host": _redirect_host(req.redirect_uri),
-            "form_action": self_full_path(request).split("?", 1)[0],
-            "params": {k: params.get(k, "") for k in (
-                "client_id", "redirect_uri", "response_type", "code_challenge",
-                "code_challenge_method", "state", "scope", "resource")},
-        })
+        return _consent_page(request, req, params)
 
     if request.POST.get("decision") != "approve":
         return _Redirect(req.redirect(error="access_denied",
                                                  error_description="The person declined."))
+    if stepup.step_up_until(request) is None:
+        # Approving hands the client a token that can do everything the person can,
+        # so it takes the person's passkey, not one click: a link from anyone can
+        # put this page in front of a signed-in person. The page's Allow button runs
+        # the step-up first; this refusal is for a POST that skipped it.
+        return _consent_page(request, req, params, status=403,
+                             error="Confirm with your passkey to allow this.")
     code = mcp_oauth.issue_code(req, request.user)
     return _Redirect(req.redirect(code=code))
+
+
+def _consent_page(request: HttpRequest, req, params, *, status: int = 200,
+                  error: str = "") -> HttpResponse:
+    return render(request, "tokens/mcp_authorize.html", {
+        # Every client registered itself (`/oauth/register`, open and anonymous) and
+        # chose its own name, so the page says so and leads with where it sends you.
+        "client_name": req.client.display_name,
+        "redirect_host": _redirect_host(req.redirect_uri),
+        "redirect_uri": req.redirect_uri,
+        "form_action": self_full_path(request).split("?", 1)[0],
+        "api_base": request.META.get("SCRIPT_NAME", "").rstrip("/"),
+        "has_passkey": Passkey.objects.filter(user=request.user).exists(),
+        "stepped_up": stepup.step_up_until(request) is not None,
+        "register_url": stepup.REGISTER_PATH,
+        "error": error,
+        "params": {k: params.get(k, "") for k in (
+            "client_id", "redirect_uri", "response_type", "code_challenge",
+            "code_challenge_method", "state", "scope", "resource")},
+    }, status=status)
 
 
 def _redirect_host(uri: str) -> str:

@@ -25,6 +25,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions import attachment_storage
 
+from . import bundles
 from . import manifest as mf
 from . import overlay as ov
 from . import template_diff
@@ -167,7 +168,8 @@ def store_detail(workspace_id: str, key: str) -> dict:
             "emails": _store_emails(m),
             "versions": [{"version": x.version, "released_at": x.released_at.isoformat(), "changelog": x.changelog}
                          for x in versions[:10]],
-            "installed": AppInstallation.objects.filter(workspace_id=workspace_id, template=t).exists()}
+            "installed": AppInstallation.objects.filter(workspace_id=workspace_id, template=t).exists(),
+            "ai": (m.get("ai") or {}).get("purpose")}
 
 
 def setup_status(inst: AppInstallation) -> dict:
@@ -238,15 +240,19 @@ def store_screenshot(workspace_id: str, key: str, file: str) -> tuple[bytes, str
 
 
 @transaction.atomic
-def install(*, workspace_id: str, user, template: str = "", manifest: dict | None = None) -> AppInstallation:
+def install(*, workspace_id: str, user, template: str = "", manifest: dict | None = None,
+            files: list | None = None) -> AppInstallation:
     """Install a store template, or a manifest the workspace wrote (which becomes
-    its own unlisted template, so it has versions and upgrades like any other)."""
+    its own unlisted template, so it has versions and upgrades like any other).
+    `files` are its bundle pages' files (`bundles.attach`)."""
     if bool(template) == bool(manifest):
         raise ValueError("install a template from the store (`template`) or your own (`manifest`), not both")
+    if files and not manifest:
+        raise ValueError("`files` come with your own `manifest`; a store template brings its own")
     sync_bundled()
     who = user if getattr(user, "is_authenticated", False) else None
     if manifest:
-        m = mf.validate(manifest)
+        m = mf.validate(bundles.attach(manifest, files))
         tkey = f"{workspace_id}/{m['key']}"
         if AppTemplate.objects.filter(key=tkey).exists():
             raise ValueError(f"'{m['key']}' already exists in this workspace's templates")
@@ -481,30 +487,39 @@ def _run_scenario(inst, m, space, sc, saved):
 # --- publishing ----------------------------------------------------------------------------
 
 
-def publish(v: AppVersion, *, user, may_approve_risk: bool) -> AppVersion:
+def publish(v: AppVersion, *, user, may_approve_risk: bool, authority: str = "") -> AppVersion:
     """Make a draft the live version. Refused while anything is quarantined or a
-    check fails; a risky change needs someone who may approve it. The checks run
-    (and their result is kept) before the publish itself, so a refusal still
-    leaves the person the failures to read."""
+    check fails; a risky change needs someone who may approve it (an admin, or a
+    maintainer at the `permissions` level). The checks run (and their result is
+    kept) before the publish itself, so a refusal still leaves the person the
+    failures to read."""
     _require_draft(v)
     r = review(v)
     if r["quarantine"]:
         raise Refused("some changes no longer fit this template version — fix or remove them first", status=409)
     if r["risks"] and not may_approve_risk:
-        raise Refused("this draft " + "; ".join(sorted({x["risk"] for x in r["risks"]}))
-                      + " — a workspace admin must publish it")
+        raise Refused("this draft " + "; ".join(sorted({x["risk"] for x in r["risks"]})) + " — " + NEEDS_WIDEN)
     if r["template_change"] and r["template_change"]["risks"] and not may_approve_risk:
-        raise Refused("this template update " + "; ".join(r["template_change"]["risks"])
-                      + " — a workspace admin must publish it")
+        raise Refused("this template update " + "; ".join(r["template_change"]["risks"]) + " — " + NEEDS_WIDEN)
     checks = run_checks(v)
     if not checks["ok"]:
         failed = [x["name"] for x in checks["results"] if not x["ok"]]
         raise Refused(f"checks failed: {', '.join(failed)}", status=409)
-    return _publish(v, user=user)
+    return _publish(v, user=user, authority=authority)
+
+
+#: Who may publish a version that changes who can see or do what (`access.may_widen`).
+NEEDS_WIDEN = ("a workspace admin must publish it, or a maintainer the admin allowed to change "
+               "this app's permissions")
+
+
+def _reach(inst: AppInstallation, m: dict) -> list[str]:
+    """What making `m` live changes about who can see and do what, against the live app."""
+    return template_diff.changes(inst.manifest, m) if inst.live_id else []
 
 
 @transaction.atomic
-def _publish(v: AppVersion, *, user) -> AppVersion:
+def _publish(v: AppVersion, *, user, authority: str = "") -> AppVersion:
     inst = AppInstallation.objects.select_for_update().get(pk=v.installation_id)
     v = AppVersion.objects.select_for_update().get(pk=v.pk)
     _require_draft(v)
@@ -512,31 +527,97 @@ def _publish(v: AppVersion, *, user) -> AppVersion:
     if inst.live_id:
         AppVersion.objects.filter(pk=inst.live_id).update(status=AppVersion.SUPERSEDED)
     v.status, v.published_by, v.published_at = AppVersion.PUBLISHED, user, timezone.now()
-    v.save(update_fields=["status", "published_by", "published_at"])
+    v.reach_changes, v.published_under = _reach(inst, effective(v)[0]), authority
+    v.save(update_fields=["status", "published_by", "published_at", "reach_changes", "published_under"])
     _clear_space(inst, space)
     _make_live(inst, v)
     return v
 
 
 @transaction.atomic
-def rollback(inst: AppInstallation, *, number: int, user) -> AppVersion:
+def rollback(inst: AppInstallation, *, number: int, user, may_widen: bool, authority: str = "") -> AppVersion:
     """Publish an earlier version's overlay, over ITS template version, as a new
     version: history only grows. Records are untouched — overlays only add, so
-    an earlier version reads today's records fine."""
+    an earlier version reads today's records fine. Going back is judged like going
+    forward: one that changes who can see or do what needs `may_widen`."""
     if open_draft(inst) is not None:
         raise Refused("discard the open draft before rolling back", status=409)
     old = inst.versions.filter(number=number).exclude(status=AppVersion.DRAFT).first()
     if old is None:
         raise Refused(f"no version {number}", status=404)
+    reach = _reach(inst, ov.compose(old.template_version.manifest, old.overlay)[0])
+    if reach and not may_widen:
+        raise Refused(f"going back to version {number} " + "; ".join(reach) + " — " + NEEDS_WIDEN)
     nxt = (inst.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
     if inst.live_id:
         AppVersion.objects.filter(pk=inst.live_id).update(status=AppVersion.SUPERSEDED)
     v = AppVersion.objects.create(installation=inst, number=nxt, template_version=old.template_version,
                                   overlay=copy.deepcopy(old.overlay), status=AppVersion.PUBLISHED, origin="rollback",
                                   note=f"rolled back to version {number}", created_by=user, published_by=user,
-                                  published_at=timezone.now())
+                                  published_at=timezone.now(), reach_changes=reach, published_under=authority)
     _make_live(inst, v)
     return v
+
+
+@transaction.atomic
+def release(inst: AppInstallation, *, manifest: dict, user, may_widen: bool, authority: str = "",
+            note: str = "", files: list | None = None) -> AppVersion:
+    """Publish a whole new version of the workspace's OWN template — the manifest a
+    repo's build owns, in the shape `install` takes — and make it live over the
+    workspace's changes, as a new version (so rollback reaches every earlier one).
+
+    Validated exactly as an install is (`manifest.validate`: pages, `connections`,
+    `browser`, everything), so this is how an app's connections and browser
+    declaration change after install. Judged against the live app on who can see
+    and do what (`template_diff.changes`): any finding needs `may_widen`, and the
+    refusal names each one. The app's checks (its scenarios) must pass. Nothing is
+    kept when it is refused. `files` are its bundle pages' files (`bundles.attach`); a
+    release that sends none keeps the live version's."""
+    if inst.template.owner_id != inst.workspace_id:
+        raise Refused(f"'{inst.key}' runs canopy's own template '{inst.template.key}': its new versions come "
+                      "from canopy, and arrive here as an update", status=409)
+    if open_draft(inst) is not None:
+        raise Refused("this app has a draft open — publish or discard it before publishing a new version",
+                      status=409)
+    raw = bundles.attach(manifest, files)
+    kept = inst.live.template_version.manifest.get("bundle") if inst.live_id else None
+    if files is None and kept:
+        raw["bundle"] = kept
+    m = mf.validate(raw)
+    if m["key"] != inst.key:
+        raise ValueError(f"key: this is the '{inst.key}' app; the manifest says '{m['key']}'")
+    tmpl = AppTemplate.objects.select_for_update().get(pk=inst.template_id)
+    taken = set(tmpl.versions.values_list("version", flat=True))
+    if m["version"] in taken:
+        raise Refused(f"version '{m['version']}' of this app already exists — give the manifest a new `version`",
+                      status=409)
+    if not m["version"]:
+        n = len(taken) + 1
+        while str(n) in taken:
+            n += 1
+        m["version"] = str(n)
+    live = inst.live
+    composed, quarantine = ov.compose(m, live.overlay)
+    if quarantine:
+        raise Refused("the workspace's own changes no longer fit this version: "
+                      + "; ".join(f"{ov.describe(q['op'], composed)} ({q['reason']})" for q in quarantine)
+                      + " — remove them from the live app, or keep what they anchor to", status=409)
+    reach = _reach(inst, composed)
+    if reach and not may_widen:
+        raise Refused("this version " + "; ".join(reach) + " — " + NEEDS_WIDEN)
+    tv = AppTemplateVersion.objects.create(template=tmpl, version=m["version"], manifest=m, changelog=m["changelog"])
+    tmpl.name, tmpl.description = m["name"], m["description"]
+    tmpl.save(update_fields=["name", "description"])
+    number = (inst.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
+    who = user if getattr(user, "is_authenticated", False) else None
+    v = AppVersion.objects.create(installation=inst, number=number, template_version=tv,
+                                  overlay=copy.deepcopy(live.overlay), status=AppVersion.DRAFT, origin="release",
+                                  note=(note or f"version {m['version']}")[:300], created_by=who)
+    checks = run_checks(v)
+    if not checks["ok"]:
+        failed = [x["name"] for x in checks["results"] if not x["ok"]]
+        raise Refused(f"checks failed: {', '.join(failed)}", status=409)
+    return _publish(v, user=who, authority=authority)
 
 
 # --- test copies ---------------------------------------------------------------------------
@@ -611,6 +692,27 @@ def scope_for(inst: AppInstallation, m: dict, space: str, user, roles: set[str])
     return Scope(inst, m, space, user, roles) if getattr(user, "is_authenticated", False) else None
 
 
+def _own(qs, spec: dict, user):
+    """A personal collection's records, narrowed to the caller's own (`manifest._validate_personal`):
+    `user` None is the app itself (scenarios, retention), which is not narrowed; anyone else sees only
+    what they wrote, whatever their roles."""
+    if not spec.get("personal") or user is None:
+        return qs
+    if not getattr(user, "is_authenticated", False):
+        return qs.none()
+    return qs.filter(created_by=user)
+
+
+#: What a json field's history says instead of its value, by how it changed.
+_JSON_MARK = {"create": "set", "update": "updated", "delete": "removed"}
+
+
+def _masked(changes: dict, fields: dict, op: str) -> dict:
+    """An event's changes, with each json field's value replaced by a word: a store saved on every
+    keystroke would otherwise copy itself into the log each time."""
+    return {k: (_JSON_MARK[op] if fields.get(k, {}).get("type") == "json" else v) for k, v in changes.items()}
+
+
 def _row(rec: AppRecord, fields: list[str] | None = None) -> dict:
     data = rec.data if fields is None else {k: rec.data[k] for k in fields if k in rec.data}
     return {"id": rec.pk, "created_at": rec.created_at.isoformat(), "updated_at": rec.updated_at.isoformat(), **data}
@@ -652,7 +754,7 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
     else:
         projection = readable(spec, roles)
     fields = spec["fields"]
-    qs = AppRecord.objects.filter(installation=inst, space=space, collection=collection)
+    qs = _own(AppRecord.objects.filter(installation=inst, space=space, collection=collection), spec, user)
     sc = None if public else scope_for(inst, m, space, user, roles)
     ids = sc.allowed(collection) if sc else None
     if ids is not None:
@@ -663,6 +765,8 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
             continue
         if k not in fields:
             raise ValueError(f"'{k}' is not a field of '{collection}'")
+        if fields[k]["type"] == "json":
+            raise ValueError(f"'{k}' is a json field: it can't be matched on")
         if k not in projection and not (public and k in spec["public"]["where"]):
             raise ValueError(f"'{k}' is not a field you may read on '{collection}'")
         if isinstance(v, list):
@@ -676,7 +780,7 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
     name = order.lstrip("-")
     if name in ("created_at", "updated_at"):
         qs = qs.order_by(order, "-id")
-    elif name in fields and name in projection:
+    elif name in fields and name in projection and fields[name]["type"] != "json":
         qs = qs.order_by((f"-data__{name}" if desc else f"data__{name}"), "-id")
     else:
         raise ValueError(f"cannot order by '{order}'")
@@ -690,7 +794,7 @@ def history(inst: AppInstallation, *, roles: set[str], record_id: int, space: st
     if rec is None:
         raise Refused(f"record {record_id} not found", status=404)
     spec = m["collections"].get(rec.collection)
-    if spec is None or not may_read(spec, roles):
+    if spec is None or not may_read(spec, roles) or not _own(AppRecord.objects.filter(pk=rec.pk), spec, user).exists():
         raise Refused(f"record {record_id} not found", status=404)
     sc = scope_for(inst, m, space, user, roles)
     if sc and not sc.sees(rec.collection, rec.pk):
@@ -771,6 +875,16 @@ def _coerce(name: str, spec: dict, value, inst: AppInstallation, space: str):
         if f is None or f.claimed:
             raise ValueError(f"{name}: upload the file first")
         return fid
+    if t == "json":
+        if isinstance(value, (dict, list, str, int, float, bool)):
+            try:
+                size = len(json.dumps(value, separators=(",", ":"), allow_nan=False).encode())
+            except (TypeError, ValueError):
+                raise ValueError(f"{name} must be plain JSON") from None
+            if size > spec["max_kb"] * 1024:
+                raise ValueError(f"{name} is larger than {spec['max_kb']} KB")
+            return value
+        raise ValueError(f"{name} must be plain JSON")
     raise ValueError(f"{name}: unknown type")  # pragma: no cover — the manifest validator forbids it
 
 
@@ -826,8 +940,8 @@ def render_text(text: str, rec: AppRecord, m: dict, inst: AppInstallation, *, pa
         if path[0] == "param" and len(path) == 2:
             return str((params or {}).get(path[1], "") or "")
         if len(path) == 1:
-            if fields.get(path[0], {}).get("read"):
-                return ""  # a restricted field is never mailed
+            if fields.get(path[0], {}).get("read") or fields.get(path[0], {}).get("type") == "json":
+                return ""  # a restricted field is never mailed, nor a json one
             return str(rec.data.get(path[0], "") or "")
         f = fields.get(path[0])
         if f and f["type"] == "ref" and rec.data.get(path[0]):
@@ -1058,8 +1172,20 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
         values[spec["link_ref"]] = link["record"]
     if link is not None and spec["op"] != "create":
         record_id = link["record"]
+    coll_spec = m["collections"][spec["collection"]]
+    op = spec["op"]
+    if op == "create" and coll_spec.get("key") and authed and values.get(coll_spec["key"]):
+        # One record per (person, key): a create of a key they already have updates it instead.
+        mine = list(AppRecord.objects.select_for_update()
+                    .filter(installation=inst, space=space, collection=spec["collection"], created_by=user,
+                            **{f"data__{coll_spec['key']}": values[coll_spec["key"]]})
+                    .order_by("-updated_at", "-id"))
+        if mine:
+            op, record_id = "update", mine[0].pk
+            for extra in mine[1:]:  # two tabs created it at once: the newest stays
+                extra.delete()
 
-    if spec["op"] == "create":
+    if op == "create":
         for k, f in fields.items():
             if values.get(k) is None and "default" in f:
                 values[k] = f["default"]
@@ -1071,8 +1197,9 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
                                        created_by=user if authed else None, created_by_label=label)
         changes = data
     else:
-        rec = (AppRecord.objects.select_for_update()
-               .filter(installation=inst, space=space, collection=spec["collection"], pk=record_id or 0).first())
+        rec = _own(AppRecord.objects.select_for_update()
+                   .filter(installation=inst, space=space, collection=spec["collection"], pk=record_id or 0),
+                   coll_spec, user).first()
         if rec is None or (sc and not sc.sees(rec.collection, rec.pk)):
             raise Refused(f"no {spec['collection']} {record_id}", status=404)
         if spec.get("when") and not _matches(rec.data, spec["when"]):
@@ -1081,7 +1208,7 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
                 and not _actor_named(rec, spec["actor_field"], user, label):
             raise Refused(f"only the person named as {fields[spec['actor_field']].get('label', spec['actor_field'])} "
                           f"may {spec['label'].lower()}")
-        if spec["op"] == "delete":
+        if op == "delete":
             changes = rec.data
         else:
             changes = {}
@@ -1097,13 +1224,13 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
     file_ids = [v for k, v in values.items() if k in fields and fields[k]["type"] == "file" and v]
     if file_ids:
         AppFile.objects.filter(installation=inst, space=space, pk__in=file_ids).update(claimed=True)
-    effects = [] if spec["op"] == "delete" else _effects(inst, m, spec, rec, space, pvals)
+    effects = [] if op == "delete" else _effects(inst, m, spec, rec, space, pvals)
     AppRecordEvent.objects.create(
-        installation=inst, space=space, record=None if spec["op"] == "delete" else rec, record_ref=rec.pk,
-        collection=spec["collection"], action=action, op=spec["op"], changes=changes, effects=effects,
-        actor=user if authed else None, actor_label=label, client_ip=client_ip,
+        installation=inst, space=space, record=None if op == "delete" else rec, record_ref=rec.pk,
+        collection=spec["collection"], action=action, op=op, changes=_masked(changes, fields, op),
+        effects=effects, actor=user if authed else None, actor_label=label, client_ip=client_ip,
     )
-    if spec["op"] == "delete":
+    if op == "delete":
         rec.delete()
         return {"id": record_id}
     _then(inst, m, action, spec, rec, pvals, user, label, space)
@@ -1439,7 +1566,9 @@ def subject_export(inst: AppInstallation, *, email: str) -> dict:
         q = Q()
         for k in efields:
             q |= Q(**{f"data__{k}": email})
-        if not efields:
+        if spec.get("personal"):  # a person's own store is theirs by who wrote it
+            q |= Q(created_by__email__iexact=email)
+        elif not efields:
             continue
         for rec in AppRecord.objects.filter(installation=inst, space=LIVE, collection=cname).filter(q):
             ids.add(rec.pk)
@@ -1513,7 +1642,8 @@ def readable_file(inst: AppInstallation, *, roles: set[str], file_id: int, space
         for fname, fs in c["fields"].items():
             if fs["type"] != "file":
                 continue
-            qs = AppRecord.objects.filter(installation=inst, space=space, collection=cname, **{f"data__{fname}": file_id})
+            qs = _own(AppRecord.objects.filter(installation=inst, space=space, collection=cname,
+                                               **{f"data__{fname}": file_id}), c, user)
             if ids is not None:
                 qs = qs.filter(pk__in=ids)
             if qs.exists():

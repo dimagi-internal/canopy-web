@@ -66,12 +66,12 @@ def _redirect_uri(request: HttpRequest) -> str:
 @login_required
 @require_GET
 def install(request: HttpRequest) -> HttpResponse:
-    """``/auth/slack/install/?workspace=<slug>`` — owner of that workspace only."""
+    """``/auth/slack/install/?workspace=<slug>`` — admin or owner of that workspace only."""
     if not services.is_configured():
         return _page("Slack is not configured", "This deployment has no Slack app credentials.", 503)
     slug = request.GET.get("workspace", "")
-    if not perms.can(request.user, slug, perms.OWN):
-        return _page("Not allowed", "Only an owner of the workspace can connect Slack to it.", 403)
+    if not perms.can(request.user, slug, perms.INTEGRATIONS):
+        return _page("Not allowed", "Only an admin or owner of the workspace can connect Slack to it.", 403)
     state = secrets.token_urlsafe(24)
     request.session[_STATE_KEY] = {"state": state, "workspace": slug}
     params = {
@@ -91,8 +91,8 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
         return _page("Install failed", "The install link expired or was not started here. Start again.", 400)
     slug = pending["workspace"]
     # Re-checked: the role may have changed while the user was on Slack.
-    if not perms.can(request.user, slug, perms.OWN):
-        return _page("Not allowed", "Only an owner of the workspace can connect Slack to it.", 403)
+    if not perms.can(request.user, slug, perms.INTEGRATIONS):
+        return _page("Not allowed", "Only an admin or owner of the workspace can connect Slack to it.", 403)
     if request.GET.get("error"):
         return _page("Install cancelled", escape(request.GET["error"]), 400)
     try:
@@ -122,7 +122,7 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
             inst.installed_by = request.user
         inst.save()
         # One Slack per canopy workspace: connecting this workspace to a
-        # different Slack re-points it, and its owner is the one asking.
+        # different Slack re-points it, and its admin is the one asking.
         SlackWorkspaceLink.objects.update_or_create(
             workspace_id=slug, defaults={"installation": inst, "linked_by": request.user})
     # The installer just proved both identities in one browser trip — Slack

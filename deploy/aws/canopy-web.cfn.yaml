@@ -43,12 +43,18 @@ Parameters:
   ImageTag:
     Type: String
     Default: latest
-  DesiredCount:
+  # The service's task count is Application Auto Scaling's (ScalableTarget below),
+  # between these bounds; the Service resource names no DesiredCount, so a stack
+  # update never resets a scaled count. A brand-new stack starts with MinTasks=0
+  # until secrets + image exist, then is updated to the default.
+  MinTasks:
     Type: Number
-    Default: 0
-    Description: >
-      Start at 0 so the stack creates cleanly before secrets + image exist. Set
-      secret values + push the image, then update the stack with DesiredCount=1.
+    Default: 2
+    Description: Fewest web tasks Application Auto Scaling keeps running.
+  MaxTasks:
+    Type: Number
+    Default: 4
+    Description: Most web tasks Application Auto Scaling scales out to.
   # canopy-web's own sealed-connection key (canopy-web-connections-key.cfn.yaml, its KeyAlias
   # output). Empty = canopy-web can't use any connection on its own.
   ConnectionsServerKmsKey:
@@ -168,7 +174,7 @@ Resources:
       RetentionInDays: 30
 
   # --- Secrets (containers; real values are set out-of-band via
-  #     `aws secretsmanager put-secret-value` before DesiredCount is raised) ---
+  #     `aws secretsmanager put-secret-value` before MinTasks is raised) ---
   DjangoSecretKey:
     Type: AWS::SecretsManager::Secret
     Properties:
@@ -333,6 +339,10 @@ Resources:
       HealthCheckIntervalSeconds: 5
       HealthyThresholdCount: 2
       HealthCheckTimeoutSeconds: 4
+      # Admission stays fast (2 x 5s above), but eviction waits for ~30s of
+      # sustained non-response: a saturated worker recovers, and evicting it
+      # turns slowness into a full outage.
+      UnhealthyThresholdCount: 6
       Matcher: { HttpCode: "200" }
       TargetGroupAttributes:
         # THE BIG ONE: deregistration_delay defaults to 300s and was never set
@@ -436,6 +446,9 @@ Resources:
     DeletionPolicy: Retain
     Properties:
       Family: labs-jj-canopy-web
+      # 1 vCPU / 2 GB per task, at least two tasks (ScalableTarget below): the
+      # fleet's runner polling is spread across tasks instead of saturating one,
+      # and CPU-based scaling adds tasks before any one runs hot.
       Cpu: "1024"
       Memory: "2048"
       NetworkMode: awsvpc
@@ -574,7 +587,8 @@ Resources:
       ServiceName: labs-jj-canopy-web
       Cluster: !Ref ClusterName
       LaunchType: FARGATE
-      DesiredCount: !Ref DesiredCount
+      # No DesiredCount: the count is the ScalableTarget's. CloudFormation leaves an
+      # existing service's count alone when the template names none.
       TaskDefinition: !Ref TaskDefinition
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -608,6 +622,36 @@ Resources:
       # `ecs-exec` policy; the shared labs role: `ecs-exec-ssm`). Stated here so
       # a CFN deploy does not silently reset it after it was enabled by hand.
       EnableExecuteCommand: true
+
+  # --- Autoscaling: two 1-vCPU tasks at rest, up to MaxTasks on CPU ---
+  # Registers with the existing ECS service-linked role
+  # (AWSServiceRoleForApplicationAutoScaling_ECSService). The deploy role needs
+  # application-autoscaling + the target-tracking alarm grants
+  # (deploy/aws/deploy_roles.py `OwnServiceAutoscaling`); preflight.py refuses
+  # the change set without them.
+  ScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ScalableDimension: ecs:service:DesiredCount
+      ResourceId: !Sub "service/${ClusterName}/${Service.Name}"
+      MinCapacity: !Ref MinTasks
+      MaxCapacity: !Ref MaxTasks
+
+  CpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: labs-jj-canopy-web-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 55
+        # Out fast, in slowly: a scale-in drops every socket on the task it
+        # stops, and the clients reconnect to the tasks left.
+        ScaleOutCooldown: 60
+        ScaleInCooldown: 600
 
 Outputs:
   EcrRepoUri:

@@ -91,6 +91,12 @@ def _field(m: dict, coll: str, name: str) -> dict:
     return f
 
 
+def _not_bundle(p: dict) -> None:
+    if p.get("kind") == "bundle":
+        raise OpError(f"page '{p['slug']}' is the template's own files (a bundle page): it has no slots and "
+                      "cannot be forked; add a page of your own instead")
+
+
 def _page(m: dict, slug: str) -> dict:
     p = next((p for p in m["pages"] if p["slug"] == slug), None)
     if p is None:
@@ -220,6 +226,7 @@ def _apply(m: dict, op: dict) -> None:
     elif kind == "fill_slot":
         _need(op, "page", "slot", "code")
         p = _page(m, op["page"])
+        _not_bundle(p)
         if op["slot"] not in p.get("slots", []):
             raise OpError(f"page '{op['page']}' has no slot '{op['slot']}'")
         key = op.get("key") or op["id"]
@@ -229,6 +236,8 @@ def _apply(m: dict, op: dict) -> None:
         _need(op, "page")
         spec = copy.deepcopy(op["page"])
         _own(spec.get("slug"), "page", PAGE_PREFIX)
+        if spec.get("kind", "jsx") != "jsx" or spec.get("entry"):
+            raise OpError("only the template declares bundle pages; a workspace page is JSX code")
         if any(p["slug"] == spec["slug"] for p in m["pages"]):
             raise OpError(f"there is already a page '{spec['slug']}'")
         spec["origin"] = "workspace"
@@ -236,6 +245,7 @@ def _apply(m: dict, op: dict) -> None:
     elif kind == "fork_page":
         _need(op, "page", "code")
         p = _page(m, op["page"])
+        _not_bundle(p)
         p["code"], p["forked"] = op["code"], True
     elif kind == "set_page":
         _need(op, "page")

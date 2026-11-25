@@ -240,7 +240,8 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
                                             replaced=replaced)
                                        for c in rows],
                           temporary=[TemporaryAccessOut(id=t.pk, provider=t.provider, workspace=t.app.workspace_id,
-                                                        agent=t.agent.slug, account_label=t.account_label,
+                                                        agent=t.agent.slug if t.agent else None,
+                                                        account_label=t.account_label,
                                                         expires_at=t.expires_at)
                                      for t in temporary.mine(request.user)])
 
@@ -275,8 +276,17 @@ def request_connection_call(request: HttpRequest, provider: str, payload: Connec
     A provider's refusal is a 200 here with its own `status`. A refusal of the call itself is a problem
     whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
     `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
-    `rate_limited`, `session_ended`, `request_too_large`, `response_too_large`, `response_unreadable`,
-    `provider_unavailable`."""
+    `rate_limited`, `provider_rate_limited` (Salesforce is limiting calls: `retry_after` and `limits` when it
+    said them), `session_ended`, `scope_added` (the app now asks for a permission the viewer's hour lacks),
+    `request_too_large`, `response_too_large`, `response_unreadable`,
+    `provider_unavailable`. Salesforce's own count of the org's API use comes back as `limits`.
+
+    `GET query/<locator>` is a query's next page (the locator from its `nextRecordsUrl`), covered by the
+    screen's `GET query`. `POST composite/batch` (`{batchRequests: [{method, url, richInput?}], haltOnError?}`,
+    at most 25, each `url` under `/services/data/<version>/`) and `composite/sobjects` (`POST`/`PATCH`
+    `{records, allOrNone?}`, `DELETE ?ids=…`, `GET composite/sobjects/<type>?ids=…&fields=…`; at most 200
+    records) are checked call by call, or record by record, as if each were made alone, and each write in
+    them spends one of the lease's writes."""
     try:
         return call_service.call(request, provider, payload)
     except services.ConnectionError as exc:
@@ -295,7 +305,9 @@ def open_connection_operation(request: HttpRequest, payload: ConnectionOperation
     that reaches this route with the person's session gets a lease too. What the lease does is limit how
     far that goes: only what this screen declared, at most 500 writes, for this person, this screen and
     this revision. It ends 120 seconds after its last write, or after it opened if there is none, and in
-    any case 10 minutes after it opened. Each write is still checked against the declaration, so on a page
+    any case 10 minutes after it opened. A screen whose only writes are Drive label changes on the
+    viewer's own Google account gets 20000 writes, 15 minutes idle and an hour (`max_writes`,
+    `idle_seconds`, `hard_limit_seconds` say which). Each write is still checked against the declaration, so on a page
     behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
 
     Only a person signed in here: a personal access token or OAuth token is refused 403
@@ -435,10 +447,21 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
     `statement_missing_owner_agent`), that `expect` is what is stored (409
     `zk_value_changed`), that it is sealed only to the owner and allowed machines
     (422 `foreign_reader`) and that its writer MACs are the owner's (422
-    `bad_writer_sig`). From a browser this needs a fresh passkey check."""
+    `bad_writer_sig`). From a browser this needs a fresh passkey check. An agent's
+    own login, while its agent test key is on, shares only its own connection, lent to
+    nobody (it may name canopy-web), and with no passkey, from anywhere
+    (`login_test_key.may_share_own_connection`; 403 `not_a_person` /
+    `share_too_broad` otherwise)."""
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — beside the agents gates import
+
     conn = _visible(request, connection_id)
     # After the visibility check: someone who cannot see it gets 404, never a step-up prompt.
-    if stepup.is_browser(request):
+    if not login_test_key.is_person(request.user):
+        try:
+            login_test_key.may_share_own_connection(request, conn, payload.statement)
+        except login_test_key.NotAPerson as exc:
+            raise ProblemError(exc.status, "Not shared", detail=str(exc), members={"error": exc.code}) from exc
+    elif stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     try:
         conn = sharing.share(conn, user=request.user, **payload.model_dump())

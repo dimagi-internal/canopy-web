@@ -17,7 +17,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.canopy_sessions.models import Session, SessionReviewGrant
+from apps.canopy_sessions.models import CoachingOptIn, Session
 from apps.events import activity, analytics
 from apps.events.models import Activity
 from apps.harness import agent_state, caller_tokens, turn_agent_tokens
@@ -27,6 +27,7 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
+from tests.fixtures.session_world import grant_coaching
 
 pytestmark = pytest.mark.django_db
 
@@ -50,7 +51,7 @@ def w():
     box = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=owner, workspace=ws,
                                 last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     for name in ("lili", "bo"):
-        SessionReviewGrant.objects.create(user=people[name], agent=trellis)
+        grant_coaching(people[name], trellis)
     return {"ws": ws, "owner": owner, **people, "trellis": trellis, "box": box}
 
 
@@ -235,7 +236,7 @@ def test_a_turn_asked_by_one_person_cannot_file_a_fact_about_another(w):
 def test_no_fact_about_someone_without_a_live_grant(w):
     bearer = _sweep(w)
     assert _post(bearer, _note(w, "col")).status_code == 404     # never enrolled
-    SessionReviewGrant.objects.filter(user=w["lili"]).update(revoked_at=timezone.now())
+    CoachingOptIn.objects.filter(user=w["lili"]).update(revoked_at=timezone.now())
     assert _post(bearer, _note(w, "lili")).status_code == 404    # stopped
 
 
@@ -303,6 +304,27 @@ def test_a_finished_turn_may_not_read_or_write_it(w):
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
     assert _get_doc(bearer).status_code == 403
     assert _put_doc(bearer, expected=1).status_code == 403
+
+
+def test_a_held_laptop_session_login_may_not_read_or_write_it(w):
+    """A session-scoped login works between a person's messages elsewhere (the brain); here it is still refused."""
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import RunnerAssignment
+
+    _put_doc(_sweep(w))
+    laptop = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=w["owner"], workspace=w["ws"],
+                                   last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    RunnerAssignment.objects.create(agent=w["trellis"], runner=laptop, rank=0)
+    conv = Session.objects.create(workspace=w["ws"], created_by=w["owner"], title="", agent=w["trellis"],
+                                  status=Session.ACTIVE)
+    RunnerBinding.objects.create(session=conv, runner=laptop, session_key="trellis-chat")
+    turn = _chat_turn(w, conv)
+    bearer = turn_agent_tokens.issue_for_session(turn, laptop, conv)["token"]
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    r = _get_doc(bearer)
+    assert r.status_code == 403 and b"lili@dimagi.com" not in r.content
+    assert _put_doc(bearer, {"people": {}}, expected=1).status_code == 403
+    assert AgentStateDocument.objects.get(agent=w["trellis"]).version == 1
 
 
 def test_a_colleagues_turn_may_write_but_never_read_everyone(w):

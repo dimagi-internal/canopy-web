@@ -16,11 +16,13 @@ from django.http import HttpRequest
 from ninja import Router, Status
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_AUTH, TYPE_CONFLICT, TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
 from apps.passkeys import stepup, vault_log
 from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.schemas import (
+    OwnTestKeyIn,
+    OwnTestKeyOut,
     VaultClientReportIn,
     VaultKeysetIn,
     VaultKeysetOut,
@@ -98,16 +100,17 @@ def put_vault_keyset(request: HttpRequest, payload: VaultKeysetIn) -> VaultKeyse
     stored one is 409 `zk_keyset_exists` unless `replace` is true, which also
     drops every agent's member wrap to the old key.
 
-    An agent's own login, while an admin has turned its test vault key on, makes
-    its FIRST key here with passphrase seals only, and with no passkey step-up (it
-    has no passkey, and may hold none); anything else from such a login is refused
-    (403 `not_a_person`, 409 `test_key_exists`, 422 `test_key_passphrase_only`)."""
+    An agent's own login, while its test vault key is on (`PUT /api/vault/test-key`),
+    makes its key here with passphrase seals only, and with no passkey step-up (it
+    has no passkey, and may hold none). A second key must send `replace: true`, which
+    drops everything the old one held: its conversation copies, page permissions and
+    connections. Anything else from such a login is refused (403 `not_a_person`,
+    409 `test_key_exists`, 422 `test_key_passphrase_only`)."""
     from apps.agents.credentials import login_test_key, zk  # noqa: PLC0415 — agents imports passkeys
 
     # The step-up is what makes a person's write theirs. A login that is not a person
     # never steps up: `zk.put_keyset` refuses it outright, unless it is an agent login
-    # whose test key an admin turned on with their own step-up — and then holds it to
-    # one first key, passphrase-sealed.
+    # whose test key is on — and then holds it to passphrase seals.
     if login_test_key.is_person(request.user):
         stepup.require_recent_step_up(request)
     try:
@@ -123,6 +126,62 @@ def put_vault_keyset(request: HttpRequest, payload: VaultKeysetIn) -> VaultKeyse
     vault_log.log("keyset_written", request, replace=payload.replace,
                   new_seals=",".join(sorted(str(s.get("alg")) for s in payload.seals)) or "-")
     return _out(request.user)
+
+
+def _own_test_key_out(agent) -> OwnTestKeyOut:
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports passkeys
+
+    st = login_test_key.state(agent)
+    return OwnTestKeyOut(agent=agent.slug, enabled=st["enabled"], has_key=st["has_key"], key_jkt=st["key_jkt"],
+                         key_made_at=st["key_made_at"], conversations=st["conversations"])
+
+
+def _own_agent(request: HttpRequest):
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports passkeys
+
+    try:
+        return login_test_key.own_agent(request)
+    except login_test_key.NotAPerson as exc:
+        raise _test_key_problem(exc) from exc
+
+
+def _test_key_problem(exc) -> ProblemError:
+    type_ = {401: TYPE_AUTH, 403: TYPE_FORBIDDEN, 409: TYPE_CONFLICT}.get(exc.status, TYPE_VALIDATION)
+    return ProblemError(exc.status, "Test vault key", type_=type_, detail=str(exc), members={"error": exc.code})
+
+
+@router.get("/test-key", response=OwnTestKeyOut, summary="My agent test vault key (an agent's own login)")
+@gate("self")
+def get_own_test_key(request: HttpRequest) -> OwnTestKeyOut:
+    """For an agent's own login only: whether its test vault key is on, and the key if
+    one was made. 403 for a person or any credential that is not the login's own."""
+    return _own_test_key_out(_own_agent(request))
+
+
+@router.put("/test-key", response=OwnTestKeyOut, summary="Turn my agent test vault key on or off (agent login)")
+# the agent's own login, its own session; audited like an admin's change on the agent page
+@gate("self", setting=True)
+def put_own_test_key(request: HttpRequest, payload: OwnTestKeyIn) -> OwnTestKeyOut:
+    """`{enabled}`. An agent's own login turns its own test vault key on or off, with no
+    passkey: the key only ever receives copies of conversations the agent is already in,
+    and its own connections are for logins its harness already holds (docs/architecture/
+    vault.md § An agent login's test vault key). Turning it off deletes the key and
+    everything it held. An admin of the agent can do the same from the agent page."""
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports passkeys
+    from apps.events import audit  # noqa: PLC0415 — as the agent page's switch records it
+
+    agent = _own_agent(request)
+    before = login_test_key.state(agent)
+    try:
+        login_test_key.set_own(request, payload.enabled)
+    except login_test_key.NotAPerson as exc:
+        raise _test_key_problem(exc) from exc
+    agent.refresh_from_db()
+    after = login_test_key.state(agent)
+    audit.note_change(scope=f"agent:{agent.slug}/test-vault-key",
+                      before={"enabled": before["enabled"], "has_key": before["has_key"]},
+                      after={"enabled": after["enabled"], "has_key": after["has_key"]})
+    return _own_test_key_out(agent)
 
 
 @router.post("/client-report", response={204: None}, summary="Report a vault unlock/setup outcome the browser saw")

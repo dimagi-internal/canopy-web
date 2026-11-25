@@ -583,6 +583,7 @@ def _make_narrative_version(narrative_slug, run_id):
     return ReviewRequest.objects.create(
         run_id=run_id,
         narrative_slug=narrative_slug,
+        workspace=a_workspace(),
         version=1,
         gate="concept_change",
         status=ReviewRequest.STATUS_PENDING,
@@ -699,3 +700,31 @@ def test_non_ddd_walkthrough_share_not_guarded(auth_client, fake_drive, owner):
         format="multipart",
     )
     assert resp.status_code == 201, resp.content
+
+
+@pytest.mark.django_db
+@override_settings(**_DDD_SETTINGS)
+def test_narrative_check_asks_only_the_uploaders_workspace(auth_client, fake_drive, owner):
+    """Another workspace's narrative by the same slug neither satisfies the check
+    nor is revealed by it (409 vs 201 would say whether it exists)."""
+    from apps.reviews.models import ReviewRequest
+    from apps.workspaces.models import Workspace
+
+    other = Workspace.objects.create(slug="elsewhere", display_name="Elsewhere", created_by=owner)
+    ReviewRequest.objects.create(
+        run_id="verified-monitoring-2026-06-04-001", narrative_slug="verified-monitoring",
+        workspace=other, version=1, gate="concept_change", status=ReviewRequest.STATUS_PENDING,
+        request_json={"narrative_slug": "verified-monitoring", "narrative": "Elsewhere's story."},
+    )
+    resp = auth_client.post(
+        f"{BASE}/",
+        data={
+            "file": _file_part("video.mp4", b"\x00\x00", "video/mp4"),
+            "title": "hero", "kind": "video",
+            "run_id": "verified-monitoring-2026-06-04-001",
+            "narrative_slug": "verified-monitoring",
+            "role": "hero_video",
+        },
+        format="multipart",
+    )
+    assert resp.status_code == 409, resp.content

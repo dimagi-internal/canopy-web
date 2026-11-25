@@ -12,7 +12,7 @@ from apps.common.schemas import StrictModel
 # workspace, so a workspace cannot set their retention.
 RuleKind = Literal["", "chat", "turn"]
 RuleSource = Literal["", "api", "ace_web", "canopy_web_chat", "canopy_scheduler", "email", "slack",
-                     "emdash"]
+                     "site_message", "emdash"]
 RulePrincipal = Literal["", "member", "contact", "agent", "system"]
 
 

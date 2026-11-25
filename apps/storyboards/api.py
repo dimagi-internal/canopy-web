@@ -460,6 +460,12 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
     )
     if not is_member and not board.grants(needed, token):
         raise HttpError(403, f"this link does not grant {needed}")
+    # `auth=None` skips Ninja's CSRF check. A member writing on their session
+    # alone (no grant in the link) is a cookie-authenticated write, so it needs
+    # the same check its sibling routes make, or a page on any sibling
+    # subdomain could post a note in their name.
+    if is_member and not board.grants(needed, token) and csrf_rejected(request):
+        raise HttpError(403, "CSRF check failed")
 
     if payload.narrative_slug:
         known = Entry.objects.filter(

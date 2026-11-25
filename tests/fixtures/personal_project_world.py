@@ -187,11 +187,22 @@ def _make_world() -> dict:
     project.meeting_instructions = S("project.meeting_instructions")
     project.save(update_fields=["meeting_instructions"])
 
+    # A project learner's finding about it: its fix plan carries its words into a brief.
+    from apps.brain.models import BrainCapability, BrainOutput
+
+    learner = BrainCapability.objects.create(slug="guard-learner", name="guard learner", purpose_class="project",
+                                             subject_type="project", purposes=["learn"], audience=["project"],
+                                             enabled=True, operator=lead_agent)
+    finding = BrainOutput.objects.create(capability=learner, kind="finding", workspace=ws, subject_type="project",
+                                         subject=str(project.pk), title=S("output.title"),
+                                         body={"what_happened": S("output.what_happened")})
+
     return dict(meeting=meeting, ws=ws, lead=lead, editor=editor, wsadmin=wsadmin, lead_login=lead_login, lead_agent=lead_agent,
                 outsider_agent=outsider_agent, project=project, twin=twin, public_task=public_task,
                 tasks=[held_by_editor, on_outsider, on_lead, subtask, template, instance], checkin=checkin, run=run, view=view, saved=saved,
                 turn=turn, doc=doc, vault=vault, storyboard=storyboard, walkthrough=walkthrough, review=review,
-                editor_person=editor_person, admin_person=admin_person, version=version, action=action)
+                editor_person=editor_person, admin_person=admin_person, version=version, action=action,
+                finding=finding)
 
 
 # ---- what to call each route with -------------------------------------------------
@@ -220,6 +231,7 @@ def _project_values(w: dict) -> dict:
         "wid": [str(w["walkthrough"].pk)],
         "rid": [str(w["review"].pk)],
         "number": ["1"],
+        "output_id": [str(w["finding"].pk)],
     }
 
 
@@ -241,6 +253,7 @@ NOT_ABOUT_A_PROJECT = {
     "kind": ["project"],
     "user_code": ["GUARD-CODE"],
     "id": ["1"],
+    "path": ["persona.md"],
 }
 
 

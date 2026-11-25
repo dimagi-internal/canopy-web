@@ -385,6 +385,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         main.addItem(appItem)
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Show Canopy Runner", action: #selector(showWindow), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Settings…", action: #selector(openRunnerSettings), keyEquivalent: ",")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Canopy Runner", action: #selector(quit), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -541,7 +542,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     // ~/.canopy/runner.json → the workbench token). We POST it to /api/debug/mint-session/,
     // inject the returned session cookie into the WebView, then load the home page already
     // signed in — no separate Google login. Falls back to interactive login if minting fails.
-    func authenticateThenLoad() {
+    func authenticateThenLoad(_ path: String = "/runner-app/") {
+        let loadHome = { self.load(path) }
         guard let token = readToken(),
               let mintURL = URL(string: baseURL() + "/api/debug/mint-session/"),
               let host = URL(string: baseURL())?.host else {
@@ -561,13 +563,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
                   let cookie = HTTPCookie(properties: [
                       .domain: host, .path: "/", .name: name, .value: value, .secure: "TRUE",
                   ]) else {
-                DispatchQueue.main.async { self.loadHome() }  // fall back to login
+                DispatchQueue.main.async { loadHome() }  // fall back to login
                 return
             }
             DispatchQueue.main.async {
                 self.web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
                     self.authed = true
-                    self.loadHome()
+                    loadHome()
                 }
             }
         }.resume()
@@ -576,8 +578,35 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     // The home page is the one the person chose in canopy's Settings ("Canopy Runner app
     // opens on": supervisor, IDE, …). /runner-app/ redirects there, so a new choice needs
     // no change here.
-    func loadHome() {
-        if let url = URL(string: baseURL() + "/runner-app/") { web.load(URLRequest(url: url)) }
+    func loadHome() { load("/runner-app/") }
+    func load(_ path: String) {
+        if let url = URL(string: baseURL() + path) { web.load(URLRequest(url: url)) }
+    }
+
+    // Settings… (Cmd-, in the app menu, and in the right-click menu): THIS runner's own
+    // page on canopy, Settings tab — Session runtime (emdash / Claude desktop / Claude
+    // CLI), pause, sessions, flags. It opens in the panel, which is already signed in,
+    // not the browser, which on a runner account usually is not. `/runners/<id>/settings`
+    // forwards to the runner's page under its workspace (RunnerRedirect.tsx); an unpaired
+    // box has no id yet, and gets the supervisor.
+    @objc func openRunnerSettings() {
+        openInPanel(runnerID().map { "/runners/\($0)/settings" } ?? "/supervisor")
+    }
+
+    // Show the panel on one page of canopy (minting the session first if it has none).
+    func openInPanel(_ path: String) {
+        if authed { load(path) } else { authenticateThenLoad(path) }
+        if window?.isVisible != true { applyFrame() }
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    // This box's runner id on canopy (runner.json "runner_id"), written when it paired.
+    func runnerID() -> String? {
+        guard let data = try? Data(contentsOf: configFile),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = obj["runner_id"] as? String, !id.isEmpty else { return nil }
+        return id
     }
 
     // The workbench PAT, shared with the daemon (runner.json "token", possibly an @file ref).
@@ -744,6 +773,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         opensItem.submenu = opens
         menu.addItem(opensItem)
 
+        add(menu, "Settings…", #selector(openRunnerSettings))
         add(menu, "Open Supervisor in browser…", #selector(openSupervisor))
         add(menu, "Reload panel", #selector(reloadPanel))
         add(menu, "Force refresh (clear cache)", #selector(forceRefresh))

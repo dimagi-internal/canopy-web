@@ -50,6 +50,11 @@ class ZkWrapsIn(StrictModel):
     wraps: list[ZkWrapIn]
 
 
+class ZkMyWrapsOut(StrictModel):
+    #: How many of your machines were given the vault key.
+    granted: int
+
+
 class ZkRotateIn(StrictModel):
     new_kv: int
     wraps: list[ZkWrapIn]

@@ -35,8 +35,9 @@ class FakeSource:
 
 
 def recognise(buffer):
+    # One two-second sentence: what is left once it has been committed holds no words.
     n = len(buffer) / SAMPLE_RATE
-    return [Sentence("the budget is due friday", 0.0, min(2.0, n))] if n > 0.5 else []
+    return [Sentence("the budget is due friday", 0.0, min(2.0, n))] if n > 1.5 else []
 
 
 def test_a_recording_reads_like_a_superwhisper_meeting(capsys):

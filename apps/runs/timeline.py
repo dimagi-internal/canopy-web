@@ -35,7 +35,7 @@ def recent_events(
     limit: int,
     before: dt.datetime | None,
     user,
-    workspace_slugs: set[str] | None = None,
+    workspace_slugs: set[str],
 ) -> list:
     from apps.timeline.types import ActivityEvent, actor_name
 
@@ -45,9 +45,8 @@ def recent_events(
     # splitting a run across the boundary; we filter run events by `before` in
     # Python below. Bounded by the team's DDD history (tens–hundreds of runs).
     #
-    # ``workspace_slugs`` (offered by the timeline aggregator when the caller is
-    # workspace-scoped) narrows both tables to the caller's tenants; ``None`` is a
-    # no-op so the source stays usable unscoped.
+    # ``workspace_slugs`` (the caller's tenants, from the timeline aggregator)
+    # narrows both tables.
     wts = list(
         agg._scope(
             Walkthrough.objects.exclude(run_id__isnull=True).exclude(run_id=""),

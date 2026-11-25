@@ -193,6 +193,24 @@ def test_an_inference_contradicting_a_declaration_is_quarantined_either_order(w,
     assert _as(w["lili"]).get(f"{BASE}/v1/preferences/urn:uuid:{i.entry_id}?purpose=review").status_code == 200
 
 
+def test_over_v1_an_agents_declared_entry_still_outranks_an_inference(w):
+    # v1 callers keep v1's rule: the declared side holds only the inference, whoever wrote it.
+    # (v2's standing rule, where an agent's claim needs the person's confirmation, is for v2
+    # callers only: tests/test_hcp_v2_conflicts.py.)
+    c, turn = _as(w["ace"].user), _turn(w["ace"], w["lili"], "t")
+    base = {"category": "general_preferences", "dimension": "channel", "sourceContext": "turn:x"}
+    r = _post(c, f"/v1/preferences/add?turn={turn.pk}",
+              {**base, "preference": "Prefers email.", "declarationType": "user-declared"})
+    assert r.status_code == 201, r.content
+    r = _post(c, f"/v1/preferences/add?turn={turn.pk}",
+              {**base, "preference": "Prefers Slack.", "declarationType": "model-inferred", "confidence": "low"})
+    assert r.status_code == 201, r.content
+    d = PersonFact.objects.get(statement="Prefers email.")
+    i = PersonFact.objects.get(statement="Prefers Slack.")
+    assert d.assurance == "unverified"                     # an agent's claim, still
+    assert (d.status, i.status) == ("active", "conflicted")
+
+
 def test_no_dimension_no_automatic_conflict_and_never_on_a_declared_entry(w):
     p, ws = w["person"], w["ws"]
     _add(p, ws, "Prefers email.", category="general_preferences")

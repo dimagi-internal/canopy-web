@@ -121,6 +121,40 @@ def test_response_round_trips(world):
     assert not got.stale
 
 
+def _many_agents(n: int) -> dict:
+    """A listing the size a real site reaches: ``n`` agents, each with the
+    description, URL, runner flags and problems canopy signs for it."""
+    agent = CONTENT["agents"][0]
+    agents = [{**agent, "slug": f"agent-{i}", "name": f"Agent {i}",
+               "description": "answers questions about the programmes on this site " * 4,
+               "url": f"https://canopy.example/w/connect/agents/agent-{i}",
+               "problems": [f"agent-{i} has no runner with sensitive_data ready yet"] * 3}
+              for i in range(n)]
+    return {**CONTENT, "agents": agents}
+
+
+def test_a_site_agents_response_larger_than_a_token_cap_verifies(world):
+    # Six agents on connect-labs outgrew the 8 KB every other JWS is held to, and
+    # labs then refused canopy's answer as "not a compact JWS of acceptable size".
+    from canopy_sdk import contract
+
+    content = _many_agents(12)
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, content)
+    assert contract.MAX_JWT_BYTES < len(token) < contract.MAX_SITE_AGENTS_BYTES
+    got = wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+    assert len(got.slugs) == 12
+
+
+def test_a_site_agents_response_over_its_own_cap_is_refused(world):
+    from canopy_sdk import contract
+
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, _many_agents(120))
+    assert len(token) > contract.MAX_SITE_AGENTS_BYTES
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+    assert exc.value.code == "malformed"
+
+
 def test_version_changes_iff_content_changes():
     v = wire.content_version(CONTENT)
     reordered = {"agents": CONTENT["agents"], "runner_flags": CONTENT["runner_flags"],

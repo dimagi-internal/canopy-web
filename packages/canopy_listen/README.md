@@ -9,7 +9,7 @@ command-line tool prints, so Meeting assistant reads either.
 Apple Silicon only. Install it as a tool, with its Mac extras:
 
 ```bash
-uv tool install --python 3.12 "canopy-listen[mac] @ git+https://github.com/dimagi-internal/canopy-web#subdirectory=packages/canopy_listen"
+uv tool install --python 3.13 "canopy-listen[mac] @ git+https://github.com/dimagi-internal/canopy-web#subdirectory=packages/canopy_listen"
 canopy-listen models download     # the configured models, once
 ```
 
@@ -70,8 +70,8 @@ A model that times its sentences (Parakeet, Whisper) is used **by sentence**: te
 **by pause**: each stretch of speech is read once, when its speaker pauses.
 
 **Who spoke** isn't part of any speech model. `titanet` takes a voice fingerprint of each
-finished segment (NVIDIA TitaNet-small) and matches it to the voices heard so far; a
-segment under 1.5 s never creates a new person. `sortformer` runs NVIDIA's streaming
+finished segment, with half a second either side (NVIDIA TitaNet-small), and matches it
+to the voices heard so far; a segment under 2.5 s never creates a new person. `sortformer` runs NVIDIA's streaming
 diarization model (up to 4 speakers, overlap-aware) beside the speech model. Speakers are
 numbered, not named, and not recognised across meetings.
 

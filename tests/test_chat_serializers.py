@@ -21,7 +21,7 @@ def test_message_dto_shape():
     ws, u = _ws_user()
     s = Session.objects.create(workspace=ws, created_by=u, title="t")
     m = Message.objects.create(session=s, turn_index=0, role="user",
-                               content={"text": "hi"}, plaintext="hi")
+                               content={"text": "hi"}, plaintext="hi", typed=True)
     dto = serializers.message_dto(m)
     assert dto["id"] == str(m.pk)
     assert dto["turn_index"] == 0

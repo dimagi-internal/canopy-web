@@ -91,6 +91,13 @@ ADMISSION_MANAGE = "admission.manage"
 #: member's; deciding it is not.
 PROJECTS_DECIDE = "projects.decide"
 
+#: Canopy learning in this workspace and below it (apps/brain): whether learners may
+#: read its sessions at all ("Learning reads"), its system findings, starting a
+#: learner's run and configuring a learner whose operator agent lives here. Admin,
+#: beside retention: it is running the workspace. A person's own consent is never
+#: this; only they set it.
+BRAIN_MANAGE = "brain.manage"
+
 # --- owner: the keys --------------------------------------------------------------
 
 #: Delete the workspace, nest or detach it, the shared vault, the Slack app
@@ -118,6 +125,7 @@ MINIMUM_ROLE: dict[str, str] = {
     RETENTION_MANAGE: _M.ADMIN,
     ADMISSION_MANAGE: _M.ADMIN,
     PROJECTS_DECIDE: _M.ADMIN,
+    BRAIN_MANAGE: _M.ADMIN,
     OWN: _M.OWNER,
     CONTROL: _M.OWNER,
 }

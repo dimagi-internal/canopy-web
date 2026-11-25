@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import fnmatch
 
+from asgiref.sync import sync_to_async
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
@@ -98,13 +99,62 @@ def _allowed(name: str, claims: dict, tool=None) -> bool:
 TURN_PINNED = frozenset({"who_is_asking"})
 
 
+#: What a LEAN page turn (`published_profiles.lean_page_turn`) is shown of canopy's own
+#: tools: who is asking, the page, its actions and the gateway to its site — nothing of
+#: the rest of the catalogue, whose names alone are tens of thousands of tokens.
+LEAN_PAGE_TOOLS = frozenset({"who_is_asking", "current_page", *SITE_GATEWAY_TOOLS, *PAGE_DRIVE_TOOLS})
+
+
+def lean_page_tool(name: str) -> bool:
+    return name in LEAN_PAGE_TOOLS or name.startswith(PAGE_TOOL_PREFIX)
+
+
+def _request_turn_id(claims: dict | None) -> str:
+    """The turn this MCP request is for: a caller token's own, else the latest turn of
+    the chat its chat key names (a full-profile turn on a page), else ""."""
+    if claims is not None:
+        return str(claims.get("turn_id") or "")
+    from apps.harness.models import Turn  # noqa: PLC0415 — models load with a call
+    from apps.mcp.chat_scope import current_chat_session  # noqa: PLC0415 — reads models
+
+    try:
+        session = current_chat_session()
+    except Exception:  # noqa: BLE001 — no request in scope
+        return ""
+    if session is None:
+        return ""
+    turn = Turn.objects.filter(chat_session=session).order_by("-created_at").only("pk").first()
+    return str(turn.pk) if turn is not None else ""
+
+
+def lean_listing(claims: dict | None) -> bool:
+    """Whether this request's turn is a lean page turn, whose tool LIST is narrowed to
+    `LEAN_PAGE_TOOLS`. Only the list: it is what costs the turn context, and narrowing
+    what a session is shown widens nothing. Synchronous (reads the database)."""
+    from apps.agents import published_profiles  # noqa: PLC0415 — the interface reads models
+    from apps.harness.models import Turn  # noqa: PLC0415 — models load with a call
+
+    turn_id = _request_turn_id(claims)
+    if not turn_id:
+        return False
+    turn = (Turn.objects.select_related("chat_session", "agent", "chat_session__agent")
+            .filter(pk=turn_id).first())
+    return published_profiles.lean_page_turn(turn)
+
+
 class TurnScopeMiddleware(Middleware):
     async def on_list_tools(self, context: MiddlewareContext, call_next):
         tools = await call_next(context)
         claims = _turn_claims()
-        if claims is None:
-            return tools
-        return [t for t in tools if _allowed(t.name, claims, t)]
+        if claims is not None:
+            tools = [t for t in tools if _allowed(t.name, claims, t)]
+        try:
+            lean = await sync_to_async(lean_listing, thread_sensitive=True)(claims)
+        except Exception:  # noqa: BLE001 — a listing is never refused for this
+            lean = False
+        if lean:
+            tools = [t for t in tools if lean_page_tool(t.name)]
+        return tools
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         claims = _turn_claims()

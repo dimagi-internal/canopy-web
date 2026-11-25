@@ -108,3 +108,40 @@ def test_stream_map_prefers_a_parsed_marker_over_the_payload_author():
     )
     assert frames[0]["data"]["author"] == {"name": "Marker Author", "user_id": 99}
     assert frames[0]["data"]["plaintext"] == "hi"
+
+
+def _stream_one(c, runner, s, payload):
+    return c.post(
+        f"/api/harness/runners/{runner.id}/session-stream",
+        data={"session_id": str(s.id), "events": [{"kind": "user", "seq": 0, "index": 0, "payload": payload}]},
+        content_type="application/json",
+    )
+
+
+def test_a_live_wakeup_is_marked_automatic_and_a_typed_line_is_not(monkeypatch):
+    """An agent's ScheduleWakeup fire lands on the person's side of the
+    transcript; the live frame says no person typed it, as the stored row does."""
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1", stream_desired=True)
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
+
+    _stream_one(c, runner, s, {"text": "PR #2716 is in the merge queue. Check it merged and tell Jonathan.",
+                               "record": {"meta": True, "prompt_source": "system"}})
+    (_group, frame) = published[-1]
+    assert frame["event"]["payload"]["automatic"] is True
+    frames = stream_map.turn_event_to_frames(frame["event"], lambda _s: "m1")
+    assert frames[0]["data"]["automatic"] is True
+
+
+def test_a_line_a_person_typed_into_emdash_is_not_automatic(monkeypatch):
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1", stream_desired=True)
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
+
+    _stream_one(c, runner, s, {"text": "typed in emdash", "record": {"prompt_source": "typed"}})
+    (_group, frame) = published[-1]
+    assert "automatic" not in frame["event"]["payload"]

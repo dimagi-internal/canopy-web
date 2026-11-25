@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-from apps.harness import clis, provenance, sensitivity
+from apps.common import redact
+from apps.harness import claim_payload, clis, provenance, sensitivity
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner
 
@@ -83,6 +84,43 @@ def mark_started_by_you(rows, viewer) -> list:
     return rows
 
 
+def mark_brain_only(rows, viewer) -> list:
+    """`rows`, each told whether `viewer` reads it only through the brain's project leg
+    (`access.brain_only_ids`) — two queries for the page, not two per row in `session_out`."""
+    rows = list(rows)
+    only = access.brain_only_ids(viewer, [s.pk for s in rows]) if viewer is not None else set()
+    for s in rows:
+        s._brain_only = s.pk in only
+    return rows
+
+
+def is_brain_only(session, viewer) -> bool:
+    """Whether `viewer` reads `session` only through the brain's project leg: the page's mark
+    (`mark_brain_only`) when there is one, else asked for this one row."""
+    marked = getattr(session, "_brain_only", None)
+    if marked is not None:
+        return marked
+    return viewer is not None and access.read_through_brain_only(viewer, session)
+
+
+def _session_model(session, runner) -> str:
+    """The model a bound conversation runs on, "" when unbound. The one it holds
+    from its first claim wins (`Session.cli_model`, what every later claim sends);
+    else a model its agent names; else what the box reports, since a session a
+    person started on their own machine runs the box's setting; else the server
+    default every claim sends (`claim_payload.start_model`). A cloud box reports
+    none: it only runs claimed turns."""
+    if runner is None:
+        return ""
+    if session.cli_model:
+        return session.cli_model
+    cli = session.cli or "claude-code"
+    agent = session.agent if session.agent_id else None
+    named = (agent.cli_models or {}).get(cli) if agent else None
+    reported = (runner.capabilities or {}).get("claude_model")
+    return str(named or reported or claim_payload.start_model(None, cli))[:64]
+
+
 def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     waiting_on_you = serializers.pending_menu(session) is not None
@@ -127,7 +165,7 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     )
     prefer_own = bool(session.title) and not is_fallback
     sensitive = sensitivity.is_sensitive(session)
-    return {
+    row = {
         "id": session.id,
         "agent_slug": session.agent.slug if session.agent_id else None,
         "project": session.project,
@@ -164,10 +202,9 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "runner_online": _runner_online(runner),
         "runner_status": _runner_status(runner),
         "runner_signed_out": _runner_signed_out(runner, session),
-        # The model its runner's sessions start on (`opus[1m]`), as the box
-        # reports it: how the chat's context meter sizes the window, since the
-        # transcript never records the `[1m]`. "" when unbound or unreported.
-        "runner_model": str((runner.capabilities or {}).get("claude_model") or "") if runner else "",
+        # The model this conversation runs on (`opus[1m]`): how the chat's context
+        # meter sizes the window, since the transcript never records the `[1m]`.
+        "runner_model": _session_model(session, runner),
         "session_key": binding.session_key if binding else "",
         # The agent CLI this conversation runs on (`harness.clis`); "" until its first claim.
         "cli": session.cli,
@@ -222,6 +259,26 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # a task name can say what the session was about, so it is not served.
         **({"title": "", "session_key": ""} if session.content_deleted_at else {}),
     }
+    return _brain_scrubbed(session, row, viewer)
+
+
+#: What a row says of a session read only through the brain's project leg: its title, scrubbed, and
+#: none of its words. The row is metadata, so listing it is not a read; opening it is
+#: (`transcript_read.brain_redacted` scrubs the transcript and records the read).
+BRAIN_ONLY_BLANKED = ("opening", "last_reply")
+
+
+def _brain_scrubbed(session, row: dict, viewer) -> dict:
+    """A reader who has this session only through the brain's project leg gets its title with secrets
+    scrubbed and no opening or last reply (`BRAIN_ONLY_BLANKED`)."""
+    if not is_brain_only(session, viewer):
+        return row
+    if isinstance(row.get("title"), str):
+        row["title"] = redact.redact_text(row["title"])[0]
+    for key in BRAIN_ONLY_BLANKED:
+        if key in row:
+            row[key] = ""
+    return row
 
 
 def _started_by_name(session: Session) -> str:

@@ -8,7 +8,8 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from ..definition import definition_key, siblings
+from .. import definition_store
+from ..definition import agent_definition_key, siblings
 from ..models import Agent, AgentSkill, AgentSync
 from ._base import _aware
 from .projects import task_read_q
@@ -95,10 +96,11 @@ def _definition_summary(agent: Agent) -> dict:
     """
 
     return {
-        "key": definition_key(agent.repo_url, agent.repo_ref),
+        "key": agent_definition_key(agent),
         "repo_url": agent.repo_url,
         "repo_ref": agent.repo_ref,
         "shared_with": sorted({a.workspace_id for a in siblings(agent)}),
+        **definition_store.source_of(agent),
     }
 
 
@@ -274,6 +276,7 @@ def agent_detail(agent: Agent) -> dict:
         "google_account": agent.google_account,
         "avatar_url": agent.avatar_url,
         "workspace_id": agent.workspace_id,
+        "source": agent.source,
         "definition": _definition_summary(agent),
         "owner": _owner_summary(agent),
         "canopy_user": _canopy_user_summary(agent),

@@ -11,7 +11,7 @@ This middleware decides what such a request gets:
   SPA's assets and API calls are root-relative now, and the root of the labs
   host is connect-labs.
 * **Everything else keeps working in place** — the API, OAuth and well-known
-  documents, health — because runners, the canopy plugin, MCP clients, Slack,
+  documents, health, a stored agent's git repository — because runners, the canopy plugin, MCP clients, Slack,
   Gmail push and host sites all hold the old address, and none of them
   follows a redirect reliably (a 302 turns a POST into a GET; a WebSocket never
   follows one; WebSockets do not pass through here at all). For those requests
@@ -30,7 +30,7 @@ from django.urls import set_script_prefix
 from config.asgi_prefix import SCOPE_KEY
 
 #: Paths a machine calls at the old address. Matched against the STRIPPED path.
-MACHINE_PREFIXES = ("/api/", "/oauth/", "/.well-known/", "/health/")
+MACHINE_PREFIXES = ("/api/", "/oauth/", "/.well-known/", "/health/", "/git/")
 
 
 class LegacyPrefixMiddleware:

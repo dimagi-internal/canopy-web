@@ -28,10 +28,14 @@ the turn envelope apply the same one.
 # (`from apps.contacts import hcp`; `hcp.search(...)`).
 from __future__ import annotations
 
+from . import confirmations, disclosure, purposes, relationships, rules  # noqa: F401  (hcp.purposes: the registry and checks)
+from ..models import PersonAuditEvent, PersonFact, PersonGrant  # noqa: F401  (hcp.PersonFact … for the v2 routes)
 from .conformance import (
     CONFORMANCE_LEVEL,
     KNOWN_GAPS,
     discovery,
+    discovery_v2,
+    V2_CONFORMS_TO,
 )
 from .consent import (
     _DETAILS,
@@ -100,6 +104,7 @@ from .core import (
     valid_category,
 )
 from .entries import (
+    CONFLICT_DETECTION,
     _candidates,
     _check_confidence,
     _iso,
@@ -111,7 +116,8 @@ from .entries import (
     delete_entry,
     detect_conflicts,
     provenance_source,
-    release_conflicts_against,
+    assert_relationship,
+    reevaluate,
     servable,
     site_of,
     subject_id,
@@ -161,13 +167,21 @@ from .grants import (
     reach_of,
     reached,
     restrictions_for,
+    enforce_rules,
     revoke_grant,
     root_of,
+    set_standing_rule,
     source_label,
     tree_slugs,
     tree_source,
     within_grant,
     workspace_source,
+)
+from .purposes import (
+    check_permitted,
+    entry_serves,
+    read_purpose,
+    restrict_purposes,
 )
 from .relevance import (
     _STOP,
@@ -275,7 +289,9 @@ __all__ = [
     'delete_entry',
     'detect_conflicts',
     'provenance_source',
-    'release_conflicts_against',
+    'reevaluate',
+    'assert_relationship',
+    'CONFLICT_DETECTION',
     'servable',
     'site_of',
     'subject_id',
@@ -321,6 +337,8 @@ __all__ = [
     'reached',
     'restrictions_for',
     'revoke_grant',
+    'enforce_rules',
+    'set_standing_rule',
     'root_of',
     'SESSION_GRANT_CAP',
     'source_label',
@@ -345,7 +363,13 @@ __all__ = [
     'Score',
     'score_rows',
     'search',
+    'check_permitted',
+    'entry_serves',
+    'read_purpose',
+    'restrict_purposes',
     'CONFORMANCE_LEVEL',
     'discovery',
+    'discovery_v2',
+    'V2_CONFORMS_TO',
     'KNOWN_GAPS',
 ]

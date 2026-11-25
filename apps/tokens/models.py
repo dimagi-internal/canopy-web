@@ -159,10 +159,43 @@ def client_label(user_agent: str, canopy_client: str = "") -> str:
     return ((user_agent or "").strip() or (canopy_client or "").strip())[:200]
 
 
+#: A token's use is stamped at most once per this many seconds (unless its client
+#: changes): an agent or runner authenticates on every call, and a row write per
+#: request is load on the shared database for a value read only to the minute.
+LAST_USED_RESOLUTION_S = 60
+
+
+def stamp_due(last_used_at, now=None) -> bool:
+    """Whether a token last stamped at `last_used_at` is due a new stamp."""
+    if last_used_at is None:
+        return True
+    now = now or timezone.now()
+    return (now - last_used_at).total_seconds() >= LAST_USED_RESOLUTION_S
+
+
+def stamp_last_used(model, token, **extra) -> None:
+    """Stamp `token.last_used_at` (and `extra` fields) when due: in memory first, then a
+    conditional UPDATE, so concurrent requests on another task do not each write."""
+    now = timezone.now()
+    if not extra and not stamp_due(token.last_used_at, now):
+        return
+    rows = model.objects.filter(pk=token.pk)
+    if not extra:
+        rows = rows.filter(Q(last_used_at__isnull=True) | Q(
+            last_used_at__lte=now - timedelta(seconds=LAST_USED_RESOLUTION_S)))
+    rows.update(last_used_at=now, **extra)
+    token.last_used_at = now
+    for name, value in extra.items():
+        setattr(token, name, value)
+
+
 def note_used(token: PersonalToken, client: str) -> None:
-    """Stamp a token's last use — every entry point that authenticates with one."""
-    PersonalToken.objects.filter(pk=token.pk).update(
-        last_used_at=timezone.now(), last_used_client=client)
+    """Stamp a token's last use — every entry point that authenticates with one. At most
+    once a minute while the client stays the same (`LAST_USED_RESOLUTION_S`)."""
+    if client != token.last_used_client:
+        stamp_last_used(PersonalToken, token, last_used_client=client)
+    else:
+        stamp_last_used(PersonalToken, token)
 
 
 def hash_secret(raw: str) -> str:
@@ -346,6 +379,31 @@ class AppCredential(models.Model):
     #: host is asking for without reading a token. Informational: each TOKEN
     #: carries its own copy, and that copy is what reaches a session.
     last_runner_requirements = models.JSONField(default=list, blank=True)
+    #: How many contact tokens this site may mint per window
+    #: (`rate_limit.check_contact_token_issuer`); null = the deployment's
+    #: `CONTACT_TOKEN_ISSUER_LIMIT`. A relay site (one that carries its people's
+    #: conversations server-to-server) mints one per person per half hour, so a
+    #: busy one needs more than a widget does. Only a canopy superuser sets it: the
+    #: budget is what bounds the contacts a leaked signing key can create.
+    contact_token_issuer_limit = models.PositiveIntegerField(null=True, blank=True)
+    #: Where canopy POSTs the agent's replies in this site's contacts' conversations
+    #: (`apps/host_grants/reply_relay.py`): a relay site that carries those
+    #: conversations over its own channel, so it never has to poll. Null = no push.
+    #: canopy sends the person's conversation there, so it goes through the same
+    #: outbound rules as `host_issuer` (https, never private address space, no
+    #: redirects), and changing it needs a passkey step-up. A site may instead declare its
+    #: webhook in its signed `site.json` (`site.reply_url`), which canopy adopts only on the
+    #: site's own registered origin (`site_needs.declared_reply`); one set here wins.
+    reply_webhook_url = models.URLField(null=True, blank=True, max_length=500)
+    #: Who set `reply_webhook_url` (null when no one has, or the account is gone).
+    reply_webhook_set_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    #: `final`: one POST when a turn ends, with all its prose. `stream`: a POST per
+    #: piece of prose as it lands, then an `ended` one.
+    REPLY_FINAL, REPLY_STREAM = "final", "stream"
+    REPLY_MODE_CHOICES = [(REPLY_FINAL, "One reply when the turn ends"),
+                          (REPLY_STREAM, "Each piece of prose as it lands")]
+    reply_mode = models.CharField(max_length=8, choices=REPLY_MODE_CHOICES, default=REPLY_FINAL)
     #: MCP Apps (`apps/mcp_apps_host/mcp_apps.py`): which of the site's tools carry a
     #: View (`ui://` resource) and their visibility, plus the Views canopy has
     #: fetched (sha256, effective CSP, a cached copy for read-only rendering).
@@ -709,6 +767,12 @@ class ContactToken(models.Model):
     #: reason, as `DelegatedToken.host_grant`.
     host_grant = models.ForeignKey("tokens.HostGrant", on_delete=models.SET_NULL, null=True,
                                    blank=True, related_name="+")
+    #: The RELAY CHANNEL the site signed for this arrival (`contract.CHANNEL_CLAIM`,
+    #: e.g. `personalid`): the site carries this person's conversation server-to-server
+    #: and the person never opens canopy. "" for a widget. Turns sent with the token
+    #: are `relay:<site>:<channel>` (`initiator.channel`) and may name the
+    #: `site_message` source (`Turn.RELAY_SEND_ORIGINS`).
+    channel = models.CharField(max_length=32, blank=True, default="")
 
     class Meta:
         db_table = "contact_tokens"
@@ -716,13 +780,13 @@ class ContactToken(models.Model):
 
     @classmethod
     def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email="",
-              bound_agent=None, host_grant=None):
+              bound_agent=None, host_grant=None, channel=""):
         from django.utils import timezone
 
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, contact=contact, runner_requirements=list(runner_requirements),
-            bound_agent=bound_agent, host_grant=host_grant,
+            bound_agent=bound_agent, host_grant=host_grant, channel=channel or "",
             verified_email=verified_email or "",
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
@@ -938,3 +1002,42 @@ class SiteSignOff(models.Model):
         if self.state == self.OPEN and self.expires_at <= (now or timezone.now()):
             return "expired"
         return self.state
+
+
+class HostReplyDelivery(models.Model):
+    """One reply post to a host site's `reply_webhook_url`, delivered at most once.
+
+    Inserted BEFORE the first attempt under a unique `(turn, seq)` (and one `ended` row
+    per turn), so a re-delivered signal or two processes handling the same turn cannot
+    both post — the same rule as `slack.SlackRelayPost`. Unlike Slack, a failed post is
+    retried with backoff (`reply_relay.BACKOFF`): the host is the person's only way to
+    hear the reply. The host treats `(turn, seq)` as its idempotency key, so a retry
+    that reached it twice is one reply.
+
+    `text` holds what the agent said only until it is delivered or given up on, then it
+    is emptied; a person deleting the conversation's words empties it too.
+    """
+
+    app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="reply_deliveries")
+    turn = models.ForeignKey("harness.Turn", on_delete=models.CASCADE, related_name="host_replies")
+    seq = models.PositiveIntegerField()
+    ended = models.BooleanField(default=False)
+    text = models.TextField(blank=True, default="")
+    #: The turn's end, when it did not finish well (`failed`, `cancelled`, `lost`, `missed`).
+    error = models.CharField(max_length=32, blank=True, default="")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now, db_index=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    abandoned_at = models.DateTimeField(null=True, blank=True)
+    #: The last attempt's answer (`HTTP 503`, `ConnectionError: …`); never a credential.
+    last_status = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "host_reply_deliveries"
+        ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["turn", "seq"], name="host_reply_once_per_seq"),
+            models.UniqueConstraint(fields=["turn"], condition=Q(ended=True),
+                                    name="host_reply_one_end_per_turn"),
+        ]

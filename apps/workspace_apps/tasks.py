@@ -12,11 +12,12 @@ The rules this module is:
   unbound setting, a switched-off app — is a 404.
 * **The app role replaces the workspace task gates, for exactly that.** The admin who installed
   the app consented to its declaration, so a person holding the action's app role runs it AS
-  THEMSELVES through the task services (`services.create_tasks` / `patch_task`, `task_actions.act`,
+  THEMSELVES through the task services (`services.create_tasks` / `patch_task`, `finish_or_reopen`, `task_actions.act`,
   `recurrence.spawn`), recorded under their name, whatever their workspace role. Nothing else
   about a task opens: no other field, no other action, no other project.
-* **Never a turn.** `done` and `comment` go through `task_actions.act`, whose only turn-starting
-  actions (approve, reply, nudge) no declaration can name; `reopen` and `patch` are a field write;
+* **Never a turn.** `done` and `reopen` go through `task_actions.finish_or_reopen` (shared with dynamic
+  views), `comment` through `task_actions.act`, whose only turn-starting actions (approve, reply, nudge)
+  no declaration can name; `reopen` and `patch` are a field write;
   `create` files the task with NO agent assignee; `spawn` copies a template. Status moves only
   through `done` / `reopen`.
 * **Live work only.** A draft's test copy has sample records, never tasks: the routes refuse a
@@ -31,6 +32,8 @@ import datetime as dt
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import F, Window
+from django.db.models.functions import RowNumber
 
 from apps.agents import services as task_services
 from apps.agents import work
@@ -43,8 +46,8 @@ from .models import AppInstallation
 from .services import Refused
 
 MAX_QUERY = 200
-#: Statuses `reopen` brings back from (the task is finished or dropped).
-_CLOSED = (AgentTask.DONE, AgentTask.DECLINED)
+#: How many of a task's newest comments a row carries (`annotate_activity`).
+ROW_COMMENTS = 3
 
 
 def declared(manifest: dict) -> dict | None:
@@ -86,6 +89,7 @@ def task_out(t: AgentTask) -> dict:
                      (t.assignee_user.email if t.assignee_user_id else None)),
         "recurrence": t.recurrence, "template": t.template.key if t.template_id else None,
         "last_done": t.last_done.isoformat() if getattr(t, "last_done", None) else None,
+        "done_by": getattr(t, "_done_by", None), "comments": getattr(t, "_comments", None) or [],
         "url": t.url, "created_at": t.created_at.isoformat(), "updated_at": t.updated_at.isoformat(),
     }
 
@@ -100,7 +104,51 @@ def query(inst: AppInstallation, user, *, status: str = "", category: str = "", 
                                     category=category, due_after=due_after, due_before=due_before, q=q,
                                     recurring=recurring, template=template)
     rows = recurrence.annotate_last_done(qs.order_by("due", "rank", "id")[:max(1, min(int(limit), MAX_QUERY))])
-    return [task_out(t) for t in rows]
+    return [task_out(t) for t in annotate_activity(rows)]
+
+
+def _name(user=None, agent=None, fallback: str = "") -> str | None:
+    """Who did it, as a page shows it: the person (an agent acting for them names them), else the agent."""
+    if user is not None:
+        return (user.get_full_name() or "").strip() or user.email or user.get_username()
+    if agent is not None:
+        return agent.name or agent.slug
+    return fallback or None
+
+
+def annotate_activity(tasks) -> list:
+    """Cache `_done_by` and `_comments` (`task_out`) on every task in `tasks`, in two queries
+    whatever their number: the newest status→done change of each done task, and each task's
+    newest `ROW_COMMENTS` comments (the `comment` history event; its words are the action row's)."""
+    tasks = list(tasks)
+    if not tasks:
+        return tasks
+    done_ids = [t.pk for t in tasks if t.status == AgentTask.DONE]
+    done = {}
+    if done_ids:
+        for ev in (TaskEvent.objects.filter(task_id__in=done_ids, kind=TaskEvent.FIELD, field="status",
+                                            new=AgentTask.DONE)
+                   .select_related("by_user", "by_agent").order_by("task_id", "created_at", "id")):
+            done[ev.task_id] = ev  # ascending: the last one kept is the newest
+    comments: dict[int, list[dict]] = {}
+    newest = (TaskEvent.objects.filter(task_id__in=[t.pk for t in tasks], kind=TaskEvent.COMMENT,
+                                       action__isnull=False)
+              .annotate(n=Window(RowNumber(), partition_by=[F("task_id")],
+                                 order_by=[F("created_at").desc(), F("id").desc()]))
+              .filter(n__lte=ROW_COMMENTS)
+              .select_related("by_user", "by_agent", "action", "action__by_user")
+              .order_by("task_id", "created_at", "id"))
+    for ev in newest:
+        comments.setdefault(ev.task_id, []).append({
+            "body": ev.action.comment,
+            "by": _name(ev.by_user or ev.action.by_user, ev.by_agent, ev.action.by),
+            "at": ev.created_at.isoformat()})
+    for t in tasks:
+        ev = done.get(t.pk)
+        t._done_by = ({"name": _name(ev.by_user, ev.by_agent), "at": ev.created_at.isoformat()}
+                      if ev is not None else None)
+        t._comments = comments.get(t.pk, [])
+    return tasks
 
 
 # --- acting -----------------------------------------------------------------------------------
@@ -193,17 +241,14 @@ def act_task(inst: AppInstallation, user, name: str, key: str | None, input: dic
     try:
         if do == "patch":
             task = task_services.patch_task(task, _fields(inst, decl, spec, input), by_user=user, by_agent=agent)
-        elif do == "reopen":
-            if task.status not in _CLOSED:
-                raise Refused(f"{task.key} is {task.status}, not finished — nothing to reopen", status=409)
-            task = task_services.patch_task(task, {"status": AgentTask.TODO}, by_user=user, by_agent=agent)
-        elif do in ("done", "comment"):
-            action = "done" if do == "done" else "comment"
-            body = _text("body", input.get("body"), required=True) if do == "comment" else ""
-            task, _row, turns = task_services.act(task, action=action, comment=body, by=by, by_user=user,
+        elif do in task_services.SCREEN_STATUS_ACTIONS:
+            task = task_services.finish_or_reopen(task, do, by_user=user, acting_agent=agent)
+        elif do == "comment":
+            body = _text("body", input.get("body"), required=True)
+            task, _row, turns = task_services.act(task, action="comment", comment=body, by=by, by_user=user,
                                                   actor_workspace_ids=set(), may_start_turns=False,
                                                   acting_agent=agent)
-            if turns:  # pragma: no cover — done and comment start none; a regression must not ship one
+            if turns:  # pragma: no cover — a comment starts none; a regression must not ship one
                 raise RuntimeError("an app task action started a turn")
         elif do == "spawn":
             try:

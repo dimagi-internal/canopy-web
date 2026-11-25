@@ -11,7 +11,7 @@ Where canopy-web runs, how a change gets from a PR to production, and the AWS/IA
 
 ### The vector extension
 
-KB vectors (`apps/agents/kb_vectors.py`) are off unless `KB_VECTORS` is set. When on they need pgvector ≥ 0.8 (iterative index scans) in the `canopy_web` database. `vector` is not a trusted extension, so canopy-web's own role (`canopy_web`, not `rds_superuser`) cannot create it, and migration `agents/0064_kb_passages.py` only runs `CREATE EXTENSION IF NOT EXISTS vector`, a no-op once it exists (it fails at the `halfvec` column on a PostgreSQL without pgvector). To create it on a new database: connect as the RDS master user (password in Secrets Manager `labs-jj-db-password`) from inside the canopy-web task over ECS Exec, since the RDS is not public, and run `CREATE EXTENSION IF NOT EXISTS vector;`; check with `SELECT extversion FROM pg_extension WHERE extname = 'vector'`. CI's PostgreSQL job and `docker compose` use the `pgvector/pgvector:pg18` image, where the superuser creates it in the migration. Upgrading the instance to a new PostgreSQL major: [`docs/runbooks/postgres-major-upgrade.md`](../runbooks/postgres-major-upgrade.md).
+KB vectors (`apps/agents/kb_vectors.py`) are off unless `KB_VECTORS` is set. When on they need pgvector ≥ 0.8 (iterative index scans) in the `canopy_web` database. `vector` is not a trusted extension, so canopy-web's own role (`canopy_web`, not `rds_superuser`) cannot create it, and migration `apps/agents/migrations/0064_kb_passages.py` only runs `CREATE EXTENSION IF NOT EXISTS vector`, a no-op once it exists (it fails at the `halfvec` column on a PostgreSQL without pgvector). To create it on a new database: connect as the RDS master user (password in Secrets Manager `labs-jj-db-password`) from inside the canopy-web task over ECS Exec, since the RDS is not public, and run `CREATE EXTENSION IF NOT EXISTS vector;`; check with `SELECT extversion FROM pg_extension WHERE extname = 'vector'`. CI's PostgreSQL job and `docker compose` use the `pgvector/pgvector:pg18` image, where the superuser creates it in the migration. Upgrading the instance to a new PostgreSQL major: [`docs/runbooks/postgres-major-upgrade.md`](../runbooks/postgres-major-upgrade.md).
 
 ### The old address still serves machines
 
@@ -50,13 +50,33 @@ canopy's protocol identity — CIMD client_id, assertion audience, own issuer, M
 Merging to `main` does **not** deploy. Deploys run only from GitHub, via the **Deploy to Labs (AWS)** workflow (`.github/workflows/deploy-labs.yml`, `workflow_dispatch`):
 
 ```bash
-gh workflow run "Deploy to Labs (AWS)" --ref main                          # migrations run automatically
-gh workflow run "Deploy to Labs (AWS)" --ref main -f skip_migrations=true  # EMERGENCY ONLY
+gh workflow run "Deploy to Labs (AWS)" --ref main -f reason="<what ships>" -f session="<agent + session id, or a person>"
+#   add -f skip_migrations=true only in an EMERGENCY
 ```
+
+`reason` and `session` are required and non-blank: every session deploys as the same GitHub user, so the run's name (`Deploy canopy-web: <reason> [<session>]`) is what tells deploys apart in `gh run list`.
 
 The workflow hard-fails on any ref other than `main`, and deploys main's tip as of when the run starts, not the dispatch-time sha — so a dispatch that waited behind another rollout ships everything merged meanwhile, and a queued deploy can never roll prod backwards. Dispatching the commit already serving ends green with build and deploy skipped; `-f force=true` rolls it again (e.g. to pick up a changed secret). The `guard` job in the workflow holds all of this.
 
-Pipeline: build → push to ECR (`labs-jj-canopy-web`) → **migrate** on a throwaway task def → create a CloudFormation change set (`aws cloudformation deploy --no-execute-changeset --parameter-overrides ImageTag=<sha>`) → **preflight** → `aws cloudformation execute-change-set`, which registers the real task definition and rolls the ECS service.
+Pipeline: record the live task definition → build → push to ECR (`labs-jj-canopy-web`) → **migrate** on a throwaway task def → create a CloudFormation change set (`aws cloudformation deploy --no-execute-changeset --parameter-overrides ImageTag=<sha>`) → **preflight** → `aws cloudformation execute-change-set`, which registers the real task definition and rolls the ECS service → **post-deploy watch** → held-back drops.
+
+### Post-deploy watch and automatic rollback
+
+A release can pass the target-group health check and still be broken: a DB-pool change that starves requests of connections serves `/health/` fine while the API and chat websockets fail. So once the service is stable on the new task definition, `deploy/aws/post_deploy_watch.py` watches it for 5 minutes (a poll every 30 s) and trips on any of:
+
+| Signal (log group `/ecs/labs-jj-canopy-web`, counted over the watch) | Trips at |
+|---|---|
+| `psycopg_pool.PoolTimeout` | 3 |
+| `Exception in ASGI application` | 15 |
+| `Traceback` | 20 |
+| websocket handler failure (uvicorn `websockets_sansio_impl.py … run_asgi`) or `session socket connect failed` | 10 |
+| `django.request` at ERROR (5xx) | 10 |
+| a target in `labs-jj-canopy-web-tg` `unhealthy` | 3 polls in a row |
+| `https://canopy.dimagi.com/health/` not 200 | 3 polls in a row |
+
+The limits are calibrated on a week of 5-minute slices: the worst clean slice (about twenty deploys among them) was 0 / 7 / 7 / 4 / 2, and the PoolTimeout outage crossed every limit in its first minute. Re-check before changing them: `AWS_PROFILE=labs python -m deploy.aws.post_deploy_watch --start <iso> --end <iso>` prints every slice's counts and whether it trips.
+
+On a trip the workflow runs `aws ecs update-service --task-definition <the one recorded before the deploy>`, waits for the service to stabilise, and fails the job with what tripped, sample lines and the rollback target in the run summary. That is the one `update-service` outside CloudFormation: the stack's `ImageTag` stays on the release that tripped, and the next deploy's change set moves the service on from there. Migrations stay applied, and the held-back drops never run, so the previous code still finds its columns. Fix forward with a new commit: redeploying the same commit is an empty change set and leaves the rollback in place. If the watch itself cannot read AWS it warns and does not roll back.
 
 ### Rolling out plain jobs to the cloud boxes
 
@@ -71,11 +91,12 @@ To roll back, pause schedules with a job from Triggers; a box whose `canopy-job-
 
 ### CloudFormation owns the task definition and service
 
-- One writer per resource: the pipeline only passes `ImageTag`; CFN registers the task definition and rolls the service. Never register task-definition revisions or call `ecs update-service` outside CFN — the stack's `ImageTag` would go stale and the next plain `cloudformation deploy` would silently roll prod back.
+- One writer per resource: the pipeline only passes `ImageTag`; CFN registers the task definition and rolls the service. The post-deploy rollback is the one exception (above). Never register task-definition revisions or call `ecs update-service` outside CFN — the stack's `ImageTag` would go stale and the next plain `cloudformation deploy` would silently roll prod back.
 - CFN resolves intrinsics (`!Ref`, `!Sub`) itself; don't add a step that reads the template outside CloudFormation.
 - **The migration seam.** CFN rolls `Service` and its `TaskDefinition` atomically, so migrations run first on a throwaway task def built from the LIVE one with only the image swapped. Its env is therefore one deploy stale: if a deploy both changes an env var and ships a migration that reads it, deploy twice.
 - Migrations are idempotent (`migrate --noinput`) and run before cutover, on every deploy whose diff from the live image touches a `migrations/` file, `pyproject.toml` or `uv.lock` (otherwise the migrate task is skipped; an unknown live sha or `force` migrates). Write them the obvious way — destructive migrations are fine, and a brief window of errors during a deploy is accepted; don't split a one-line migration into expand/contract PRs.
 - **The pipeline does that split for drops.** The window hurts when the old task reads a column a migration just dropped: on a hot table, 30-40% of requests fail for about 3.5 minutes. So a deploy whose migration diff has a `RemoveField` or `DeleteModel` runs `migrate_for_rollout`, which applies everything except a tail of pure drops and makes those columns nullable; a plain `migrate` applies the drops after a successful rollout. If anything held back is more than a drop (an `AddField` or `RunPython` behind it, or a rename), new code might need it before cutover, so it falls back to a plain `migrate` and the window stays.
+- **PR CI fails what the pipeline cannot hold.** `manage.py check_migration_rollout --base <sha>` (PR fast checks) replays the split on the PR's new migrations and fails on a fallback, on a rename of a column or table (`RenameField`, `RenameModel`, `AlterModelTable`, an `AlterField` that changes `db_column`), and on raw SQL that drops or renames a column or table the models still read; raw SQL dropping a column the code stopped naming in an earlier deploy is the safe second step and passes. A migration with a `# rollout-safe: <why>` line is skipped.
 
 ### Preflight
 
@@ -108,9 +129,11 @@ A grant canopy needs goes into the role stack, or into the owning stack's `TaskR
 
 ## CI and merging
 
-CI (`.github/workflows/ci.yml`) runs on every PR, in the merge queue, and on push to `main`. Required checks: **Backend tests** (which also verifies `frontend/src/api/generated.ts` is fresh and the `dimagi-canopy` SDK version bump) and **Frontend build** (which also enforces the `canopy-ui`/`canopy-client` version bump).
+CI (`.github/workflows/ci.yml`) runs on every PR and in the merge queue; a push to `main` runs only `Backend pytest (PostgreSQL)`, to save the migrated test DB to main's cache (main moves only through the queue, so the pushed commit is the one the queue already passed). Required checks: **Backend tests** (which also verifies `frontend/src/api/generated.ts` is fresh and the `dimagi-canopy` SDK version bump) and **Frontend build** (which also enforces the `canopy-ui`/`canopy-client` version bump).
 
-The full suites run once, in the merge queue, sharded so no job sets the wait alone (`.github/workflows/ci.yml` lists the jobs). On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the import ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
+The full suites run once, in the merge queue, sharded so no job sets the wait alone (`.github/workflows/ci.yml` lists the jobs). On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the source-walking ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed; the design-token ratchet always). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
+
+Tests marked `nightly` (the exhaustive access walks) are left out of the queue and run every night in `.github/workflows/nightly-walks.yml`, which keeps one open issue (label `nightly-walks`) while they fail. The queue's backend shards print every test over 5 seconds, so a shard that runs long names its cause.
 
 ### Every PR: arm auto-merge, no strategy flag
 

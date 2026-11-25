@@ -74,6 +74,7 @@ import glob
 import hashlib
 import hmac
 import http.client
+import inspect
 import io
 import json
 import os
@@ -779,7 +780,18 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         # The caller-envelope version this code reads (2 = `profile: "confined"`);
         # canopy-web gives caller turns only to a box that reports it.
         "envelope": ENVELOPE_VERSION,
+        # This code keeps nothing of an `isolated` turn (a learning run's) for later turns
+        # (`ISOLATED_TURN_ENV`); canopy-web hands such a turn only to a box that reports it.
+        "isolated": ISOLATED_VERSION,
+        # A REST beat's reply is the slim one (`RunnerHeartbeatSlimOut`): this box
+        # reads only `paused`, `paused_note`, `expected_canopy_version`,
+        # `refresh_pending` and `cancel_turn_ids` off it (`_observe_beat`,
+        # `honour_stops`, `maybe_self_refresh`). The socket's ack ignores it.
+        "slim_reply": 1,
     }
+    # This code reads its work through `GET /runners/{id}/sync` when `v` moves,
+    # rather than polling each drain route; 0 once a server answered it has none.
+    body["sync"] = 1 if sync_in_use() else 0
     # Omitted until the first inbox probe: absent is "unknown", [] is "none".
     readable = mailboxes_readable()
     if readable is not None:
@@ -1260,7 +1272,137 @@ def _canopy_cli_check() -> None:
         _set_check("canopy.cli", "ok", f"canopy {cli}")
 
 
+#: Seconds a plugin may lag the clone it is installed from, counted from when the clone last
+#: moved, before the `plugins` check goes amber. A claim pulls the clone and installs it at once
+#: (`_refresh_agent_plugin`), so any lag past this means that install failed.
+PLUGIN_REFRESH_GRACE_SECONDS = int(os.environ.get("PLUGIN_REFRESH_GRACE_SECONDS", "600"))
+#: Seconds a claim waits for that install: canopy's updater waits up to two minutes for another
+#: update of the same plugin, then copies the agent's files (about a second for ACE).
+PLUGIN_REFRESH_TIMEOUT = int(os.environ.get("PLUGIN_REFRESH_TIMEOUT", "240"))
+
+
+def _canopy_fleet_updater() -> pathlib.Path | None:
+    """The installed canopy plugin's fleet updater, or None when it has no `--refresh`: an
+    older one ignores the flag and runs a whole-fleet update, which would hold the claim."""
+    root = _canopy_plugin_root()
+    script = root / "hooks" / "fleet_session_start_update.py" if root else None
+    try:
+        return script if script and "def refresh_plugin(" in script.read_text() else None
+    except OSError:
+        return None
+
+
+def _refresh_agent_plugin(slug: str, clone: pathlib.Path) -> None:
+    """Install the agent's just-pulled clone as its plugin, before its turn starts.
+
+    Turns load the plugin cache, never the clone, and canopy's session-start updater runs in
+    the background, so without this a turn runs the version installed before it began. canopy's
+    updater does the copy (`--refresh`): one `git rev-parse` when nothing changed, the agent's
+    own files when something did (its node_modules is linked, not copied). A failure is logged
+    and the turn runs what is installed; the `plugins` check turns amber."""
+    updater = _canopy_fleet_updater()
+    if updater is None:
+        return
+    try:
+        r = subprocess.run(["python3", str(updater), "--refresh", slug, "--clone", str(clone)],
+                           capture_output=True, text=True, timeout=PLUGIN_REFRESH_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        _log(f"warn: could not install {slug}'s pulled clone as its plugin ({exc}); "
+             "the turn runs the version already installed")
+        return
+    said = " ".join((r.stdout or r.stderr or f"exit {r.returncode}").split())[-300:]
+    if r.returncode != 0:
+        _log(f"warn: could not install {slug}'s pulled clone as its plugin ({said}); "
+             "the turn runs the version already installed")
+    elif "up-to-date" not in said:
+        _log(f"plugin: {said}")
+
+
+def _clone_moved_at(loc: str) -> float:
+    """When the clone's HEAD last moved (its reflog), else when it last fetched; 0 if neither."""
+    for f in (pathlib.Path(loc) / ".git" / "logs" / "HEAD", pathlib.Path(loc) / ".git" / "FETCH_HEAD"):
+        try:
+            return f.stat().st_mtime
+        except OSError:
+            continue
+    return 0.0
+
+
+def _plugins_check(now: float | None = None, home: pathlib.Path | None = None) -> None:
+    """The `plugins` health check: amber when an installed plugin still lags the clone it is
+    installed from PLUGIN_REFRESH_GRACE_SECONDS after that clone last moved.
+
+    Turns load the plugin CACHE (installed_plugins.json's installPath), never the clone. A claim
+    pulls the agent's clone and installs it (`_refresh_agent_plugin`), and `canopy agent
+    prepare` does the same for the plugins an agent requires, so a lag that outlives the grace
+    is a failed install, whose reason canopy's updater writes to ~/.claude/canopy/fleet-update.log.
+    A plugin whose installed sha is not in its clone's history (a marketplace that points at
+    another repo, or one installed ahead of it) is not judged: there is nothing honest to compare."""
+    now = time.time() if now is None else now
+    plugins = (pathlib.Path.home() if home is None else home) / ".claude" / "plugins"
+    try:
+        installed = json.loads((plugins / "installed_plugins.json").read_text()).get("plugins") or {}
+        markets = json.loads((plugins / "known_marketplaces.json").read_text())
+    except (OSError, ValueError, AttributeError):
+        return
+
+    def git(loc: str, *args: str) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(["git", "-C", loc, *args], capture_output=True, text=True,
+                                  timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    behind = []
+    for key, entries in sorted(installed.items()):
+        entry = entries[0] if isinstance(entries, list) and entries else {}
+        sha = str(entry.get("gitCommitSha") or "")
+        loc = str((markets.get(key.rpartition("@")[2]) or {}).get("installLocation") or "")
+        if not sha or not loc or not (pathlib.Path(loc) / ".git").exists():
+            continue
+        if _is_stored_clone(pathlib.Path(loc)):
+            # A stored agent's clone is reset to the live revision, and one materialized
+            # from an archive holds a single orphan commit, so ancestry says nothing:
+            # behind means "not HEAD".
+            head = git(loc, "rev-parse", "HEAD")
+            if head is None or head.returncode != 0 or head.stdout.strip() == sha:
+                continue
+            waited = now - _clone_moved_at(loc)
+            if waited > PLUGIN_REFRESH_GRACE_SECONDS:
+                behind.append(f"{key} {entry.get('version') or '?'} is not the revision synced to "
+                              f"{loc}, which moved {_ago(waited)} ago")
+            continue
+        anc = git(loc, "merge-base", "--is-ancestor", sha, "HEAD")
+        if anc is None or anc.returncode != 0:
+            continue                          # unknown here, or installed ahead of the clone
+        missing = git(loc, "rev-list", "--count", f"{sha}..HEAD")
+        n = int(missing.stdout.strip() or 0) if missing and missing.returncode == 0 \
+            and missing.stdout.strip().isdigit() else 0
+        if not n:
+            continue
+        waited = now - _clone_moved_at(loc)
+        if waited > PLUGIN_REFRESH_GRACE_SECONDS:
+            behind.append(f"{key} {entry.get('version') or '?'} is {n} commit{'s' if n != 1 else ''} "
+                          f"behind {loc}, which moved {_ago(waited)} ago")
+    if behind:
+        _set_check("plugins", "warn",
+                   "turns load the installed plugin, not the clone, so they run old skills and "
+                   "rails — " + "; ".join(behind) + ". Why the install failed is in "
+                   "~/.claude/canopy/fleet-update.log and this runner's log.")
+    else:
+        _set_check("plugins", "ok", "")
+
+
+def _ago(seconds: float) -> str:
+    if seconds >= 2 * 86400:
+        return f"{int(seconds // 86400)} days"
+    if seconds >= 7200:
+        return f"{int(seconds // 3600)} hours"
+    return f"{max(1, int(seconds // 60))} minutes"
+
+
 def _slow_checks() -> None:
+    _plugins_check()
     claude = _version_of([CLAUDE_BIN, "--version"])
     _set_check("claude.version", *(("ok", f"Claude Code {claude}") if claude
                                    else ("fail", f"`{CLAUDE_BIN} --version` did not run")))
@@ -1858,6 +2000,7 @@ def _stage_salesforce(slug: str) -> pathlib.Path | None:
     home = _delegated_chrome_sales_home(slug)
     target = home / ".sf-creds.json"
     creds = _salesforce_value(slug)
+    _note_salesforce(slug, creds)
     try:
         if not creds:
             target.unlink(missing_ok=True)
@@ -1872,6 +2015,44 @@ def _stage_salesforce(slug: str) -> pathlib.Path | None:
     except OSError as exc:
         _log(f"warn: could not stage {slug}'s Salesforce credential ({exc})")
         return None
+
+
+def _note_salesforce(slug: str, creds: str) -> None:
+    """The `salesforce.<slug>` check: whether a Salesforce login was staged for this
+    agent's turns and whether chrome-sales can use it as it stands. Key NAMES only.
+
+    chrome-sales answers "Not authenticated" both when no file is staged and when the file
+    has no `accessToken` / `instanceUrl` (it refreshes only after a 401, never a token
+    that is missing), so the alert alone cannot tell the two apart. An agent with no
+    `salesforce` value and no gap that mentions it gets no check: it does not use one."""
+    name = f"salesforce.{slug}"
+    if not creds:
+        gaps = _TURN_VALUE_GAPS.get(slug, "")
+        if gaps and ("salesforce" in gaps.lower()):
+            _set_check(name, "warn", f"no Salesforce login staged: its vault value did not arrive — {gaps}")
+        else:
+            with _HEALTH_LOCK:
+                _HEALTH.pop(name, None)
+        return
+    try:
+        data = json.loads(creds)
+    except ValueError:
+        _set_check(name, "warn", "staged, but the `salesforce` value is not JSON: chrome-sales will "
+                                 "answer 'Not authenticated'")
+        return
+    keys = sorted(data) if isinstance(data, dict) else []
+    if not keys:
+        _set_check(name, "warn", "staged, but the `salesforce` value is not a JSON object")
+        return
+    missing = [k for k in ("accessToken", "instanceUrl") if not data.get(k)]
+    if not missing:
+        _set_check(name, "ok", f"staged (keys: {', '.join(keys)})")
+        return
+    can_refresh = bool(data.get("refreshToken") and data.get("clientId"))
+    _set_check(name, "warn", f"staged, but it has no {' or '.join(missing)} (keys: {', '.join(keys)}), so "
+               "chrome-sales answers 'Not authenticated'"
+               + (" before it ever tries its refresh token" if can_refresh else ""))
+    _log(f"warn: {slug}: staged Salesforce login lacks {', '.join(missing)} (keys: {', '.join(keys)})")
 
 
 #: A delegated Google account's vault entry name (canopy-web `google_mint.DELEGATED_PREFIX`):
@@ -3712,6 +3893,47 @@ def install_aws_broker(*, run=subprocess.run) -> bool:
         _log(f"aws broker: not installed ({exc})")
     return False
 
+#: sysstat's switches. Ubuntu ships the package with collection OFF and 7 days kept, so
+#: a box's memory, disk and load over time were nowhere: CloudWatch has CPU and network
+#: only, and sizing a runner needs its peak memory. On, sadc samples every 10 minutes
+#: into /var/log/sysstat/saDD and `sar -r` / `sar -q` / `sar -d -f <file>` read it back.
+SYSSTAT_DEFAULT = pathlib.Path(os.environ.get("CANOPY_SYSSTAT_DEFAULT", "/etc/default/sysstat"))
+SYSSTAT_CONF = pathlib.Path(os.environ.get("CANOPY_SYSSTAT_CONF", "/etc/sysstat/sysstat"))
+SYSSTAT_HISTORY_DAYS = 31
+
+
+def _set_shell_var(path: pathlib.Path, name: str, value: str) -> bool:
+    """Set `NAME=value` in a shell-style config file; True when the file changed."""
+    text = path.read_text()
+    line = f"{name}={value}"
+    pat = re.compile(rf"^{re.escape(name)}=.*$", re.M)
+    new = pat.sub(line, text) if pat.search(text) else text.rstrip("\n") + f"\n{line}\n"
+    if new == text:
+        return False
+    path.write_text(new)
+    return True
+
+
+def enable_sysstat(*, run=subprocess.run) -> bool:
+    """ROOT: turn sysstat collection on, keeping SYSSTAT_HISTORY_DAYS of history, and
+    (re)start it when that changed anything. Idempotent: an unchanged box runs nothing.
+    Never raises; a box without the package only lacks the history."""
+    try:
+        if not SYSSTAT_DEFAULT.is_file():
+            return False
+        changed = _set_shell_var(SYSSTAT_DEFAULT, "ENABLED", '"true"')
+        if SYSSTAT_CONF.is_file():
+            changed = _set_shell_var(SYSSTAT_CONF, "HISTORY", str(SYSSTAT_HISTORY_DAYS)) or changed
+        if changed:
+            run(["systemctl", "enable", "--now", "sysstat.service"], capture_output=True)
+            run(["systemctl", "restart", "sysstat.service"], capture_output=True)
+            _log(f"sysstat: collection on, {SYSSTAT_HISTORY_DAYS} days kept")
+        return True
+    except Exception as exc:  # noqa: BLE001 — never block a box's setup on metrics
+        _log(f"sysstat: not enabled ({exc})")
+        return False
+
+
 #: The stack parameters a machine of several runners needs (never a secret), as the legacy
 #: runner.env names them — what an in-place move carries over into box.env.
 BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS",
@@ -4128,6 +4350,7 @@ def _turn_values(slug: str, *, now: float | None = None, outside_turn: bool = Fa
     values = {str(k): str(v) for k, v in values.items()}
     _TURN_ENV_ERRORS.pop(slug, None)
     note_cred_success(slug)
+    _TURN_VALUE_GAPS[slug] = _value_gaps(doc)
     # The resolve-time extras, when the CLI hands them over (`RESOLVE_EXTRAS`): it
     # resolved WITH this runner's device proof (and unwrapped a zero-knowledge
     # vault), which a runner's own (proofless) resolve cannot attach.
@@ -4135,9 +4358,41 @@ def _turn_values(slug: str, *, now: float | None = None, outside_turn: bool = Fa
         _AGENT_DELEGATED[slug] = {str(k): str(v) for k, v in doc["delegated"].items() if v}
     with _TURN_VALUES_LOCK:
         _TURN_VALUES[slug] = (now, values)
-    _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
-               "held in memory")
+    gaps = _TURN_VALUE_GAPS[slug]
+    if gaps:
+        _log(f"warn: {slug}: resolved without some vault values — {gaps}")
+        _set_check(f"env.{slug}", "warn", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
+                   f"held in memory — but not everything its vaults hold reached it: {gaps}")
+    else:
+        _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
+                   "held in memory")
     return values
+
+
+#: Per agent, what its last resolve could NOT hand this box (a shared vault it holds no
+#: copy of, a value a layer could not serve, a value sealed to other devices), as one
+#: line of names and reasons — never a value. "" when everything arrived.
+_TURN_VALUE_GAPS: dict[str, str] = {}
+
+
+def _value_gaps(doc: dict) -> str:
+    """The resolve's own diagnostics (canopy's `vault_layers` / `sealed_skipped`, passed
+    through by `cred env --runner --print-json`) as one line. Without this a vault attached
+    to an agent whose value never arrived read as "N var(s), ok", and the turn failed later
+    on something else's words (chrome-sales: "Not authenticated")."""
+    parts = []
+    for layer in doc.get("vault_layers") or []:
+        if not isinstance(layer, dict):
+            continue
+        name = str(layer.get("vault") or "?")
+        if not layer.get("opened"):
+            parts.append(f"vault '{name}' not opened ({layer.get('fix') or layer.get('why') or 'no reason given'})")
+        elif layer.get("left_out"):
+            parts.append(f"vault '{name}' left out {', '.join(map(str, layer['left_out']))}")
+    for skip in doc.get("sealed_skipped") or []:
+        if isinstance(skip, dict):
+            parts.append(f"{skip.get('name')}: {skip.get('why') or 'sealed to other devices'}")
+    return "; ".join(parts)[:1500]
 
 
 # ── backing off an agent whose credentials this box cannot resolve ──────────
@@ -5471,7 +5726,9 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _lifecycle(turn_id, "started", pid=getattr(getattr(agent, "proc", None), "pid", 0),
                    agent=agent_slug or "", executor="acp", session=session_id,
                    resume=resume or "", cwd=str(workdir),
-                   relayed=isinstance(getattr(agent, "proc", None), RelayProc))
+                   relayed=isinstance(getattr(agent, "proc", None), RelayProc),
+                   lean=bool(getattr(agent, "_session_meta", None)) or None,
+                   streams=bool(getattr(_TURN_ENV, "live_text", None)) or None)
 
     started = time.time()
 
@@ -5493,6 +5750,10 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             _TURN_ENV.relay_turn = ""
         position, on_flushed = _acp_progress_hooks(turn_id) if relay_spawn else (None, None)
         extra = {k: v for k, v in (("ask_human", ask_human), ("spawn", relay_spawn)) if v is not None}
+        if getattr(_TURN_ENV, "lean", False) and _takes_kwarg(core.AcpAgent, "session_meta"):
+            extra["session_meta"] = _lean_session_meta(brief=getattr(_TURN_ENV, "page_brief", "") or "")
+        live = getattr(_TURN_ENV, "live_text", None)
+        live_kw = {"on_text": live} if live is not None and _takes_kwarg(drive_turn, "on_text") else {}
         make_agent = core.AcpAgent
         if extra:
             def make_agent(**kwargs):
@@ -5509,6 +5770,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             mode=ACP_PERMISSION_MODE,
             session_start_timeout=ACP_SESSION_START_TIMEOUT_SECONDS,
             flush_seconds=TRANSCRIPT_FLUSH_SECONDS, clock=time.time, log=_log,
+            **live_kw,
             **({"position": position, "on_flushed": on_flushed} if position else {}))
     except TurnError as exc:
         _log(f"turn {turn_id[:8]}: ACP executor failed: {exc.detail}")
@@ -5557,6 +5819,10 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
 #: How often a waiting ask polls `/menu-answers` itself, so an answer lands even
 #: when the doorbell frame was lost.
 MENU_ANSWER_POLL_SECONDS = 3.0
+#: With `/sync` in use the answer arrives through it (an answer moves the sync
+#: version and rings `menu_answer`), so a waiting ask only checks the version
+#: this often itself: a conditional `/sync`, a 304 while nothing changed.
+MENU_ANSWER_SYNC_CHECK_SECONDS = 15.0
 _ASKS_LOCK = threading.Lock()
 #: Chat session id -> the ask waiting on a person there.
 _ASKS: dict[str, dict] = {}
@@ -5637,9 +5903,14 @@ def _ask_a_person(runner_id: str, turn_id: str, chat_session_id: str):
                 if stop_requested(turn_id):
                     return ({"outcome": {"outcome": "cancelled"}} if method == _PERMISSION
                             else {"action": "cancel"})
-                waiter["ring"].wait(MENU_ANSWER_POLL_SECONDS)
-                waiter["ring"].clear()
-                _drain_menu_answers(runner_id)
+                if sync_in_use():
+                    if not waiter["ring"].wait(MENU_ANSWER_SYNC_CHECK_SECONDS):
+                        _check_sync_for_answers(runner_id)
+                    waiter["ring"].clear()
+                else:
+                    waiter["ring"].wait(MENU_ANSWER_POLL_SECONDS)
+                    waiter["ring"].clear()
+                    _drain_menu_answers(runner_id)
                 with _ASKS_LOCK:
                     answer, waiter["answer"] = waiter["answer"], None
                 if answer is None:
@@ -5666,13 +5937,26 @@ def _ask_a_person(runner_id: str, turn_id: str, chat_session_id: str):
     return ask
 
 
+def _check_sync_for_answers(runner_id: str) -> None:
+    """A waiting ask's own check while `/sync` is in use: a conditional read, acted
+    on when the version moved (the answer is delivered to the waiter there)."""
+    answer = fetch_sync(runner_id, whole=False)
+    if answer is not None:
+        act_on_sync(runner_id, answer)
+
+
 def _drain_menu_answers(runner_id: str) -> None:
     """Hand each answer to the ask waiting on it. An answer with no ask waiting
     here (it ended first) is retired `no_dialog`, or it would be re-listed forever."""
     status, payload = _api("GET", f"/runners/{runner_id}/menu-answers")
     if status != 200 or not isinstance(payload, dict):
         return
-    for a in payload.get("answers") or []:
+    _deliver_menu_answers(runner_id, payload.get("answers") or [])
+
+
+def _deliver_menu_answers(runner_id: str, answers: list) -> None:
+    """`_drain_menu_answers` on a list already read (`/menu-answers` or `/sync`)."""
+    for a in answers:
         sid, answer_id = a.get("session_id") or "", a.get("answer_id") or ""
         if not answer_id:
             continue
@@ -6645,6 +6929,11 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
     requested_by = _requested_by_from(turn)
     if not _turn_agent_slug(turn) and not turn.get("project"):
         return {"CANOPY_REQUESTED_BY": requested_by}
+    if _turn_says_stored(turn):
+        # A stored agent has no repo: canopy-web refuses it an identity (409), and the
+        # turn needs none — it changes itself through definition drafts, not pushes.
+        _is_stored_agent(_turn_agent_slug(turn), turn)
+        return {"CANOPY_REQUESTED_BY": requested_by}
     turn_id = str(turn["id"])
     status, body = _api("POST", f"/runners/{runner_id}/turns/{turn_id}/github-token")
     token = str((body or {}).get("token") or "") if status == 200 else ""
@@ -6993,6 +7282,12 @@ def _fetch_clone(clone: pathlib.Path, env: dict | None = None, *, pull: bool = F
     repo fetched without a token fails, and a confined turn has none) is logged and turns the `clones` health
     check amber once the clone is older than CLONE_STALE_SECONDS."""
     key = str(clone)
+    if _is_stored_clone(clone):
+        # A stored agent's clone (canopy's origin): git is never run against it, since it
+        # holds no credential for canopy. Its "pull" is `canopy agent sync`
+        # (`_sync_stored_clone`, which may raise StoredAgentError); its "fetch" is a
+        # no-op — the sync already moved origin/main.
+        return _sync_stored_clone(clone.name, clone) if pull else True
     cmd = ["git", "-C", key, *(["pull", "--ff-only", "--quiet"] if pull else ["fetch", "--quiet", "origin"])]
     error = ""
     try:
@@ -7034,6 +7329,8 @@ def _clone_age(clone: pathlib.Path, now: float) -> float:
 def _clone_refresh_blocker(slug: str) -> str:
     """Why the runner's own fetch of `slug`'s clone ran WITHOUT the agent owner's GitHub
     delegation, for the `clones` check — "" when nothing here kept it from using one."""
+    if _is_stored_agent(slug):
+        return ""
     if SENSITIVE_DATA_MODE:
         return "this is a sensitive-data box: it never borrows a GitHub token, so a private repo cannot be fetched here"
     err = _TURN_ENV_ERRORS.get(slug)
@@ -7051,19 +7348,27 @@ def _clones_check(now: float | None = None) -> None:
     now = time.time() if now is None else now
     with _CLONE_FETCH_LOCK:
         failing = {k: dict(v) for k, v in _CLONE_FETCH.items() if v.get("error")}
-    stale, blocked = [], []
+    stale, blocked, stored = [], [], []
     for key, rec in sorted(failing.items()):
         age = _clone_age(pathlib.Path(key), now)
         if age > CLONE_STALE_SECONDS:
             how = "never fetched" if age == float("inf") else f"last fetched {int(age // 60)} min ago"
+            if _is_stored_clone(pathlib.Path(key)):
+                stored.append(f"{pathlib.Path(key).name} ({how.replace('fetched', 'synced')}): {rec['error']}")
+                continue
             stale.append(f"{pathlib.Path(key).name} ({how}): {rec['error']}")
             blocked.append(pathlib.Path(key).name)
-    if stale:
+    if stored and not stale:
+        _set_check("clones", "warn", "new sessions run a STALE revision of a stored agent — "
+                   + "; ".join(stored) + ". `canopy agent sync --runner` brings its clone to the live "
+                   "revision; its error is above and in this runner's log.")
+    elif stale:
         why = [f"{name}: {r}" for name in blocked if (r := _clone_refresh_blocker(name))]
         _set_check("clones", "warn", "new sessions run STALE skills and rails — " + "; ".join(stale) +
                    ". A private repo needs the agent's GitHub token, which its owner lends at the "
                    "agent's Settings → External accounts → GitHub" +
-                   (" — " + "; ".join(why) if why else "; one is lent and this box holds it, so the fetch itself failed") + ".")
+                   (" — " + "; ".join(why) if why else "; one is lent and this box holds it, so the fetch itself failed") + "."
+                   + (" Stored agents behind too: " + "; ".join(stored) + "." if stored else ""))
     else:
         _set_check("clones", "ok", "")
 
@@ -7079,7 +7384,7 @@ def _clone_refresh_env(slug: str, env: dict | None) -> dict | None:
     read-only in effect, and is never part of the turn's environment (the confined env is an
     allowlist built before and apart from this). Not on a sensitive-data box, which holds
     nothing it need not."""
-    if (env or {}).get("GH_TOKEN") or SENSITIVE_DATA_MODE or not slug:
+    if (env or {}).get("GH_TOKEN") or SENSITIVE_DATA_MODE or not slug or _is_stored_agent(slug):
         return env
     # In force NOW, not as last cached: the server's per-turn gate (`…/github-token`, a 409
     # once the delegation is withdrawn or its person stops being an admin) is not asked
@@ -8024,6 +8329,209 @@ def agents_unprepared() -> list[str] | None:
     return sorted(s for s in tried if not (pathlib.Path(AGENT_ROOT) / s / ".git").is_dir())
 
 
+# ── stored agents ────────────────────────────────────────────────────────────
+# A STORED agent's definition is a git repository canopy-web hosts, not a GitHub repo
+# (canopy-web docs/architecture/runners.md § A stored agent on a runner). The claim says so
+# (`turn["definition"]["source"] == "stored"`), and `canopy agent prepare --runner`
+# brings its live revision into AGENT_ROOT/<slug> as a git repo whose HEAD is
+# `refs/remotes/origin/main` and whose origin is canopy's: the repository's URL,
+# `<canopy base>/git/<workspace>/<slug>.git`, which the CLI fetches with the box's own
+# token in a header, or `canopy://<workspace>/<slug>` from a CLI that materialized it
+# from an archive. So everything downstream of "a clone" — worktrees,
+# `_link_clone_state`, the plugin install, `agents_unprepared` — is unchanged. What
+# differs is here:
+#
+#   * no GitHub identity and no CANOPY_AGENT_REPO for its turns (`_github_turn_env`);
+#   * `canopy agent sync --runner --slug <slug>` in place of `git pull`
+#     (`_fetch_clone`): a plain `git fetch` of canopy's URL has no credential, and the
+#     box never hands its token to git itself; never a borrowed GitHub token for it
+#     (`_clone_refresh_env`);
+#   * a turn never runs WITHOUT the clone, or past a canopy CLI too old to sync one:
+#     either fails the turn saying why (`StoredAgentError`), because the alternative is
+#     running stale code, or none of the agent at all, without a word;
+#   * an agent whose definition moved to GitHub (the claim says `source: "repo"`) while
+#     this box holds its canopy clone is cloned again from GitHub (`_retire_stored_clone`).
+
+#: A clone from an archive names this as its origin. git never fetches it.
+STORED_ORIGIN_PREFIX = "canopy://"
+#: canopy's addresses this box knows: a clone whose origin is `<one of them>/git/…` is
+#: a stored agent's.
+CANOPY_PUBLIC_HOSTS = ("https://canopy.dimagi.com", "https://labs.connect.dimagi.com/canopy")
+STORED_SYNC_TIMEOUT = int(os.environ.get("STORED_SYNC_TIMEOUT", "300"))
+#: Agents a claimed turn said are stored (`_is_stored_agent`), by slug.
+_STORED_AGENTS: set[str] = set()
+#: One sync per agent at a time: two turns claimed together share the first's result.
+_STORED_SYNC_LOCKS: dict[str, threading.Lock] = {}
+_STORED_SYNC_LOCKS_GUARD = threading.Lock()
+UPDATE_CANOPY_HINT = ("update the canopy plugin and CLI on this box (a runner refresh re-bootstraps "
+                      "it: the runner's page → Refresh)")
+
+
+class StoredAgentError(RuntimeError):
+    """A stored agent's turn that must not run: its clone could not be materialized, or
+    this box's canopy CLI is too old to keep it at the live revision."""
+
+
+def _turn_says_stored(turn: dict | None) -> bool | None:
+    """What the claim says: True (stored), False (`definition` names another source),
+    None when it says nothing (a repo agent, or a server from before stored agents)."""
+    d = (turn or {}).get("definition")
+    if not isinstance(d, dict) or not d.get("source"):
+        return None
+    return d.get("source") == "stored"
+
+
+def _is_canopy_origin(url: str) -> bool:
+    """Is `url` a stored agent's origin: `canopy://…`, or canopy's git URL
+    (`<base>/git/<workspace>/<slug>.git`, for this box's base or canopy's public one)?"""
+    url = (url or "").strip()
+    if url.startswith(STORED_ORIGIN_PREFIX):
+        return True
+    if not url.rstrip("/").endswith(".git"):
+        return False
+    bases = {b.rstrip("/") for b in (BASE_URL, os.environ.get("CANOPY_BASE_URL", ""), *CANOPY_PUBLIC_HOSTS) if b}
+    return any(url.startswith(f"{base}/git/") for base in bases)
+
+
+def _is_stored_clone(clone: pathlib.Path) -> bool:
+    """Whether `clone` is a stored agent's: its origin is canopy's (`_is_canopy_origin`)."""
+    if not (pathlib.Path(clone) / ".git").exists():
+        return False
+    url = _git_out("-C", str(clone), "config", "--get", "remote.origin.url", timeout=10)
+    return bool(url) and _is_canopy_origin(url)
+
+
+def _retire_stored_clone(slug: str, clone: pathlib.Path) -> bool:
+    """Move a stored agent's clone out of AGENT_ROOT, for an agent that is a repo agent
+    now (its definition was exported to GitHub): the next step clones it from GitHub.
+    Kept under WORK_DIR/retired-clones rather than deleted — its ignored files (`.env`,
+    state) are the agent's. True when it moved."""
+    dest = pathlib.Path(WORK_DIR) / "retired-clones" / f"{slug}-{int(time.time())}"
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(clone), str(dest))
+    except OSError as exc:
+        _log(f"warn: agent {slug}: its definition moved to GitHub, and its canopy clone could not be "
+             f"moved aside ({exc}); its turns run the last revision synced from canopy")
+        return False
+    _log(f"agent {slug}: its definition moved to GitHub — its canopy clone is at {dest}; cloning it again")
+    return True
+
+
+def _is_stored_agent(slug: str, turn: dict | None = None) -> bool:
+    """Is `slug` a stored agent? The turn's claim says so when it carries `definition`
+    (and is remembered, for the box's own refreshes); else what a claim said before;
+    else the clone itself (canopy's origin)."""
+    if not slug:
+        return False
+    said = _turn_says_stored(turn)
+    if said is True:
+        _STORED_AGENTS.add(slug)
+        return True
+    if said is False:
+        _STORED_AGENTS.discard(slug)
+        return False
+    return slug in _STORED_AGENTS or _is_stored_clone(pathlib.Path(AGENT_ROOT) / slug)
+
+
+def _canopy_runner_env() -> dict:
+    """The environment `canopy agent prepare|sync --runner` runs in: this box's own token
+    (never a person's PAT, never a GitHub token) and AGENT_ROOT."""
+    env = _off_disk_env(dict(os.environ))
+    for key in _GITHUB_ENV_KEYS:
+        env.pop(key, None)
+    env.setdefault("AGENT_ROOT", AGENT_ROOT)
+    env["CANOPY_TOKEN"] = _bearer(min_life=900)
+    return env
+
+
+def _cli_too_old(returncode: int, said: str) -> bool:
+    """A usage error from click: the CLI predates `canopy agent sync --runner` (an older
+    `agent sync` is the manager-sync command, which has no `--runner`)."""
+    return returncode == 2 or any(m in said for m in ("No such option", "No such command",
+                                                       "Missing option", "no such option"))
+
+
+def stored_sync(slug: str) -> dict:
+    """Run `canopy agent sync --runner --slug <slug>` and return the JSON line it prints
+    (`{slug, revision, root_sha256, commit, changed}`). Raises StoredAgentError: with the
+    update hint when the CLI is too old to have it."""
+    try:
+        r = subprocess.run([_canopy_cli(), "agent", "sync", "--runner", "--slug", slug],
+                           capture_output=True, text=True, timeout=STORED_SYNC_TIMEOUT,
+                           env=_canopy_runner_env())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise StoredAgentError(f"`canopy agent sync` for stored agent {slug} did not run: {exc}") from exc
+    said = " ".join((r.stderr or r.stdout or f"exit {r.returncode}").split())[-300:]
+    if r.returncode != 0:
+        if _cli_too_old(r.returncode, said):
+            raise StoredAgentError(
+                f"{slug} is a stored agent, and this box's canopy CLI cannot sync one "
+                f"(`canopy agent sync --runner`: {said}); {UPDATE_CANOPY_HINT}")
+        raise StoredAgentError(f"`canopy agent sync` for stored agent {slug} failed: {said}")
+    for line in reversed((r.stdout or "").splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                doc = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(doc, dict) and "revision" in doc:
+                return doc
+    raise StoredAgentError(f"`canopy agent sync` for stored agent {slug} printed no revision ({said})")
+
+
+#: What `_sync_stored_clone` runs, given the slug. A name of its own so a test swaps in
+#: a fake: no test may reach a real canopy-web.
+_STORED_SYNCER = stored_sync
+
+
+def _sync_stored_clone(slug: str, clone: pathlib.Path) -> bool:
+    """Bring a stored agent's clone to its live revision — its `git pull` — and RECORD
+    how it went for the `clones` check. A sync that fails is logged and the turn runs the
+    revision last synced (as a failed pull does), EXCEPT a CLI too old to sync at all,
+    which raises StoredAgentError: that box would never move again."""
+    key = str(clone)
+    with _STORED_SYNC_LOCKS_GUARD:
+        lock = _STORED_SYNC_LOCKS.setdefault(slug, threading.Lock())
+    error, fatal = "", None
+    with lock:
+        try:
+            doc = _STORED_SYNCER(slug)
+            if doc.get("changed"):
+                _log(f"stored agent {slug}: synced to revision {doc.get('revision')} "
+                     f"({str(doc.get('commit') or '')[:12]})")
+        except StoredAgentError as exc:
+            error = str(exc)[:300]
+            if UPDATE_CANOPY_HINT in str(exc):
+                fatal = exc
+    now = time.time()
+    with _CLONE_FETCH_LOCK:
+        rec = _CLONE_FETCH.setdefault(key, {"ok_at": 0.0, "failed_at": 0.0, "error": ""})
+        if error:
+            rec.update(failed_at=now, error=error)
+        else:
+            rec.update(ok_at=now, error="")
+    if fatal is not None:
+        raise fatal
+    if error:
+        _log(f"warn: {error}; new sessions on {slug} run the revision this box last synced")
+    return not error
+
+
+def _require_stored_clone(slug: str) -> None:
+    """A stored agent's turn runs in its materialized clone or not at all: a scratch dir
+    would be a turn with none of the agent in it, reporting done."""
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if _is_stored_clone(clone):
+        return
+    why = (_HEALTH.get(f"prepare.{slug}") or {}).get("detail") or ""
+    raise StoredAgentError(
+        f"{slug} is a stored agent and this box has not materialized it"
+        + (f" (canopy agent prepare: {why[:200]})" if why else "")
+        + f"; a canopy CLI from before stored agents cannot — {UPDATE_CANOPY_HINT}")
+
+
 #: The turn env key `_github_turn_env` names the agent's repo under (`owner/name`).
 AGENT_REPO_ENV = "CANOPY_AGENT_REPO"
 _GITHUB_REPO = re.compile(r"^[\w-][\w.-]*/[\w-][\w.-]*$")
@@ -8063,7 +8571,7 @@ _PREPARED_WITH_GITHUB: dict[str, float] = {}
 _LAZY_CLONER = _clone_agent_repo
 
 
-def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
+def _ensure_agent_clone(slug: str, env: dict | None = None, *, stored: bool = False) -> None:
     """Set an agent up NOW if this box has no clone of it — before its turn runs.
 
     `env` is the turn's own environment: its GitHub identity clones the agent's
@@ -8076,9 +8584,25 @@ def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
     `done` (answering with the fleet's plugins only). canopy-web asks the box to refresh when an agent is registered
     (apps/agents/setup.py::request_setup), but a turn can arrive first. Waiting a
     bootstrap here is slower; running as nobody is wrong. It also stamps
-    `_BOOTSTRAPPED_AT`, which discharges that pending refresh."""
+    `_BOOTSTRAPPED_AT`, which discharges that pending refresh.
+
+    A STORED agent (`stored`) has no GitHub repo to clone: `canopy agent prepare` clones
+    it from canopy. A clone of it that is still a GitHub checkout (an agent converted to
+    stored since this box cloned it) is prepared again, which replaces it. The reverse —
+    a repo agent whose clone here is still canopy's (exported to GitHub since) — is moved
+    aside and cloned again from GitHub."""
     if not slug or _safe_session_dirname(slug) != slug:
         return
+    if stored:
+        _ensure_stored_clone(slug, env)
+        return
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if _is_stored_clone(clone):
+        with _LAZY_BOOTSTRAP_LOCK:
+            if _is_stored_clone(clone):
+                _STORED_AGENTS.discard(slug)
+                if _retire_stored_clone(slug, clone):
+                    _LAZY_BOOTSTRAP_TRIED.pop(slug, None)
     github = bool((env or {}).get("GH_TOKEN"))
 
     def stale() -> bool:
@@ -8109,6 +8633,26 @@ def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
         if github:
             _PREPARED_WITH_GITHUB[slug] = time.time()
         _LAZY_BOOTSTRAPPER(slug, env)
+
+
+def _ensure_stored_clone(slug: str, env: dict | None) -> None:
+    """`_ensure_agent_clone` for a stored agent: prepare it when this box has no
+    materialized clone of it, at most once per LAZY_BOOTSTRAP_RETRY."""
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if _is_stored_clone(clone):
+        return
+    _BOOTSTRAP_DONE.wait(timeout=BOOTSTRAP_TIMEOUT_SECONDS)
+    with _LAZY_BOOTSTRAP_LOCK:
+        if _is_stored_clone(clone):
+            return
+        if time.time() - _LAZY_BOOTSTRAP_TRIED.get(slug, 0.0) < LAZY_BOOTSTRAP_RETRY:
+            return
+        _LAZY_BOOTSTRAP_TRIED[slug] = time.time()
+        _log(f"agent {slug}: a stored agent with no materialized clone on this box"
+             f"{' (its clone is a GitHub checkout)' if (clone / '.git').exists() else ''} "
+             "— preparing it before its turn runs")
+        # No turn GitHub identity is passed: a stored agent's turn has none.
+        _LAZY_BOOTSTRAPPER(slug, {k: v for k, v in (env or {}).items() if k not in _GITHUB_ENV_KEYS})
 
 
 def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
@@ -8143,23 +8687,40 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     sits beside the one it was cut from.
 
     `env` is the turn's own environment: its git fetches and pulls use the
-    turn's GitHub identity, since this box holds none of its own."""
+    turn's GitHub identity, since this box holds none of its own.
+
+    A STORED agent's clone is materialized by `canopy agent prepare` and synced by
+    `canopy agent sync` where a repo agent's is cloned and pulled (`_fetch_clone`); its
+    turn raises StoredAgentError rather than run without it."""
     session_id = turn.get("_worktree_of") or _chat_session_id(turn)
     slug = _turn_agent_slug(turn)
+    stored = _is_stored_agent(slug, turn)
     if slug:
-        _ensure_agent_clone(slug, env)
+        _ensure_agent_clone(slug, env, stored=stored)
+    if stored:
+        _require_stored_clone(slug)
     # A PROJECT turn (a repo, no agent) works in its own worktree of that repo, at
     # (an empty scratch dir would send such turns looking for /opt/canopy-web).
     project = "" if slug else (turn.get("project") or "")
     if session_id:
         path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
         clone = pathlib.Path(AGENT_ROOT) / slug if slug else None
-        if clone is not None and (clone / ".git").exists():
+        if clone is not None and (clone / ".git").exists() and getattr(_TURN_ENV, "lean", False):
+            # A lean page turn loads no agent plugin (nothing to refresh), and trusts a
+            # clone fetched lately — by a `prepare` (`_prepare_session`) or another turn.
+            with _session_prep_lock(session_id):
+                fetch_env = _clone_refresh_env(slug, env)
+                if not path.exists() and _clone_age(clone, time.time()) > LEAN_FETCH_FRESH_SECONDS:
+                    _fetch_clone(clone, fetch_env, pull=True)
+                if not path.exists():
+                    _ensure_session_worktree(clone, path, env=fetch_env)
+        elif clone is not None and (clone / ".git").exists():
             # Fetched with the runner's own refresh identity when the turn has none (a
             # caller's confined turn): the session is cut from origin/main, so a fetch that
             # fails leaves it on the agent's old skills. Never put in the turn's env.
             fetch_env = _clone_refresh_env(slug, env)
             _fetch_clone(clone, fetch_env, pull=True)
+            _refresh_agent_plugin(slug, clone)
             _ensure_session_worktree(clone, path, env=fetch_env)
         elif project:
             _project_worktree(project, path, env)
@@ -8169,6 +8730,7 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
         if (agent_dir / ".git").is_dir() and _safe_session_dirname(slug) == slug:
             # The clone is still pulled: the agent's plugin is installed from it.
             _fetch_clone(agent_dir, _clone_refresh_env(slug, env), pull=True)
+            _refresh_agent_plugin(slug, agent_dir)
             return _agent_turn_worktree(slug, agent_dir, turn_id, env=env)
     path = pathlib.Path(WORK_DIR) / turn_id[:8]
     if project:
@@ -8703,8 +9265,14 @@ def _drain_session_interrupts(runner_id: str) -> int:
         return 0
     if status != 200 or not isinstance(payload, dict):
         return 0
+    return _carry_out_interrupts(runner_id, payload.get("interrupts") or [])
+
+
+def _carry_out_interrupts(runner_id: str, items: list) -> int:
+    """Stop each session named in `items` (a `/session-interrupts` or `/sync` list)
+    and retire its record. Returns how many reached a running turn."""
     reached = 0
-    for item in payload.get("interrupts") or []:
+    for item in items:
         sid, iid = item.get("session_id") or "", item.get("interrupt_id") or ""
         if not iid:
             continue
@@ -8749,18 +9317,13 @@ def _install_acp_adapter() -> None:
       (EACCES). `$HOME/.local/bin` is already first on the unit's PATH
       (runner.cfn.yaml), so `--prefix "$HOME/.local"` installs somewhere the
       adapter is actually found.
-    * **It never asked whether the adapter was already installed.** With one
-      present at /usr/bin/claude-agent-acp it still ran the doomed install and
-      logged "could not install the ACP adapter … the ACP executor will fall
-      back to claude -p" — on a boot that then executed every turn over ACP
-      perfectly well. A warning that names the wrong outcome is worse than
+    * **An adapter that is already there is not reinstalled.** One on PATH
+      outside the prefix (e.g. /usr/bin/claude-agent-acp) is left alone, and
+      one under the prefix is replaced only when it is not the pinned
+      `ADAPTER_VERSION`. A warning that names the wrong outcome is worse than
       silence: it sends the next person debugging in the opposite direction.
     """
     if not isinstance(_executor(), AcpExecutor):
-        return
-    existing = shutil.which(ACP_ADAPTER_BIN)
-    if existing:
-        _log(f"ACP adapter already on PATH ({existing})")
         return
     core = _acp_core()
     if core is None:
@@ -8769,10 +9332,10 @@ def _install_acp_adapter() -> None:
     # The install itself is canopy_acp's, shared with the laptop runner.
     prefix = pathlib.Path.home() / ".local"
     outcome = core.install_adapter(prefix)
-    if outcome == "installed":
-        _log(f"installed {ACP_ADAPTER_PACKAGE} into {prefix}")
+    if outcome == "installed" or outcome.startswith("upgraded"):
+        _log(f"{outcome}: {ACP_ADAPTER_PACKAGE}@{core.ADAPTER_VERSION} into {prefix}")
     elif outcome == "present":
-        _log(f"ACP adapter already installed under {prefix}")
+        _log(f"ACP adapter already present ({shutil.which(ACP_ADAPTER_BIN) or prefix})")
     elif outcome == "no-node":
         _log("warn: node/npm not on PATH; the ACP executor will fall back to claude -p")
     else:
@@ -10187,6 +10750,10 @@ def _observe_beat(reply) -> None:
     """Take in one heartbeat reply. A reply without pause state (none, an error,
     an older server) leaves `_LAST_BEAT` empty, so the pause is left alone."""
     _LAST_BEAT.clear()
+    if isinstance(reply, dict):
+        # `v` on a socket ack, `sync_version` on a REST reply; neither (an older
+        # server, a slim reply without it) makes `/sync` due, behind its ETag.
+        note_version(reply.get("v", reply.get("sync_version")))
     if isinstance(reply, dict) and "expected_canopy_version" in reply:
         _CANOPY_RELEASE["v"] = str(reply.get("expected_canopy_version") or "")
     if not isinstance(reply, dict) or "paused" not in reply:
@@ -11918,6 +12485,10 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
         status, _ = _api("POST", f"/runners/{runner_id}/record-session", body)
         if status != 200:
             _log(f"record-session turn={str(turn.get('id', ''))[:8]} -> {status}")
+        else:
+            # A new binding moves no sync version, and its live tail starts from
+            # `/sync`'s stream list: read it whole on the next pass.
+            sync_refresh()
     except Exception as exc:  # noqa: BLE001 — never let this fail the turn
         _log(f"record-session turn={str(turn.get('id', ''))[:8]} raised: {exc}")
 
@@ -12406,10 +12977,13 @@ def _sync_session_streams(runner_id: str) -> None:
     ct = _transcript_core()
     if ct is None:
         return
-    status, payload = _api("GET", f"/runners/{runner_id}/streams")
-    if status != 200 or not isinstance(payload, dict):
-        return
-    desired = {s["session_id"]: s for s in (payload.get("streams") or []) if s.get("session_id")}
+    streams = sync_streams()
+    if streams is None:
+        status, payload = _api("GET", f"/runners/{runner_id}/streams")
+        if status != 200 or not isinstance(payload, dict):
+            return
+        streams = payload.get("streams") or []
+    desired = {s["session_id"]: s for s in streams if s.get("session_id")}
 
     for sid in list(_STREAM_READERS):  # drop tailers for sessions nobody watches
         if sid not in desired:
@@ -12489,7 +13063,12 @@ def _drain_backfills(runner_id: str) -> None:
     status, payload = _api("GET", f"/runners/{runner_id}/backfills")
     if status != 200 or not isinstance(payload, dict):
         return
-    for b in payload.get("backfills") or []:
+    _ship_backfills(runner_id, ct, payload.get("backfills") or [])
+
+
+def _ship_backfills(runner_id: str, ct, backfills: list) -> None:
+    """Ship each session's full history named in `backfills` (`/backfills` or `/sync`)."""
+    for b in backfills:
         sid = b.get("session_id") or ""
         path = _session_transcript_path(sid, b.get("session_key") or "",
                                         b.get("project") or "")
@@ -12568,7 +13147,12 @@ def _drain_handoffs(runner_id: str) -> None:
     status, payload = _api("GET", f"/runners/{runner_id}/handoffs")
     if status != 200 or not payload:
         return
-    for item in payload.get("handoffs") or []:
+    _act_on_handoffs(runner_id, hc, payload.get("handoffs") or [])
+
+
+def _act_on_handoffs(runner_id: str, hc, items: list) -> None:
+    """Pack or close each transfer in `items` (`/handoffs` or `/sync`)."""
+    for item in items:
         try:
             if item.get("capture"):
                 _capture_handoff(runner_id, hc, item)
@@ -12676,7 +13260,9 @@ def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
     """
     try:
         if with_backfills:
-            if not SENSITIVE_DATA_MODE:
+            # With `/sync` in use its answer carries backfills and handoffs
+            # (`act_on_sync`); these drains are for a server without it.
+            if not SENSITIVE_DATA_MODE and not sync_in_use():
                 _drain_backfills(runner_id)
                 _drain_handoffs(runner_id)
             _maybe_report_usage(runner_id)
@@ -12813,8 +13399,17 @@ _MAIL_RULE = re.compile(r"^(?:canopy\s+email\s|(?:\./)?bin/[A-Za-z0-9_-]+-email(
 _CONFINED_EXTRA_DENY = frozenset({*_GITHUB_ENV_KEYS, "CANOPY_CHAT_KEY"})
 
 
+#: A bash rule of canopy's `doc_comment` profile (apps/agents/published_profiles.py
+#: `doc_comment_profile`): gog reading one Doc or replying on its comments, as the
+#: agent's own Google account. The same keyring as mail, so the same gate.
+_DOC_RULE = re.compile(r"^gog\s+(?:docs\s+cat|drive\s+comments\s+(?:list|reply))\s")
+
+
 def _profile_uses_mail(cap: dict) -> bool:
-    return any(_MAIL_RULE.match(str(rule).strip()) for rule in (cap.get("bash") or []))
+    """Whether the profile's own bash allowlist runs the agent's Google account: the mail
+    path, or a Docs-comment profile's gog rules."""
+    return any(_MAIL_RULE.match(str(rule).strip()) or _DOC_RULE.match(str(rule).strip())
+               for rule in (cap.get("bash") or []))
 
 
 def _confined_env(slug: str | None, cap: dict, extra: dict) -> dict:
@@ -13099,6 +13694,34 @@ def profiles_supported(plugin_root: pathlib.Path | None = None) -> int:
 #: explicitly here rather than inferred from an unrelated variable.
 ONE_SHOT_TURN_ENV = {"CANOPY_ONE_SHOT_TURN": "1"}
 
+#: A turn canopy-web marks `isolated` (a learning run's: it read other people's sessions through `brain_read`)
+#: keeps nothing on this box for the agent's later turns: Claude Code's auto memory is off for it, so what it read
+#: is never written to the memory the agent's other sessions load, and once it ends (its rows shipped) its Claude
+#: session goes (`_isolated_forget_turn`), so no later turn of the agent reads it off the disk and canopy-web's
+#: removal cascade has no copy here to miss. Reported on the heartbeat as `isolated`: 2 is this whole contract.
+ISOLATED_TURN_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+ISOLATED_VERSION = 2
+
+
+def _isolation_env(turn: dict) -> dict:
+    return dict(ISOLATED_TURN_ENV) if turn.get("isolated") else {}
+
+
+def _isolated_forget_turn(turn: dict, cwd: pathlib.Path | None, session_ids) -> None:
+    """After an isolated turn, however it ended and after its rows shipped: delete every Claude session it opened or
+    resumed (`_session_paths`: transcript, sidecar with its whole tool results, todos, file history, session env) and
+    its caller envelope. canopy-web holds the transcript; the box keeps nothing of what the run read."""
+    if not turn.get("isolated"):
+        return
+    turn_id = str(turn.get("id") or "")
+    workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
+    sids = [session_ids] if isinstance(session_ids, str) else list(session_ids or ())
+    paths = [CALLER_ROOT / f"{turn_id}.json"] if turn_id else []
+    for sid in dict.fromkeys(x for x in sids if x):
+        paths += _session_paths(workdir, sid)
+    for path in paths:
+        _unlink_or_rmtree(path)
+
 
 def _killed_by_shutdown(ok: bool, turn_id: str) -> bool:
     """True when an unfinished turn died because the box itself is powering off (a
@@ -13122,6 +13745,274 @@ def _turn_model(turn: dict) -> str:
     model name is ignored rather than passed to the CLI."""
     model = str(turn.get("cli_model") or "").strip()
     return model if _MODEL_NAME.fullmatch(model) else ""
+
+
+# ── lean page turns ─────────────────────────────────────────────────────────
+#
+# A turn held on a host site's page whose agent's owner asked for it (canopy-web
+# `page_site.lean`, the entry's `page_lean:`) starts with only what a page needs, so
+# a question asked in the panel is answered in seconds rather than a minute:
+#
+# * no plugin but canopy's (every other agent plugin on this box loads its skills,
+#   hooks and MCP servers into every session otherwise), and none of the worktree's
+#   project settings or CLAUDE.md (`_lean_session_meta`);
+# * canopy-web lists only the page and gateway tools for it (`turn_scope.lean_listing`);
+# * the page's state and its site's tools are fetched while the CLI starts and go into
+#   its system prompt (`_PageBrief`), so the first model call can go straight to `site_call`;
+# * only a few built-in tools and no skills;
+# * no plugin refresh, connection staging or clone fetch that a prepared conversation
+#   (`_prepare_session`) or a recent fetch already covers.
+#
+# What it may do is unchanged: the turn's profile, its credentials, the withheld
+# own-login names and every rail are the same as any page turn's.
+
+#: A lean turn trusts a clone fetched this recently and does not fetch it again.
+LEAN_FETCH_FRESH_SECONDS = float(os.environ.get("LEAN_FETCH_FRESH_SECONDS", "600"))
+#: How long a lean turn waits for its page brief once the CLI is up.
+PAGE_BRIEF_WAIT_SECONDS = float(os.environ.get("PAGE_BRIEF_WAIT_SECONDS", "8"))
+#: While the page's permission waits for the person's passkey (the brief says `waiting`:
+#: the panel is asking them), the turn holds its model this long at most, asking again
+#: every PAGE_GRANT_POLL_SECONDS. canopy-web bounds the wait itself (120 s a turn) and then
+#: answers with a brief that says their approval was not given; this is only a backstop.
+PAGE_GRANT_WAIT_SECONDS = float(os.environ.get("PAGE_GRANT_WAIT_SECONDS", "135"))
+PAGE_GRANT_POLL_SECONDS = 2.0
+#: The plugin a lean page turn keeps: canopy's (its hooks say who is asking and hold the
+#: rails; its canopy-web server is the page's tools).
+LEAN_KEEP_PLUGINS = frozenset({"canopy@canopy"})
+#: How often a page turn's reply being written is sent to the people watching it.
+LIVE_TEXT_EVERY_SECONDS = float(os.environ.get("LIVE_TEXT_EVERY_SECONDS", "0.4"))
+
+
+def _takes_kwarg(fn, name: str) -> bool:
+    """Does `fn` take keyword `name`? canopy_acp is imported off the runner's clone, which
+    can lag this file by a start, so a newer keyword is passed only when it is there."""
+    try:
+        return name in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _lean_page(turn: dict) -> bool:
+    """Does canopy-web ask for this turn to start lean (`page_site.lean`)?"""
+    block = turn.get("page_site")
+    return isinstance(block, dict) and block.get("lean") is True
+
+
+def _installed_plugins(home: pathlib.Path | None = None) -> list[str]:
+    try:
+        d = json.loads(((home or pathlib.Path.home()) / ".claude" / "plugins" /
+                        "installed_plugins.json").read_text())
+        return sorted(str(k) for k in (d.get("plugins") or {}))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+
+
+#: The built-in tools a lean page turn keeps: reading what a site tool saved to a file, and
+#: loading a deferred tool. The rest (the shell, edits, subagents, the web) is tens of
+#: thousands of tokens of tool definitions a page answer never uses.
+LEAN_BUILTIN_TOOLS = ("Read", "Grep", "Glob", "ToolSearch")
+#: MCP tools are deferred behind ToolSearch only when they would fill more than this
+#: share of the context: a lean turn's page tools never are, a full catalogue still is.
+LEAN_TOOL_SEARCH = "auto:5"
+
+
+def _canopy_web_server(root: pathlib.Path | None) -> dict | None:
+    """The canopy plugin's own canopy-web MCP server entry (its URL and headers helper,
+    with the plugin root filled in), or None when it cannot be read."""
+    if root is None:
+        return None
+    try:
+        manifest = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+        server = dict((manifest.get("mcpServers") or {})["canopy-web"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not str(server.get("url") or "").startswith(("https://", "http://")):
+        return None
+    helper = str(server.get("headersHelper") or "").replace("${CLAUDE_PLUGIN_ROOT}", str(root))
+    out = {"type": "http", "url": server["url"]}
+    if helper:
+        out["headersHelper"] = helper
+    return out
+
+
+def _lean_session_meta(home: pathlib.Path | None = None, *, brief: str = "",
+                       plugin_root: pathlib.Path | None = None) -> dict:
+    """`session/new` `_meta` for a lean page turn (claude-agent-acp passes
+    `claudeCode.options` to the Agent SDK):
+
+    * user settings only, so no project CLAUDE.md or settings of the agent's worktree;
+    * every installed plugin but canopy's switched off (flag settings outrank the user's);
+    * no skills or slash commands, and only `LEAN_BUILTIN_TOOLS` of the built-in tools;
+    * canopy-web's MCP and nothing else (`strictMcpConfig`, the plugin's own server entry
+      under the name the plugin's tools carry, so every tool name reads the same);
+    * the page brief appended to the system prompt, not the message, so the person's line
+      in the conversation is what they typed.
+
+    Measured with Claude Code 2.1.330 and adapter 0.109.1 on a laptop: about 10k tokens
+    before the first message, against 60-85k for the same session with everything loaded."""
+    off = {p: False for p in _installed_plugins(home) if p not in LEAN_KEEP_PLUGINS}
+    options = {"settingSources": ["user"], "settings": {"enabledPlugins": off},
+               "tools": list(LEAN_BUILTIN_TOOLS), "extraArgs": {"disable-slash-commands": None},
+               "env": {"ENABLE_TOOL_SEARCH": LEAN_TOOL_SEARCH, "ENABLE_CLAUDEAI_MCP_SERVERS": "false"}}
+    root = plugin_root if plugin_root is not None else _canopy_plugin_root()
+    server = _canopy_web_server(root)
+    if server is not None:
+        options["strictMcpConfig"] = True
+        options["mcpServers"] = {SENSITIVE_DATA_MCP_SERVER: server}
+        options["env"]["CLAUDE_PLUGIN_ROOT"] = str(root)
+    meta: dict = {"claudeCode": {"options": options}}
+    if brief:
+        meta["systemPrompt"] = {"append": brief}
+    return meta
+
+
+class _PageBrief:
+    """A lean turn's page brief (`GET /turns/{id}/page-brief`), fetched on its own
+    thread while the turn's working copy and CLI get ready. When the page's permission
+    waits for the person's passkey, it asks again (`?poll=true`) until they confirm or
+    canopy-web says the wait is over, and the turn's model waits for it (`wait`)."""
+
+    def __init__(self, turn_id: str, *, poll_every: float | None = None):
+        self.turn_id = turn_id
+        self.text = ""
+        self.waiting = False
+        self._poll_every = PAGE_GRANT_POLL_SECONDS if poll_every is None else poll_every
+        self._done = threading.Event()
+        threading.Thread(target=self._fetch, daemon=True, name=f"brief-{turn_id[:8]}").start()
+
+    def _fetch(self) -> None:
+        started = time.time()
+        path = f"/turns/{self.turn_id}/page-brief"
+        try:
+            status, body = _api("GET", path)
+            while (status == 200 and isinstance(body, dict) and body.get("waiting")
+                   and time.time() - started < PAGE_GRANT_WAIT_SECONDS):
+                if not self.waiting:
+                    self.waiting = True
+                    _log(f"turn {self.turn_id[:8]}: waiting for the person's passkey")
+                time.sleep(self._poll_every)
+                status, body = _api("GET", path + "?poll=true")
+            if status == 200 and isinstance(body, dict) and not body.get("waiting"):
+                self.text = str(body.get("text") or "")
+            _log(f"turn {self.turn_id[:8]}: page brief {len(self.text)} chars in "
+                 f"{time.time() - started:.1f}s (http {status}"
+                 + (", waited for the passkey" if self.waiting else "") + ")")
+        except Exception as exc:  # noqa: BLE001 — the turn runs without it
+            _log(f"warn: turn {self.turn_id[:8]}: no page brief ({exc})")
+        finally:
+            self._done.set()
+
+    def wait(self, timeout: float = PAGE_BRIEF_WAIT_SECONDS) -> str:
+        self._done.wait(timeout)
+        if not self._done.is_set() and self.waiting:
+            # The person is being asked for their passkey: the model waits for them.
+            self._done.wait(PAGE_GRANT_WAIT_SECONDS)
+        return self.text
+
+
+class _LiveText:
+    """`on_text` for a page turn's ACP stream: the reply being written, whole so far,
+    to `POST /turns/{id}/live-text` at most every LIVE_TEXT_EVERY_SECONDS, from a thread
+    of its own so the stream never waits on the network."""
+
+    def __init__(self, turn_id: str, clock=time.monotonic, post=None):
+        self.turn_id = turn_id
+        self._clock = clock
+        self._post = post or (lambda body: _api("POST", f"/turns/{turn_id}/live-text", body))
+        self._pending: tuple[int, str] | None = None
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._stopped = False
+        self._off = False
+        self._said = False
+        threading.Thread(target=self._loop, daemon=True, name=f"live-{turn_id[:8]}").start()
+
+    def __call__(self, index: int, text: str) -> None:
+        # Nothing as short as a credential's own refusal ("You've hit your weekly limit"):
+        # `execute_prompt` holds those back while it fails over to the next credential
+        # (`_CredentialNotices`), and streaming one would show the person a limit that is
+        # not theirs. Past that length it is the agent talking.
+        if self._off or len(text) <= CREDENTIAL_NOTICE_MAX_CHARS:
+            return
+        with self._lock:
+            self._pending = (index, text)
+        self._wake.set()
+
+    def _loop(self) -> None:
+        while not self._stopped:
+            self._wake.wait(1.0)
+            self._wake.clear()
+            with self._lock:
+                pending, self._pending = self._pending, None
+            if pending is None:
+                continue
+            try:
+                status, body = self._post({"message": pending[0], "text": pending[1][:200_000]})
+                if status in (404, 405, 409) or (status == 200 and not (body or {}).get("sent", True)):
+                    self._off = True  # an older server, an ended turn, or nobody hears it
+                if not self._said:
+                    # Once per turn, on its own ledger: whether the panel can see it stream.
+                    self._said = True
+                    _lifecycle(self.turn_id, "live_text", http=status, sent=bool((body or {}).get("sent")))
+            except Exception as exc:  # noqa: BLE001 — a live view never costs the turn
+                if not self._said:
+                    self._said = True
+                    _lifecycle(self.turn_id, "live_text", error=type(exc).__name__)
+            time.sleep(LIVE_TEXT_EVERY_SECONDS)
+
+    def stop(self) -> None:
+        self._stopped = True
+        self._wake.set()
+
+
+#: Conversations whose working copy is being made, so a `prepare` frame and the turn
+#: that follows it never cut the same worktree at once.
+_SESSION_PREP_LOCKS: dict[str, threading.Lock] = {}
+_SESSION_PREP_LOCKS_LOCK = threading.Lock()
+
+
+def _session_prep_lock(session_id: str) -> threading.Lock:
+    with _SESSION_PREP_LOCKS_LOCK:
+        return _SESSION_PREP_LOCKS.setdefault(session_id, threading.Lock())
+
+
+def _prepare_session(slug: str, session_id: str) -> bool:
+    """canopy-web's `prepare` frame (`harness.prepare`): a conversation on a site's page
+    was opened with `slug`. Make its working copy now — fetch the agent's clone and cut
+    the conversation's worktree — so its first turn does not. Only for an agent this box
+    already has a clone of; nothing of any turn (no prompt, no credential) is involved,
+    and the fetch uses the runner's own refresh identity, as a confined turn's does."""
+    if not slug or (session_id and not _CHAT_ID.match(session_id)):
+        return False
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if not (clone / ".git").exists():
+        return False
+    started = time.time()
+    if not session_id:
+        # The panel opened, no conversation yet: the agent's clone, and this box's own
+        # resolve of its credentials (cached `_AGENT_ENV_TTL_SECONDS`, the cache the
+        # turn's own resolve reads), so the question that follows waits on neither.
+        if secrets_off_disk() and not SENSITIVE_DATA_MODE:
+            _turn_values(slug, outside_turn=True)
+        _fetch_clone(clone, _clone_refresh_env(slug, None), pull=True)
+        _log(f"prepared {slug} in {time.time() - started:.1f}s")
+        return True
+    path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
+    with _session_prep_lock(session_id):
+        env = _clone_refresh_env(slug, None)
+        _fetch_clone(clone, env, pull=True)
+        _ensure_session_worktree(clone, path, env=env)
+    _log(f"prepared {slug} session {session_id[:8]} in {time.time() - started:.1f}s")
+    return True
+
+
+def _prepare_in_background(slug: str, session_id: str) -> None:
+    def run():
+        try:
+            _prepare_session(slug, session_id)
+        except Exception as exc:  # noqa: BLE001
+            _log(f"warn: could not prepare {slug} {session_id[:8] or ''}: {exc}")
+    threading.Thread(target=run, daemon=True, name=f"prepare-{session_id[:8]}").start()
 
 
 def _model_env(env: dict) -> dict:
@@ -13971,6 +14862,28 @@ def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
         return
     info = _read_json(attempt / "host.json") or {}
     exited = (attempt / "exit.json").exists()
+    if state.get("executor") == "acp" and _wire_scan(attempt)["prompt_id"] is None:
+        # An ACP adapter the last daemon started but never sent `session/prompt`: the
+        # relay logs every stdin line BEFORE it forwards it (`wire_write(b"i", ...)`), so
+        # no prompt in the log proves the agent never got the message. That is a turn
+        # cut off during its setup, not a failed attempt: stop the adapter and report it
+        # WITHOUT a session, so canopy-web runs it again (`finish_turn`'s sessionless
+        # requeue). Reporting the session the adapter opened would make a message that
+        # reached nobody terminal.
+        if not exited:
+            try:
+                _stop_adopted_cli(RelayProc.attach(attempt))
+            except Exception as exc:  # noqa: BLE001 — still reported
+                _log(f"adopt: could not stop the unprompted adapter of {turn_id[:8]}: {exc}")
+        note = ("[runner] the runner restarted before this turn's agent was given its "
+                "message; nothing reached it, so canopy-web may run it again")
+        fstatus, _ = _post_finish(turn_id, {"status": "failed", "result_note": note})
+        _lifecycle(turn_id, "lost", reason="restarted before the prompt", agent=state.get("slug"),
+                   http=fstatus)
+        _unstage_connections(turn_id)
+        _adopted_cleanup(turn_id, state)
+        summary["reported"].append(f"{turn_id[:8]} (never prompted)")
+        return
     if not exited and not _is_relay(info.get("host_pid"), attempt):
         proc = RelayProc.attach(attempt)
         proc.poll()
@@ -14279,6 +15192,11 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     _TURN_ENV.fresh_start = None
     _TURN_ENV.model = _turn_model(turn)
     _TURN_ENV.relay_turn = turn_id if adoptable_turn(turn) else ""
+    # A lean page turn (`_lean_page`): never a confined one, which has its own profile.
+    _TURN_ENV.lean = False
+    _TURN_ENV.live_text = None
+    _TURN_ENV.page_brief = ""
+    brief = None
     # A plain job: no model, no CLI, no session, no agent checkout. It branches at each of
     # those below and takes `execute_prompt`'s place (`_run_job`).
     job = bool(turn.get("job"))
@@ -14307,6 +15225,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # turn's env is an allowlist (`_confined_env`), so nothing below — the
         # cwd's own git pull included — can hand it a credential.
         _TURN_ENV.confined = _confined_profile(turn) if confined else None
+        _TURN_ENV.lean = _lean_page(turn) and not confined and not job and not SENSITIVE_DATA_MODE
+        if _TURN_ENV.lean and not (turn.get("_resume_id") or ""):
+            # Fetched while the working copy and the CLI get ready; joined just before the prompt.
+            brief = _PageBrief(str(turn_id))
+        if turn.get("page_site") and not confined and not job and _chat_session_id(turn):
+            _TURN_ENV.live_text = _LiveText(str(turn_id))
         if SENSITIVE_DATA_MODE and not confined:
             # A sensitive-data box runs only confined turns (a profile that handles
             # sensitive data is confined for everyone). canopy-web decides that; this is the box refusing to trust it
@@ -14324,7 +15248,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # No GitHub identity (canopy refuses one for a caller's turn anyway),
             # no chat key, no repo worktrees: only what says who and which turn.
             per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV,
-                        **_page_site_env(turn),
+                        **_page_site_env(turn), **_isolation_env(turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         else:
             # What this turn alone carries: its GitHub identity (first — the cwd's
@@ -14340,7 +15264,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
                         **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
                         **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV,
-                        **_page_site_env(turn),
+                        **_page_site_env(turn), **_isolation_env(turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         _clear_canopy_needs_auth()
         _TURN_ENV.extra = dict(per_turn)
@@ -14359,7 +15283,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # The clone first: whether the agent has an env to resolve at all is read
             # from its template (an agent this box has never seen is bootstrapped now,
             # cloned with this turn's GitHub identity).
-            _ensure_agent_clone(slug, per_turn)
+            _ensure_agent_clone(slug, per_turn, stored=_is_stored_agent(slug, turn))
             if _turn_values(slug) is None:
                 note = (f"[runner] could not resolve {slug}'s credentials: "
                         f"{_TURN_ENV_ERRORS.get(slug) or 'no answer from the canopy CLI'}")
@@ -14379,7 +15303,16 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             off_disk_env = True
-        cwd = None if job else _turn_cwd(turn, turn_id, env=_agent_env(slug))
+        try:
+            prep_started = time.time()
+            cwd = None if job else _turn_cwd(turn, turn_id, env=_agent_env(slug))
+            if _TURN_ENV.lean:
+                _lifecycle(turn_id, "prepared", lean=True, secs=round(time.time() - prep_started, 2))
+        except StoredAgentError as exc:
+            # Never run a stored agent from no clone, or from one this box cannot move.
+            _post_finish(turn_id, {"status": "failed", "result_note": f"[runner] {exc}"})
+            _log(f"turn {turn_id[:8]} NOT run — {exc}")
+            return
         forget["cwd"] = cwd
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
@@ -14531,7 +15464,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # exit leaves a file behind.
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
-            if not confined:
+            if not confined and not _TURN_ENV.lean:
+                # A lean page turn loads no agent plugin to use them: nothing to stage.
                 _stage_connections(runner_id, turn_id, slug or "")
                 if _relay_turn_id() == turn_id:
                     # Provider names only (never a token): what an adopting daemon keeps.
@@ -14543,6 +15477,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                     ok, text = _run_job(runner_id, turn, emit)
                     cli_session_id = ""
                 else:
+                    if brief is not None:
+                        # Into the session's system prompt (`_lean_session_meta`), never the
+                        # person's message.
+                        _TURN_ENV.page_brief = brief.wait()
                     ok, text, cli_session_id = execute_prompt(
                         prompt, turn_id, emit, cwd=cwd,
                         agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
@@ -14676,6 +15614,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 forget["confined"], keep=forget["keep"], attachments=forget["attachments"])
         except Exception as exc:  # noqa: BLE001 — the secrets below must still go
             _log(f"warn: sensitive-data cleanup for {str(turn_id)[:8]} failed: {exc}")
+        try:
+            # A learning run's turn keeps nothing of what it read on this box (canopy-web `harness.isolation`).
+            _isolated_forget_turn(turn, forget["cwd"],
+                                  [*(getattr(_TURN_ENV, "session_ids", None) or []), forget["resumed"],
+                                   forget["cli_session_id"]])
+        except Exception as exc:  # noqa: BLE001 — the secrets below must still go
+            _log(f"warn: isolated-turn cleanup for {str(turn_id)[:8]} failed: {exc}")
         _TURN_ENV.session_ids = None
         _TURN_ENV.attachment_dir = None
         _TURN_ENV.mcp_config = None
@@ -14683,6 +15628,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.model = None
         _TURN_ENV.read_settings = None
         _TURN_ENV.read_sessions = None
+        _TURN_ENV.lean = False
+        _TURN_ENV.page_brief = ""
+        live = getattr(_TURN_ENV, "live_text", None)
+        if live is not None:
+            live.stop()
+        _TURN_ENV.live_text = None
         _kept_busy(conversation, -1)
         # The turn's secrets end with it — done, failed, raised, stopped or timed out.
         remove_turn_env(str(turn_id))
@@ -14764,6 +15715,168 @@ def maybe_keep_vaults(*, now: float | None = None) -> bool:
     return True
 
 
+# ── the work this box owes, in one read: GET /runners/{id}/sync ─────────────
+# canopy-web moves the runner's sync version (`v`) whenever it records work for
+# this box, and puts `v` on every heartbeat reply, heartbeat ack and doorbell
+# frame. The box reads `/sync` (behind an ETag, so an unchanged version is a 304)
+# when `v` differs from the version it last read, when a frame arrives, when its
+# socket (re)connects, and every SYNC_RECONCILE_SECONDS in full — the reconcile is
+# what finds work whose doorbell and bump were both missed. The answer replaces
+# the per-tick drain GETs (session interrupts, menu answers, backfills, handoffs,
+# streams, the sign-in poll). A server without `/sync` (404/405) is read the old
+# way, drain by drain, for the life of this process.
+
+#: How often the box reads `/sync` whole whatever `v` says.
+SYNC_RECONCILE_SECONDS = float(os.environ.get("SYNC_RECONCILE_SECONDS", "300"))
+#: The socket heartbeat's cadence while `/sync` is in use (`v` rides its ack).
+SYNC_WS_HEARTBEAT_SECONDS = int(os.environ.get("SYNC_WS_HEARTBEAT_SECONDS", "30"))
+#: The socket's safety claim while `/sync` is in use; a `wake` frame claims at once.
+SYNC_SAFETY_CLAIM_SECONDS = float(os.environ.get("SYNC_SAFETY_CLAIM_SECONDS", "60"))
+#: The REST heartbeat's cadence while `/sync` is in use (no socket).
+SYNC_REST_HEARTBEAT_SECONDS = float(os.environ.get("SYNC_REST_HEARTBEAT_SECONDS", "15"))
+
+#: supported: None until the first read, then whether canopy-web serves `/sync`.
+#: version/answer: the last 200. at: monotonic time of the last read (200 or 304).
+#: want: read when next due (ETag). full: read whole (no ETag) when next due.
+_SYNC: dict = {"supported": None, "version": None, "answer": None, "at": 0.0,
+               "want": True, "full": True}
+_SYNC_LOCK = threading.Lock()
+
+
+def _reset_sync() -> None:
+    """Forget everything `/sync` said (a fresh process, and between tests)."""
+    with _SYNC_LOCK:
+        _SYNC.update(supported=None, version=None, answer=None, at=0.0, want=True, full=True)
+
+
+def sync_in_use() -> bool:
+    """Whether this box reads its work through `/sync` (until a server says it has none)."""
+    return _SYNC["supported"] is not False
+
+
+def sync_streams() -> list | None:
+    """The stream list of the last `/sync` answer, or None when there is none to use."""
+    answer = _SYNC["answer"] if _SYNC["supported"] else None
+    return list(answer.get("streams") or []) if isinstance(answer, dict) else None
+
+
+def note_version(v) -> None:
+    """A `v` off a reply, ack or frame. One that differs from the version last read —
+    or no `v` at all (an older reply) — makes `/sync` due."""
+    with _SYNC_LOCK:
+        try:
+            same = v is not None and _SYNC["version"] is not None and int(v) == _SYNC["version"]
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            _SYNC["want"] = True
+
+
+def sync_refresh() -> None:
+    """Read `/sync` whole on the next pass: this box changed something the version
+    does not count (it recorded a new session)."""
+    with _SYNC_LOCK:
+        _SYNC["want"] = _SYNC["full"] = True
+
+
+def _sync_due(now: float) -> tuple[bool, bool]:
+    """(due, whole)."""
+    reconcile = _SYNC["version"] is None or now - _SYNC["at"] >= SYNC_RECONCILE_SECONDS
+    whole = reconcile or _SYNC["full"]
+    return (whole or _SYNC["want"]), whole
+
+
+def fetch_sync(runner_id: str, *, whole: bool, now: float | None = None) -> dict | None:
+    """One `/sync` read. Returns the answer on a 200, None on a 304 or a failure
+    (a failure leaves it due, so the next pass asks again)."""
+    headers = {}
+    if not whole and _SYNC["version"] is not None:
+        headers["If-None-Match"] = f'"v{_SYNC["version"]}"'
+    status, body = _api("GET", f"/runners/{runner_id}/sync", headers=headers, quiet=True)
+    now = time.monotonic() if now is None else now
+    with _SYNC_LOCK:
+        if status in (404, 405):
+            if _SYNC["supported"] is not False:
+                _log("canopy-web has no /sync; reading work drain by drain")
+            _SYNC["supported"] = False
+            return None
+        if status == 304:
+            _SYNC.update(supported=True, at=now, want=False)
+            return None
+        if status != 200 or not isinstance(body, dict):
+            _log(f"GET /runners/{runner_id}/sync -> {status}; will ask again")
+            return None
+        try:
+            version = int(body.get("version") or 0)
+        except (TypeError, ValueError):
+            version = 0
+        _SYNC.update(supported=True, version=version, answer=body, at=now, want=False, full=False)
+    return body
+
+
+def act_on_sync(runner_id: str, answer: dict) -> None:
+    """Carry out what a `/sync` answer lists. Each list is whole, so acting on one
+    twice is what the drains did every tick: idempotent on the server's side."""
+    for name, act in (
+        ("session interrupts", lambda: _carry_out_interrupts(runner_id, answer.get("interrupts") or [])),
+        ("menu answers", lambda: _deliver_menu_answers(runner_id, answer.get("answers") or [])),
+        ("stops", lambda: honour_stops({"cancel_turn_ids": answer.get("cancel_turn_ids") or []})),
+    ):
+        try:
+            act()
+        except Exception as exc:  # noqa: BLE001 — one list never costs the others
+            _log(f"sync {name} failed: {exc}")
+    if not SENSITIVE_DATA_MODE:
+        ct = _transcript_core()
+        if ct is not None and answer.get("backfills"):
+            try:
+                _ship_backfills(runner_id, ct, answer.get("backfills") or [])
+            except Exception as exc:  # noqa: BLE001
+                _log(f"sync backfills failed: {exc}")
+        hc = _handoff_core() if answer.get("handoffs") else None
+        if hc is not None:
+            try:
+                _act_on_handoffs(runner_id, hc, answer.get("handoffs") or [])
+            except Exception as exc:  # noqa: BLE001
+                _log(f"sync handoffs failed: {exc}")
+
+
+def maybe_sync(runner_id: str, *, now: float | None = None) -> bool:
+    """Read `/sync` and act on it when it is due. Returns whether it was read (a
+    304 counts). False on a server without it: the caller drains the old way."""
+    if _SYNC["supported"] is False:
+        return False
+    now = time.monotonic() if now is None else now
+    due, whole = _sync_due(now)
+    if not due:
+        return False
+    answer = fetch_sync(runner_id, whole=whole, now=now)
+    if answer is not None:
+        act_on_sync(runner_id, answer)
+    return _SYNC["supported"] is not False
+
+
+#: A `mint` frame: `/mint/claim` has work for this box.
+_MINT_RUNG = threading.Event()
+
+
+def mint_wanted() -> bool:
+    """Whether to read `/mint/claim` now: always on a server without `/sync`;
+    otherwise when the last answer says a sign-in is due, a `mint` frame rang, or a
+    sign-in is in flight on this box (it steps on that read until it ends)."""
+    if not sync_in_use():
+        return True
+    answer = _SYNC["answer"] if isinstance(_SYNC["answer"], dict) else {}
+    rung = _MINT_RUNG.is_set()
+    _MINT_RUNG.clear()
+    return bool(rung or answer.get("mint_due") or _MINT_SESSION is not None or _MINT_ID)
+
+
+def _maybe_drain_mint(runner_id: str) -> None:
+    if mint_wanted():
+        _drain_mint(runner_id)
+
+
 def run_over_rest(runner_id: str) -> None:
     _log(f"polling {BASE_URL} every {POLL_SECONDS}s (REST fallback), "
          f"up to {MAX_CONCURRENT_TURNS} concurrent turns")
@@ -14776,7 +15889,11 @@ def run_over_rest(runner_id: str) -> None:
         honour_stops(beat)
         maybe_retry_pending_finishes()
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
-        _drain_session_interrupts(runner_id)
+        # The work this box owes: one `/sync` read when `v` moved (or the reconcile
+        # is due), else the drains, on a server without it.
+        maybe_sync(runner_id)
+        if not sync_in_use():
+            _drain_session_interrupts(runner_id)
         maybe_sweep_disk()
         maybe_keep_vaults()
         maybe_sweep_kept(runner_id)
@@ -14786,19 +15903,20 @@ def run_over_rest(runner_id: str) -> None:
         # Likewise a sign-in: a box on the REST fallback is EXACTLY the box most
         # likely to need one, and leaving this on the WS path only would strand
         # the operator on the runners that fail most.
-        _drain_mint(runner_id)
+        _maybe_drain_mint(runner_id)
         _maybe_reread_credentials()
         _credential_tick()
         _job_cap_tick()
         _drain_inbox(runner_id)
+        wait = SYNC_REST_HEARTBEAT_SECONDS if sync_in_use() else POLL_SECONDS
         if not claim_gate()[0]:
-            time.sleep(POLL_SECONDS)
+            time.sleep(wait)
             continue
         paused = backed_off_slugs()
         status, turn = _api("POST", f"/runners/{runner_id}/claim"
                             + (f"?paused={','.join(paused)}" if paused else ""))
         if status != 200 or not turn:
-            time.sleep(POLL_SECONDS)
+            time.sleep(wait)
             continue
         turn_id = turn["id"]
         _log(f"claimed turn {turn_id[:8]} target={turn.get('target')} (REST) "
@@ -14815,6 +15933,98 @@ def run_over_rest(runner_id: str) -> None:
 
 
 # ── WebSocket control channel (RC2) ─────────────────────────────────────────
+class _WsChores:
+    """The WS loop's periodic work, on a thread of its own: the poll tick's chores every
+    POLL_SECONDS (interrupts, session views with backfills, mints, credentials, the job
+    cap, the inbox) and the live stream sync on its own clock (`_stream_interval`), rung
+    early by a `stream` frame. All of it is REST and disk, never the socket, so the socket's
+    thread is left to heartbeat and claim the moment a wake arrives."""
+
+    def __init__(self, runner_id: str, clock=time.monotonic):
+        self.runner_id = runner_id
+        self._clock = clock
+        self._stopped = threading.Event()
+        self._stream_now = threading.Event()
+        # Ends the loop's wait early: a stream frame, or a `v` that made `/sync` due.
+        self._wake = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="ws-chores")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        self._stream_now.set()
+        self._wake.set()
+
+    def ring_stream(self) -> None:
+        self._stream_now.set()
+        self._wake.set()
+
+    def ring_sync(self) -> None:
+        """Look at `/sync` now (it reads only when due: a `v` it has not read)."""
+        self._wake.set()
+
+    @contextlib.contextmanager
+    def _chore(self, name: str):
+        """One chore: an error is logged and never stops the others; a slow one is named."""
+        started = self._clock()
+        try:
+            yield
+        except Exception as exc:  # noqa: BLE001
+            _log(f"chore {name} error: {exc}")
+        took = self._clock() - started
+        if took > 5:
+            _log(f"slow chore: {name} took {took:.1f}s")
+
+    def _poll_tick(self) -> None:
+        rid = self.runner_id
+        if not sync_in_use():
+            with self._chore("session interrupts"):
+                _drain_session_interrupts(rid)
+        with self._chore("session views"):
+            _sync_session_views(rid)          # incl. backfills without `/sync`
+        with self._chore("mints"):
+            _maybe_drain_mint(rid)
+        with self._chore("credentials"):
+            _maybe_reread_credentials()
+            _credential_tick()
+        with self._chore("job cap"):
+            _job_cap_tick()
+        with self._chore("inbox"):
+            _drain_inbox(rid)
+
+    def _loop(self) -> None:
+        last_poll = self._clock()
+        last_stream = 0.0
+        while not self._stopped.is_set() and not _stop:
+            now = self._clock()
+            # `/sync` first: what it lists (streams, backfills, stops) is what the
+            # chores below act on. A no-op unless `v` moved or the reconcile is due.
+            with self._chore("sync"):
+                maybe_sync(self.runner_id, now=now)
+            if _MINT_RUNG.is_set():
+                with self._chore("mints"):
+                    _maybe_drain_mint(self.runner_id)
+            if now - last_poll >= POLL_SECONDS:
+                self._poll_tick()
+                last_poll = last_stream = self._clock()
+                continue
+            rung = self._stream_now.is_set()
+            if rung or now - last_stream >= _stream_interval(now):
+                self._stream_now.clear()
+                try:
+                    # A `stream` frame syncs everything at once, backfills included, as it
+                    # did on the socket's thread; the clock syncs the live tail only.
+                    _sync_session_views(self.runner_id, with_backfills=rung)
+                except Exception as exc:  # noqa: BLE001
+                    _log(f"session view sync error: {exc}")
+                last_stream = self._clock()
+                continue
+            self._wake.wait(0.5)
+            self._wake.clear()
+
+
 def _ws_url(runner_id: str) -> str:
     base = BASE_URL.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
     return f"{base.replace('/api', '')}/ws/runner/{runner_id}/"
@@ -14848,6 +16058,8 @@ def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
         msg = json.loads(raw)
         if msg.get("type") == want_type:
             return msg
+        # A doorbell passed over while waiting still says `/sync` has work.
+        note_version(msg.get("v"))
     return None
 
 
@@ -14961,12 +16173,16 @@ def run_over_ws(runner_id: str) -> bool:
             maybe_keep_vaults()
             maybe_sweep_kept(runner_id)
 
+        chores = _WsChores(runner_id)
+        # A (re)connect reads `/sync` whole: frames sent while the socket was down
+        # went nowhere.
+        sync_refresh()
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
             last_beat = time.monotonic()
             _drain(ws, runner_id)  # anything already queued gets no wake
             last_poll = time.monotonic()
-            last_stream = 0.0
+            chores.start()
             while not _stop:
                 try:
                     raw = ws.recv()
@@ -14975,6 +16191,11 @@ def run_over_ws(runner_id: str) -> bool:
                 if raw:
                     msg = json.loads(raw)
                     mtype = msg.get("type")
+                    if mtype != "heartbeat.ack":
+                        # Every doorbell carries `v`: one this box has not read (or
+                        # none, from an older server) makes `/sync` due.
+                        note_version(msg.get("v"))
+                        chores.ring_sync()
                     if mtype == "wake":
                         _drain(ws, runner_id)
                     elif mtype == "cancel":
@@ -14985,11 +16206,17 @@ def run_over_ws(runner_id: str) -> bool:
                         # A stop aimed at a session: the turn driving it, if any.
                         # Then the server's record of it, which the stop retires.
                         stop_session(str(msg.get("session_key") or ""), "session interrupt")
-                        _drain_session_interrupts(runner_id)
+                        if not sync_in_use():
+                            _drain_session_interrupts(runner_id)
                     elif mtype == "menu_answer":
                         # A person answered an ask. The bell only: the answer is
-                        # read from /menu-answers, which a waiting ask also polls.
-                        _ring_menu_answers(runner_id)
+                        # read from `/sync` (or /menu-answers), which a waiting ask
+                        # also polls.
+                        if not sync_in_use():
+                            _ring_menu_answers(runner_id)
+                    elif mtype == "mint":
+                        # A sign-in this box owes work on: read /mint/claim now.
+                        _MINT_RUNG.set()
                     elif mtype == "check_inbox":
                         # Mark it due; the POLL thread does the read. Same split
                         # the laptop uses, for the same reason: a `gog` subprocess
@@ -15000,16 +16227,23 @@ def run_over_ws(runner_id: str) -> bool:
                             core[1].ring(str(msg.get("mailbox") or ""))
                             _log(f"doorbell: {msg.get('mailbox')} marked due")
                     elif mtype == "stream":
-                        # Latency optimization only — /streams is polled below
-                        # regardless, so a dropped frame costs one tick, never
+                        # Latency optimization only — /streams is polled by the chores
+                        # thread regardless, so a dropped frame costs one tick, never
                         # a permanently unattached viewer.
-                        _sync_session_views(runner_id)
+                        chores.ring_stream()
                     elif mtype == "update_available":
                         _nudge_updater(str(msg.get("expected_sha") or ""))
+                    elif mtype == "prepare":
+                        # A conversation on a site's page was opened: make its working copy
+                        # now, on a thread of its own (git must never block this socket).
+                        _prepare_in_background(str(msg.get("agent") or ""),
+                                               str(msg.get("session_id") or ""))
                 elif raw == "":
                     break  # server closed the socket
-                if time.monotonic() - last_beat >= HEARTBEAT_SECONDS:
+                beat_every = SYNC_WS_HEARTBEAT_SECONDS if sync_in_use() else HEARTBEAT_SECONDS
+                if time.monotonic() - last_beat >= beat_every:
                     _beat()
+                    chores.ring_sync()  # its ack's `v` may have moved
                     last_beat = time.monotonic()
                 # Safety net: claim on a wall clock too, never on wakes alone.
                 # Wake delivery is the ONLY other trigger, so a wake that is never
@@ -15020,23 +16254,19 @@ def run_over_ws(runner_id: str) -> bool:
                 # reconnect drained one turn; a stable connection exposed it.
                 # The REST path (run_over_rest) has always polled — this brings
                 # the WS path to parity.
-                if time.monotonic() - last_poll >= POLL_SECONDS:
+                # Everything else this loop used to do on the poll tick (transcript
+                # streams, backfills, the usage report, mints, credentials, the inbox)
+                # runs on the chores thread (`_WsChores`): any of it can take seconds,
+                # and while it ran here a wake waited in the socket — a page turn sat
+                # queued ~10s before this box even asked for it.
+                claim_every = SYNC_SAFETY_CLAIM_SECONDS if sync_in_use() else POLL_SECONDS
+                if time.monotonic() - last_poll >= claim_every:
                     _drain(ws, runner_id)
-                    _drain_session_interrupts(runner_id)
-                    _sync_session_views(runner_id)          # incl. backfills
-                    _drain_mint(runner_id)
-                    _maybe_reread_credentials()
-                    _credential_tick()
-                    _job_cap_tick()
-                    _drain_inbox(runner_id)
                     last_poll = time.monotonic()
-                    last_stream = time.monotonic()
-                elif time.monotonic() - last_stream >= _stream_interval(time.monotonic()):
-                    _sync_session_views(runner_id, with_backfills=False)
-                    last_stream = time.monotonic()
         except Exception as exc:
             _log(f"ws loop error: {exc}")
         finally:
+            chores.stop()
             try:
                 ws.close()
             except Exception:
@@ -15207,6 +16437,7 @@ def _runners_cli(argv: list[str]) -> int:
                                                 for u, on in sorted(applied.items())))
         _log("setup-runners: " + ", ".join(f"{u['id']} ({u['user']}, {u['name']})" for u in runners))
         install_aws_broker()
+        enable_sysstat()
         # A runner added to Runners later: start it, and pair it.
         for u in runners:
             subprocess.run(["systemctl", "enable", "--now", "--no-block",

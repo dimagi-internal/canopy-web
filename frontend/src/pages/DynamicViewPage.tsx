@@ -79,9 +79,9 @@ export default function DynamicViewPage() {
   const live: FrameView | null = useMemo(() => {
     if (!view) return null
     if (draft && draftSources.ok && draftTasks.ok) {
-      return { code: draft.code, sources: draftSources.value, agent_tasks: draftTasks.value, connections: view.connections as DeclaredConnection[] | undefined, preview: true }
+      return { code: draft.code, sources: draftSources.value, agent_tasks: draftTasks.value, connections: view.connections as DeclaredConnection[] | undefined, task_actions: view.task_actions ?? [], preview: true }
     }
-    return { code: view.code, sources: view.sources as DynamicViewSource[], agent_tasks: view.agent_tasks ?? [], connections: view.connections as DeclaredConnection[] | undefined }
+    return { code: view.code, sources: view.sources as DynamicViewSource[], agent_tasks: view.agent_tasks ?? [], connections: view.connections as DeclaredConnection[] | undefined, task_actions: view.task_actions ?? [] }
   }, [view, draft, draftSources, draftTasks])
   // The preview redraws (and re-reads its sources) once typing pauses, not per keystroke.
   const [shown, setShown] = useState<FrameView | null>(null)
@@ -131,7 +131,7 @@ export default function DynamicViewPage() {
           </div>
           <h1 className="text-2xl font-semibold">{view.title}</h1>
           {view.description && <p className="max-w-prose text-sm text-muted-foreground">{view.description}</p>}
-          <DeclaredTasks tasks={view.agent_tasks} className="mt-1" />
+          <DeclaredTasks tasks={view.agent_tasks} taskActions={view.task_actions} className="mt-1" />
           <DeclaredConnections connections={view.connections as DeclaredConnection[] | undefined} className="mt-1" />
         </div>
         <div className="flex items-center gap-2 text-sm">

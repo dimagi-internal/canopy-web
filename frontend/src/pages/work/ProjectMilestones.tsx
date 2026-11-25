@@ -31,7 +31,7 @@ export function MilestonesSection({
     p.then(onChanged).catch((err: unknown) => setError(errorText(err, 'Could not save the milestone')))
   }
   return (
-    <Section id="project-milestones" title="Milestones" description="The stops on the way. Pick one to see only its tasks below.">
+    <Section id="project-milestones" title="Milestones" description="The stops on the way. Pick one to see only its tasks.">
       {milestones.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">No milestones.</p>
       ) : (

@@ -21,6 +21,14 @@ def _isolate_host_pin(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_adapter_install(monkeypatch):
+    """An emdash heartbeat starts a background ACP adapter install (desktop._kick_adapter). A test that drives the main loop must never run a real npm install;
+    the tests of that install reset the flag themselves."""
+    from canopy_runner import desktop
+    monkeypatch.setattr(desktop, "_adapter_kicked", True)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_device_key_enrollment(monkeypatch, request):
     """main() enrolls this machine's device key in the background by running the real
     `canopy vault device --enroll` (Canopy Vault). A test that drives main()
@@ -149,3 +157,15 @@ def _isolate_device_proof(monkeypatch, tmp_path):
     touch the developer's real key: point the key dir at tmp and the helper at nothing."""
     monkeypatch.setenv("CANOPY_DEVICE_KEY_DIR", str(tmp_path / "device-key"))
     monkeypatch.setenv("CANOPY_DEVICE_KEY_BIN", str(tmp_path / "no-helper"))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_heartbeat_state():
+    """run_once reuses its last heartbeat reply for `heartbeat_seconds`; every test
+    starts with none sent, so its first tick beats."""
+    from canopy_runner import main
+    main._reset_heartbeat_state()
+    main._control = None
+    yield
+    main._reset_heartbeat_state()
+    main._control = None

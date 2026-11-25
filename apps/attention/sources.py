@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 #: (kind, "module.path"). Each module exposes `items(request, *, slugs)`.
 REGISTRY: list[tuple[str, str]] = [
     ("task", "apps.agents.attention"),
-    ("session", "apps.canopy_sessions.attention"),
     ("access_request", "apps.attention.access_requests"),
     ("sign_off", "apps.host_grants.attention"),
 ]

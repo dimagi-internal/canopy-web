@@ -5,10 +5,11 @@ import { LoadFailed } from '@/components/vault/LoadFailed'
 import { relativeAge } from '@/lib/relativeAge'
 
 // An agent login's TEST vault key (apps/agents/credentials/login_test_key.py): off by
-// default; while on, the agent's own canopy login may make one passphrase-sealed vault
-// key, so a test harness signed in as the agent can read its own private
-// conversations. The key opens nothing else. Turning it on asks for a passkey; turning
-// it off deletes the key and every conversation copy it was given.
+// default; while on, the agent's own canopy login may make a passphrase-sealed vault
+// key, so a test harness signed in as the agent can read its own private conversations
+// and use screens with its own connections. The login can also turn it on or off itself.
+// Here an admin turns it on with a passkey; turning it off deletes the key and
+// everything it was given.
 
 export function AgentTestVaultKeySection({ slug, canEdit }: { slug: string; canEdit: boolean }) {
   const [state, setState] = useState<TestVaultKeyOut | null>(null)
@@ -31,7 +32,7 @@ export function AgentTestVaultKeySection({ slug, canEdit }: { slug: string; canE
   const toggle = async () => {
     const next = !state.enabled
     if (!next && state.has_key && !window.confirm(
-      'Turn the test vault key off? Its key, and its copies of the private conversations it is in, are deleted.')) return
+      'Turn the test vault key off? Its key, its copies of the private conversations it is in, and its own connections are deleted.')) return
     setBusy(true)
     setError(null)
     try {
@@ -58,8 +59,9 @@ export function AgentTestVaultKeySection({ slug, canEdit }: { slug: string; canE
         Let {who} hold a test vault key
       </label>
       <p className="mt-1 text-[11px] text-muted-foreground">
-        For testing: a test harness signed in as this agent can then read the private conversations it is in,
-        and nothing else. Turning this off deletes the key.
+        For testing: a test harness signed in as this agent can then read the private conversations it is in and
+        connect its own accounts, and nothing else. The agent&rsquo;s own login can turn this on or off itself; turning
+        it off here stops it and deletes the key.
       </p>
       <p className="mt-1 text-[11px] text-muted-foreground" data-testid="test-vault-key-summary">
         {!state.login_email

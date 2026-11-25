@@ -47,6 +47,14 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 WHITENOISE_ROOT = FRONTEND_DIST_DIR  # noqa: F405 (from base.py *)
 WHITENOISE_INDEX_FILE = True
 
+# The passkey relying party, pinned. Left to fall back to the request's Host, it
+# would follow whatever Host header reached the container, and the deployment runs
+# ALLOWED_HOSTS=["*"] behind the ALB (connectlabs.py). The env vars still override.
+PASSKEY_RP_ID = env("PASSKEY_RP_ID", default="") or "canopy.dimagi.com"  # noqa: F405
+_passkey_origins = env("PASSKEY_ORIGINS", default="")  # noqa: F405 (env from base.py *)
+PASSKEY_ORIGINS = [o.strip() for o in _passkey_origins.split(",") if o.strip()] or [
+    "https://canopy.dimagi.com"]
+
 # CSRF trusted origins in prod come from ALLOWED_HOSTS
 CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h and h != "*"]
 

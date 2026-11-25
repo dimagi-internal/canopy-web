@@ -9,7 +9,9 @@ vi.mock('@/api/people', () => ({ listMySessionReviewers, addMySessionReviewer, r
 
 const { SessionReviewersPanel } = await import('./SessionReviewersPanel')
 
-const coach = { agent: 'trellis', name: 'Trellis', workspace: 'dimagi', member: true, on: false }
+const trellis = { kind: 'agent', slug: 'trellis', name: 'Trellis', workspace: 'dimagi' }
+const ada = { kind: 'agent', slug: 'ada', name: 'Ada', workspace: 'dimagi' }
+const off = { on: false, since: null, coaches: [trellis, ada], reviewers: [], agents: [], coach: null }
 const at = '2026-10-01T00:00:00Z'
 
 afterEach(() => {
@@ -18,50 +20,47 @@ afterEach(() => {
 })
 
 describe('SessionReviewersPanel', () => {
-  it('turns the coach on, then off', async () => {
-    listMySessionReviewers.mockResolvedValue({ reviewers: [], agents: [], coach })
-    addMySessionReviewer.mockResolvedValue({
-      reviewers: [{ agent: 'trellis', name: 'Trellis', granted_at: at }], agents: [], coach: { ...coach, on: true },
-    })
-    removeMySessionReviewer.mockResolvedValue({ reviewers: [], agents: [], coach })
+  it('opts in to coaching, naming no agent, then opts out', async () => {
+    listMySessionReviewers.mockResolvedValue(off)
+    addMySessionReviewer.mockResolvedValue({ ...off, on: true, since: at })
+    removeMySessionReviewer.mockResolvedValue(off)
     render(<SessionReviewersPanel />)
-    const box = (await screen.findByRole('checkbox', { name: /Have Trellis coach me/ })) as HTMLInputElement
+    const box = (await screen.findByRole('checkbox', { name: /Opt in to coaching/ })) as HTMLInputElement
     expect(box.checked).toBe(false)
-    // Says what turning it on does on the person's own machine.
+    // Says who coaches now, what it does on the person's own machine, who else can read it.
+    expect(screen.getByText('Who coaches you now')).toBeTruthy()
+    expect(screen.getAllByText(/Ada/).length).toBeGreaterThan(0)
     expect(screen.getByText(/upload those sessions in full/)).toBeTruthy()
-    // Says who else can read it (the mailbox, the logs), and what cannot be undone.
     expect(screen.getByText(/any member of its workspace can open it/)).toBeTruthy()
     expect(screen.getByText(/stay on canopy until you delete them/)).toBeTruthy()
     fireEvent.click(box)
-    await waitFor(() => expect(addMySessionReviewer).toHaveBeenCalledWith('trellis'))
+    await waitFor(() => expect(addMySessionReviewer).toHaveBeenCalledWith())
     await waitFor(() => expect(box.checked).toBe(true))
     fireEvent.click(box)
-    await waitFor(() => expect(removeMySessionReviewer).toHaveBeenCalledWith('trellis'))
+    await waitFor(() => expect(removeMySessionReviewer).toHaveBeenCalledWith())
     await waitFor(() => expect(box.checked).toBe(false))
   })
 
-  it('makes no claims about a coach the detailed copy was not checked for', async () => {
+  it('makes no claims about coaches the detailed copy was not checked for', async () => {
     listMySessionReviewers.mockResolvedValue({
-      reviewers: [], agents: [], coach: { ...coach, agent: 'other', name: 'Other' },
+      ...off, coaches: [{ kind: 'person', slug: '', name: 'A. Director', workspace: 'division' }],
     })
     render(<SessionReviewersPanel />)
-    await screen.findByRole('checkbox', { name: /Have Other coach me/ })
+    await screen.findByRole('checkbox', { name: /Opt in to coaching: A. Director/ })
     expect(screen.queryByText('What does this mean?')).toBeNull()
     expect(screen.queryByText(/emails me/)).toBeNull()
+    expect(screen.getByText(/a person designated for division/)).toBeTruthy()
   })
 
-  it('lists another reviewer with a Stop', async () => {
-    listMySessionReviewers.mockResolvedValue({
-      reviewers: [{ agent: 'hal', name: 'Hal', granted_at: at }], agents: [], coach: null,
-    })
-    removeMySessionReviewer.mockResolvedValue({ reviewers: [], agents: [], coach: null })
+  it('stays on screen, with the list, while opted in even if no coach is listed', async () => {
+    listMySessionReviewers.mockResolvedValue({ ...off, on: true, since: at, coaches: [] })
     render(<SessionReviewersPanel />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
-    await waitFor(() => expect(removeMySessionReviewer).toHaveBeenCalledWith('hal'))
+    const box = (await screen.findByRole('checkbox', { name: /Opt in to coaching/ })) as HTMLInputElement
+    expect(box.checked).toBe(true)
   })
 
-  it('shows nothing when there is no coach and no reviewer', async () => {
-    listMySessionReviewers.mockResolvedValue({ reviewers: [], agents: [], coach: null })
+  it('shows nothing when nobody coaches you and you are not opted in', async () => {
+    listMySessionReviewers.mockResolvedValue({ ...off, coaches: [] })
     const { container } = render(<SessionReviewersPanel />)
     await waitFor(() => expect(listMySessionReviewers).toHaveBeenCalled())
     expect(container.textContent).toBe('')

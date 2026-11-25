@@ -229,6 +229,38 @@ def test_a_pending_or_revoked_key_does_not_count(fleet):
     assert _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU)).status_code == 401
 
 
+def test_your_own_pending_key_says_it_waits_for_you_and_alerts_no_one(fleet):
+    """A person's first session on a new machine asks for secrets seconds after the
+    machine enrolled, before they approved it. That is not a stranger's key: the
+    refusal says whose approval it waits for, and the agent's owner is not mailed."""
+    from apps.agents.models import AgentCredentialAlert
+
+    _register(fleet)
+    res = _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU))
+    assert res.status_code == 401
+    body = res.json()
+    assert body["reason"] == "key_pending"
+    assert "waiting for jj@dimagi.com to approve it" in body["detail"]
+    assert not AgentCredentialAlert.objects.filter(kind="device-proof").exists()
+
+
+def test_someone_elses_pending_key_still_alerts(fleet):
+    """A pending key on a machine the CALLER does not own is still the owner's alert."""
+    from apps.agents.models import AgentCredentialAlert
+
+    other = get_user_model().objects.create_user(username="o2", email="o2@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet["ws"], user=other,
+                                       role=WorkspaceMembership.OWNER)
+    laptop, key = _laptop(fleet, other)
+    Client().post("/api/runner-device-keys/",
+                  data={"runner": str(laptop.pk), "public_jwk": _jwk(key), "kind": "software"},
+                  content_type="application/json",
+                  HTTP_AUTHORIZATION=f"Bearer {pat_token(other)}")
+    res = _resolve(fleet, make_dpop_proof(key, "GET", HTU))  # the agent owner's token
+    assert res.status_code == 401 and res.json()["reason"] == "no_valid_proof"
+    assert AgentCredentialAlert.objects.filter(kind="device-proof").count() == 1
+
+
 def test_a_replayed_proof_is_refused(fleet):
     _active_key(fleet)
     proof = make_dpop_proof(fleet["key"], "GET", HTU)

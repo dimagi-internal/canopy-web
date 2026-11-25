@@ -35,6 +35,9 @@ class DynamicViewOut(DynamicViewSummaryOut):
     connections: list[dict[str, Any]] = Field(
         default_factory=list,
         description="The Salesforce calls the view's code may make: [{provider, as, agent?, reads, writes}].")
+    task_actions: list[str] = Field(
+        default_factory=list,
+        description="The status moves the view's code may make on its project's tasks, as its viewer: done, reopen.")
     created_by_email: str | None = None
     created_at: dt.datetime
 
@@ -57,6 +60,10 @@ class DynamicViewIn(StrictModel):
         description="The Salesforce calls the code may make: [{provider, as: viewer|shared, agent?, reads: "
                     "[{method, path}], writes: [{method, path}]}]. Each line must be on the allowlist; a write "
                     "names its object exactly (sobjects/Lead/*). A shared entry names an agent in the workspace.")
+    task_actions: list[str] = Field(
+        default_factory=list,
+        description="On a project view only: the status moves the code may make on the project's tasks with "
+                    "canopy.tasks.act, as the viewer — any of done, reopen. Needs the editor role to declare.")
     note: str = ""
 
 
@@ -68,6 +75,7 @@ class DynamicViewPatch(StrictModel):
     sources: list[dict[str, Any]] | None = None
     agent_tasks: list[dict[str, Any]] | None = None
     connections: list[dict[str, Any]] | None = None
+    task_actions: list[str] | None = None
     project: str | None = Field(None, description="A project handle; an empty string moves it to the workspace.")
     note: str = ""
 
@@ -82,10 +90,17 @@ class DynamicViewRevisionOut(StrictModel):
     sources: list[dict[str, Any]]
     agent_tasks: list[DynamicViewAgentTask] = Field(default_factory=list)
     connections: list[dict[str, Any]] = Field(default_factory=list)
+    task_actions: list[str] = Field(default_factory=list)
 
 
 class DynamicViewRollbackIn(StrictModel):
     version: int
+
+
+class DynamicViewTaskActionIn(StrictModel):
+    key: str = Field(min_length=1, max_length=64,
+                     description="The task's key, e.g. `CON-12`: a task of the view's project.")
+    action: str = Field(description="A status move the view declares in `task_actions`: done or reopen.")
 
 
 class CatalogModelOut(StrictModel):

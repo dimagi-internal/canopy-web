@@ -101,7 +101,11 @@ def live_session(turn: Turn, runner):
     `runner` — the laptop case, where a finished turn's work goes on. Found by the turn's own
     session (`chat_session`, or the chat a chat turn names in `origin_ref.chat_session_id`;
     a laptop chat turn records no session key), else by the binding its session key names
-    (an agent turn: mail, a schedule, a dispatch). None otherwise."""
+    (an agent turn: mail, a schedule, a dispatch). A mail turn names both: its
+    `chat_session` is the mail-thread conversation canopy-web opened on ingest, which no
+    runner is ever bound to, while the session the runner spawned is bound under the
+    turn's session key — so an unbound named session falls through to the key. None
+    otherwise."""
     # emdash only: a `computer` runner runs a person's own direct sessions (they act as the
     # person), and a cloud turn ends with its process.
     if runner.kind != runner.EMDASH or turn.claimed_by_id != runner.pk:
@@ -112,13 +116,9 @@ def live_session(turn: Turn, runner):
     qs = (RunnerBinding.objects.select_related("session")
           .filter(runner=runner, session__status=Session.ACTIVE, session__agent=agent))
     named = turn.chat_session_id or str((turn.origin_ref or {}).get("chat_session_id") or "")
-    if named:
-        qs = qs.filter(session_id=named)
-    elif turn.session_key:
-        qs = qs.filter(session_key=turn.session_key)
-    else:
-        return None
-    b = qs.first()
+    b = qs.filter(session_id=named).first() if named else None
+    if b is None and turn.session_key:
+        b = qs.filter(session_key=turn.session_key).first()
     return b.session if b is not None else None
 
 

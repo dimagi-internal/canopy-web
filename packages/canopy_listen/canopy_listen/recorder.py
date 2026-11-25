@@ -17,7 +17,10 @@ import numpy as np
 from . import store
 from .live import SAMPLE_RATE, LiveTranscriber
 
-STEP_SECONDS = 1.0  # one pass over a full 24 s window takes ~0.2 s on an M-series Mac
+# What was said reaches the transcript within a step, so the step is short. One pass over a
+# full 24 s window takes ~0.2-0.45 s on an M-series Mac; a step that runs long only delays
+# the next one, since a step waits for the audio queue to empty.
+STEP_SECONDS = 0.5
 log = logging.getLogger("canopy_listen")
 
 
@@ -236,7 +239,7 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
 
             chosen = settings or config.load()
             recognise = engines.Recogniser(chosen["asr"], chosen.get("language", "en"))
-            labeller = engines.make_labeller(chosen["speakers"], chosen.get("same_voice", 0.66))
+            labeller = engines.make_labeller(chosen["speakers"], chosen.get("same_voice", 0.55))
         meeting["engine"] = {k: chosen[k] for k in ("asr", "speakers", "final") if k in chosen}
         live = LiveTranscriber(recognise, embed, labeller=labeller, timed=getattr(recognise, "timed", True))
         if keep_audio:

@@ -46,3 +46,43 @@ describe('describeLines', () => {
     }, 'eva')).toEqual(['Delete Contacts', 'Change Contacts', 'Create Contacts', 'Read Contacts', 'Search any record eva can see'])
   })
 })
+
+describe('Google Drive lines', () => {
+  it.each([
+    [{ method: 'GET', path: 'files' }, 'List files in Drive'],
+    [{ method: 'GET', path: 'files/*' }, 'Read file details in Drive'],
+    [{ method: 'GET', path: 'files/*/listLabels' }, "Read files' labels in Drive"],
+    [{ method: 'POST', path: 'files/*/modifyLabels' }, "Change files' labels in Drive"],
+    [{ method: 'GET', path: 'about' }, 'Other Google access: GET about'],
+  ])('%j reads as %s', (line, text) => {
+    expect(describeLine(line, 'you', 'google')).toBe(text)
+  })
+})
+
+describe('Gmail, Calendar, Sheets and Docs lines', () => {
+  it.each([
+    [{ method: 'GET', path: 'gmail/profile' }, 'See your Gmail address'],
+    [{ method: 'GET', path: 'gmail/messages' }, 'Read your mail'],
+    [{ method: 'GET', path: 'gmail/messages/*' }, 'Read your mail'],
+    [{ method: 'GET', path: 'gmail/threads/*' }, 'Read your mail'],
+    [{ method: 'GET', path: 'calendar/calendars/primary' }, 'See your calendar'],
+    [{ method: 'GET', path: 'calendar/calendars/primary/events' }, 'Read your calendar events'],
+    [{ method: 'GET', path: 'sheets/*' }, 'Read spreadsheets'],
+    [{ method: 'GET', path: 'sheets/*/values:batchGet' }, 'Read spreadsheets'],
+    [{ method: 'GET', path: 'docs/*' }, 'Read documents'],
+    [{ method: 'POST', path: 'gmail/drafts' }, 'Write Gmail drafts (never send)'],
+    [{ method: 'POST', path: 'sheets/*/values:batchUpdate' }, 'Change spreadsheets'],
+    [{ method: 'POST', path: 'sheets/*/values/*:append' }, 'Change spreadsheets'],
+    [{ method: 'POST', path: 'sheets/*:batchUpdate' }, 'Change spreadsheets'],
+    [{ method: 'POST', path: 'docs/*:batchUpdate' }, 'Change documents'],
+    [{ method: 'POST', path: 'files' }, 'Create files in Drive'],
+    [{ method: 'POST', path: 'gmail/messages/send' }, 'Other Google access: POST gmail/messages/send'],
+  ])('%j reads as %s', (line, text) => {
+    expect(describeLine(line, 'you', 'google')).toBe(text)
+  })
+
+  it('describeLines uses the entry\'s provider, never Salesforce words', () => {
+    expect(describeLines({ provider: 'google', reads: [{ method: 'GET', path: 'files' }], writes: [{ method: 'POST', path: 'files/*/modifyLabels' }] })
+      .map((l) => l.words)).toEqual(["Change files' labels in Drive", 'List files in Drive'])
+  })
+})

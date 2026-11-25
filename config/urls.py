@@ -6,16 +6,20 @@ from django.urls import include, path, re_path
 
 from apps.agents.views import RETIRED_INTERFACE_PATH, retired_interface_route
 from apps.api.api import api as api_v2
+from apps.common import admin_access
 from apps.api.views import redoc_docs, scalar_docs
 from apps.harness.views import download_runner, runner_app_home
+from apps.agent_definitions import git_http
 from apps.plugins import views as plugin_views
 from apps.reviews.views import review_page
 from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
+from apps.tokens.cli_authorize_views import cli_token as views_cli_token
 from apps.tokens.mint_session import mint_session
 from apps.connections.views import connections_callback, connections_start
 from apps.github_connect.views import github_connect_callback, github_connect_start
+from apps.embedding.extension import ext_panel
 from apps.embedding.views_embed import embed_chat, embed_sign_off, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.oauth_server import views as views_mcp_oauth
@@ -24,6 +28,9 @@ from apps.oauth_server.views_oauth import client_metadata as oauth_client_metada
 from apps.oauth_server.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import FLAT_ARTIFACT_PATH, csrf_view, flat_artifact_gone, health_check, spa_view
+
+# The admin opens through the Google session only: no password form.
+admin_access.install()
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -38,6 +45,7 @@ urlpatterns = [
     path("download/runner/<str:platform>", download_runner, name="download-runner"),
     path("api/debug/mint-session/", mint_session, name="debug-mint-session"),
     path("auth/cli/authorize/", views_cli_authorize, name="cli_authorize"),
+    path("auth/cli/token/", views_cli_token, name="cli_token"),
     # The GitHub App connect flow. Bare views (redirects + session), and
     # deliberately NOT public: the callback exists to bind a GitHub grant to a
     # canopy identity, so there is nothing to do without a logged-in user.
@@ -100,6 +108,10 @@ urlpatterns = [
     # build like index.html is, not via staticfiles — this is the one URL third
     # parties hard-code, so it must not move with a static prefix.
     path("embed/widget.js", embed_widget_js, name="embed-widget-js"),
+    # The browser extension's side panel: framable ONLY by the allowed extension origins
+    # (apps/embedding/extension.py). Before the SPA catch-all, which would answer it with
+    # X-Frame-Options: DENY.
+    re_path(r"^ext/panel/?$", ext_panel, name="ext-panel"),
     # A walkthrough's bytes, under its workspace like its page. <str:> (not
     # <uuid:>) so a malformed id is handled by the view (bare 404) instead of
     # falling through to the SPA catch-all and painting the whole app inside a
@@ -119,6 +131,10 @@ urlpatterns = [
     # this exact address, and it self-enforces auth (401). Not under /agents/,
     # which is the SPA's /agents/* tenant redirect.
     path("plugins/marketplace.json", plugin_views.marketplace_json, name="plugin-marketplace"),
+    # A stored agent's repository, read-only over git's smart HTTP
+    # (apps/agent_definitions/git_http.py). Bare view: git asks for these exact
+    # addresses and speaks pkt-lines, and it self-enforces auth (401 with Basic).
+    re_path(r"^git/(?P<ws>[^/]+)/(?P<slug>[^/]+)\.git/(?P<rest>.*)$", git_http.serve, name="agent-git"),
     # The retired per-workspace marketplace + archive URLs: 410 naming the new one.
     path("w/<str:ws>/marketplace.json", plugin_views.moved, name="plugin-marketplace-moved"),
     re_path(r"^w/[^/]+/plugins/", plugin_views.moved, name="plugin-archive-moved"),

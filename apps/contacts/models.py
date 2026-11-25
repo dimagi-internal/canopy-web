@@ -356,6 +356,25 @@ class Contact(models.Model):
         "nothing here may be the thing that grants.",
     )
 
+    # --- what the host site owns ---------------------------------------------
+    #
+    # A host site is the SYSTEM OF RECORD for the people it brings
+    # (docs/architecture/host-systems-of-record.md). These four are the host's, written
+    # only by its signed `POST /api/sites/contacts` (`services.apply_host_record`) and
+    # never by a workspace editor; `notes` and `attributes` above stay the workspace's own.
+    #: Where the host's record of this person lives: `<site.person_scheme>://<id>`
+    #: (`canopy_sdk.contacts.check_record_uri`), "" when the host has named none.
+    record_uri = models.CharField(max_length=256, blank=True, default="")
+    #: The host's cache of this person: labels an agent may see on every turn (stage,
+    #: language, programme, consent), never history. At most 40 keys and 4096 bytes
+    #: (`canopy_sdk.contacts.check_profile`).
+    host_profile = models.JSONField(default=dict, blank=True)
+    #: The host's version of the three fields above; a write with a version no newer is
+    #: `stale` and changes nothing, so retries and reordering are safe.
+    host_profile_version = models.BigIntegerField(default=0)
+    #: When the host's signed update that set them was issued (`iat`).
+    host_profile_signed_at = models.DateTimeField(null=True, blank=True)
+
     #: Set to stop this person reaching an agent at all.
     #:
     #: A contact is the one principal an outsider can cause canopy to create —
@@ -455,6 +474,37 @@ class Contact(models.Model):
         whoever later finds it matching a widget visitor.
         """
         return self.AUTH_RANK.get(self.auth_result, 0) >= self.AUTH_RANK[grade]
+
+
+class ContactErasure(models.Model):
+    """A host site made canopy forget one of its people (`services.erase`, its signed
+    `POST /api/sites/contacts/erase`): the record that it did, and nothing about the person
+    but the host's own id for them.
+
+    The host is the system of record (docs/architecture/host-systems-of-record.md), so
+    when it says a person is gone canopy deletes the contact, its conversations and their
+    words, its tokens and act-as-you permissions, the facts recorded about them in that
+    workspace, and the `Person` when nothing else holds it. This row is what stays: so an
+    erasure is provable, so an update the host signed BEFORE it cannot bring the person
+    back (`services.apply_host_record`), and so a later arrival is visibly a new one.
+    Keyed `(app, external_id)`, the contact's own key; erasing again only moves `erased_at`.
+    """
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="contact_erasures")
+    app = models.ForeignKey("tokens.AppCredential", on_delete=models.CASCADE, related_name="contact_erasures")
+    #: The host's own id for the person: the contact's `external_id`.
+    external_id = models.CharField(max_length=200)
+    erased_at = models.DateTimeField()
+    #: Who asked: `host` (the site's signed erasure) or `retention`.
+    reason = models.CharField(max_length=32, default="host")
+
+    class Meta:
+        db_table = "contact_erasures"
+        constraints = [models.UniqueConstraint(fields=["app", "external_id"], name="one_erasure_per_app_person")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"erased {self.app_id}:{self.pk} at {self.erased_at:%Y-%m-%d}"
 
 
 # --- the fleet brain: what agents know about a person --------------
@@ -607,6 +657,25 @@ class PersonFact(models.Model):
     embedding = models.BinaryField(null=True, blank=True, editable=False)
     #: The model that made `embedding`; a vector from any other model counts as none.
     embedding_model = models.CharField(max_length=120, blank=True, default="")
+    #: HCP v2 4.2.6 — the purposes the entry's writer permits it to be used for
+    #: (`assertion.permittedPurposes`; NULL = no limit), and the person's own narrowing
+    #: of them (`classification.permittedPurposes`, `hcp.restrict_purposes`; NULL = none).
+    #: A read is served an entry only where each list present includes its purpose.
+    permitted_purposes = models.JSONField(null=True, blank=True, default=None)
+    restricted_purposes = models.JSONField(null=True, blank=True, default=None)
+    #: v2 3.6 — how the asserter's identity was established: `authenticated` for the person's
+    #: own write (a login, or a contact in canopy's frame), `unverified` for anyone else's,
+    #: including an agent's claim that the person said it (3.7). Set by the provider at write,
+    #: never taken from a request, and never raised afterwards (invariant 15): a person's
+    #: confirmation is a separate record, not an assurance.
+    UNVERIFIED, AUTHENTICATED = "unverified", "authenticated"
+    assurance = models.CharField(max_length=16, default=UNVERIFIED)
+    #: v2 4.2.5 `assertion.basis`: `{drawnFrom, task, setting, rationale}`, all optional. Never
+    #: names a party, a client, a conversation or a document (provenance does that).
+    basis_detail = models.JSONField(default=dict, blank=True)
+    #: v2 4.5: categories beyond `category` (each widens which grants reach the entry), set by
+    #: the person alone (`hcp.set_categories`); `category` stays the one canopy filters on first.
+    extra_categories = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "contact_person_facts"
@@ -655,6 +724,127 @@ class PersonFact(models.Model):
     def is_current(self) -> bool:
         """The entry's latest version (whatever its status)."""
         return self.superseded_at is None
+
+
+class EntryConfirmation(models.Model):
+    """HCP v2 3.8 — the person's confirmation or rejection of ONE VERSION of an entry.
+
+    Append-only, and it belongs to the version it was made on: a new version starts with none, so a
+    revision never inherits the person's endorsement of earlier wording. It changes neither the
+    entry's declaration type nor its asserter (invariant 12); it gives the entry standing in a
+    conflict (4.7.1). Replaces v1's `user_verified`."""
+
+    CONFIRMED, REJECTED = "confirmed", "rejected"
+
+    fact = models.ForeignKey(PersonFact, on_delete=models.CASCADE, related_name="confirmations")
+    disposition = models.CharField(max_length=10)
+    #: Who confirmed: the person, as `user:<email>` or `contact:<pk>` (the person's act in canopy's frame).
+    confirmed_by = models.CharField(max_length=200)
+    confirmed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_entry_confirmations"
+        ordering = ["pk"]
+        constraints = [models.CheckConstraint(condition=models.Q(disposition__in=["confirmed", "rejected"]),
+                                              name="entry_confirmation_disposition_known")]
+
+
+class EntryRelationship(models.Model):
+    """HCP v2 4.2.3 — how one entry relates to another entry of the same person, or to the source
+    it was derived from.
+
+    A `contradicts` relationship is symmetric: one row on each entry. The target is an entry
+    (`target_entry_id`) or, for `derivedFrom` only, a SOURCE named by a loose `(source_kind,
+    source_ref)` pair (a session the entry was learned from; the pair is keyed like the brain's
+    `BrainSource.kind/ref`, deliberately not a foreign key, so this app depends on none)."""
+
+    DERIVED_FROM, SUPERSEDES, CONTRADICTS, DUPLICATES = "derivedFrom", "supersedes", "contradicts", "duplicates"
+    TYPES = (DERIVED_FROM, SUPERSEDES, CONTRADICTS, DUPLICATES)
+    #: 3.9 roles that may assert one.
+    MANAGEMENT_CLIENT, CONTEXT_CLIENT, HCP_PROVIDER = "management-client", "context-client", "hcp-provider"
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="entry_relationships")
+    entry_id = models.UUIDField(db_index=True)
+    type = models.CharField(max_length=12)
+    target_entry_id = models.UUIDField(null=True, blank=True, db_index=True)
+    source_kind = models.CharField(max_length=40, blank=True, default="")
+    source_ref = models.CharField(max_length=200, blank=True, default="")
+    #: Set by the provider, never taken from a request (4.2.3).
+    asserted_by_role = models.CharField(max_length=24)
+    asserted_by_id = models.CharField(max_length=200)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    #: 4.7.4 — a way to resolve a `contradicts`, which changes nothing until the person acts.
+    proposal = models.JSONField(null=True, blank=True, default=None)
+
+    class Meta:
+        db_table = "contact_entry_relationships"
+        ordering = ["pk"]
+        indexes = [models.Index(fields=["person", "entry_id"])]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(type__in=["derivedFrom", "supersedes", "contradicts", "duplicates"]),
+                name="entry_relationship_type_known"),
+            models.CheckConstraint(
+                condition=(models.Q(target_entry_id__isnull=False, source_kind="")
+                           | (models.Q(target_entry_id__isnull=True, type="derivedFrom")
+                              & ~models.Q(source_kind="") & ~models.Q(source_ref=""))),
+                name="entry_relationship_targets_an_entry_or_a_source"),
+        ]
+
+
+class StandingRule(models.Model):
+    """HCP v2 6.3 — a person's standing rule: it governs EVERY grant, present and future.
+
+    `deny` is the only effect: a rule never widens access. It denies the named client operators
+    (a DNS domain matches that host and its subdomains; anything else matches one identifier
+    exactly), or every operator when `requires` is set, the categories named (empty = every
+    category, held now or later). `requires` are client claims: it denies only clients that do not
+    make every one. Set and removed only by the person (a governance act, HTTP only); enforced when
+    a grant is issued and on every request (`hcp.rules`)."""
+
+    rule_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="standing_rules")
+    operators = models.JSONField(default=list, blank=True)
+    requires = models.JSONField(default=list, blank=True)
+    categories = models.JSONField(default=list, blank=True)
+    #: `context-subject`, or a delegation's id once delegations exist.
+    set_by = models.CharField(max_length=200, default="context-subject")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_standing_rules"
+        ordering = ["created_at", "pk"]
+        constraints = [
+            # 6.3: "every operator" is allowed only with `requires`.
+            models.CheckConstraint(
+                condition=~models.Q(operators=[]) | ~models.Q(requires=[]),
+                name="standing_rule_names_operators_or_requires"),
+        ]
+
+
+class Directive(models.Model):
+    """HCP v2 6.4 — what a client may do with context it received or on the person's behalf, in
+    the person's words, delivered with every disclosure it applies to. Directives only narrow:
+    they never widen access. Set and removed only by the person (HTTP only)."""
+
+    SHARE, SIGN, TRANSACT = "share", "sign", "transact"
+    DENY, ASK_FIRST, PERMIT = "deny", "ask-first", "permit"
+
+    directive_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="directives")
+    action = models.CharField(max_length=300)
+    effect = models.CharField(max_length=10)
+    text = models.CharField(max_length=1000)
+    categories = models.JSONField(default=list, blank=True)
+    operators = models.JSONField(default=list, blank=True)
+    set_by = models.CharField(max_length=200, default="context-subject")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_directives"
+        ordering = ["created_at", "pk"]
+        constraints = [models.CheckConstraint(condition=models.Q(effect__in=["deny", "ask-first", "permit"]),
+                                              name="directive_effect_known")]
 
 
 class PersonAccess(models.Model):
@@ -799,6 +989,9 @@ class PersonGrant(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=10, default=ACTIVE)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    #: HCP v2 6.1.5.2 — the purpose codes the person approved (`hcp.purposes`). Empty on a
+    #: grant made before purposes existed: it reads as the purposes of its scopes.
+    purposes = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "contact_person_grants"
@@ -831,6 +1024,9 @@ class PersonAuditEvent(models.Model):
         # available / unavailable (`Person.hcp_*_available`); `agentX.defaultOn|
         # defaultOff` = its default for sessions (`hcp_*_default`); `sessionX.on|off|
         # inherit` = one session's override (`SessionAgentMemory`).
+        # A person's agreement to canopy learning (`apps/brain/consent.py`).
+        "learning.consented", "learning.class_added", "learning.class_removed", "learning.revoked",
+        "learning.source_withdrawn", "learning.source_restored",
         "agentRecord.enabled", "agentRecord.disabled", "agentUse.enabled", "agentUse.disabled",
         "agentRecord.defaultOn", "agentRecord.defaultOff",
         "agentUse.defaultOn", "agentUse.defaultOff",
@@ -852,6 +1048,12 @@ class PersonAuditEvent(models.Model):
         # The person deleted the stored words of one of their sessions: the session's
         # id in `detail`, nothing else about it (`session_reviewers`).
         "session.contentDeleted",
+        # HCP v2 (hcp-service.md, "HCP v2"): the person narrowed an entry's purposes.
+        "context.restricted",
+        # v2 3.8 / 4.7: the person confirmed or rejected a version; a provider's proposal for a conflict.
+        "context.confirmed", "conflict.proposed",
+        # v2 6.3 / 6.4: a standing rule or a directive set or removed by the person.
+        "rule.set", "rule.removed", "directive.set", "directive.removed",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 
@@ -865,6 +1067,13 @@ class PersonAuditEvent(models.Model):
     related_entry_id = models.UUIDField(null=True, blank=True)
     category = models.CharField(max_length=80, blank=True, default="")
     purpose = models.CharField(max_length=500, blank=True, default="")
+    #: v2: the purpose CODE a read was made under (`hcp.purposes`); `purpose` stays the
+    #: stated task in words (v2 `purposeDescription`).
+    purpose_code = models.CharField(max_length=200, blank=True, default="")
+    #: v2 8.2 `data`: members fixed by event type, so the log can be filtered and summarised
+    #: (`hcp.disclosure.summary`). A client's read carries `retrievalId`, `version`, `useUntil`
+    #: and, per result, `directives`. Ids and times only, never what an entry says.
+    data = models.JSONField(default=dict, blank=True)
     grant_id = models.UUIDField(null=True, blank=True)
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.SET_NULL,
                                   null=True, blank=True, related_name="person_audit_events")
@@ -1039,6 +1248,18 @@ class HcpClient(models.Model):
     redirect_uris = models.JSONField(default=list)
     #: The most it may ever ask for: `hcp:{category}:{read|write}` scopes.
     allowed_scopes = models.JSONField(default=list)
+    #: HCP v2 3.2.8 — the client operator's identifier, what a standing rule or directive names:
+    #: a DNS domain or an identifier. Empty = the host of its first redirect URI.
+    operator_id = models.CharField(max_length=200, blank=True, default="")
+    #: HCP v2 6.2.5 — the record the law requires it to keep, `{record, obligation, period}`; shown
+    #: before a grant is approved and in the disclosure summary. Empty = none declared.
+    legal_retention = models.JSONField(default=dict, blank=True)
+    #: HCP v2 18.1 — the conformance claims it declared (the directives claim is what a rule's
+    #: `requires` asks for). Set by a canopy admin from what the operator attests, never by the client.
+    claims = models.JSONField(default=list, blank=True)
+    #: The purposes (`hcp.purposes` codes) it may read for; shown on the consent screen and
+    #: carried by every grant to it. Empty = the purposes of the scopes it is granted.
+    purposes = models.JSONField(default=list, blank=True)
     #: Operated by Dimagi (canopy's own tooling) rather than a third party. Only
     #: shown to the person; it grants nothing extra.
     first_party = models.BooleanField(default=False)

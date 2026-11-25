@@ -44,8 +44,9 @@ def session_subagents(session) -> list[dict]:
 
 #: A row's extras, present on the socket only when set: an MCP Apps View
 #: (`mcp_apps_views.annotate`), a secret request's card (`secret_requests.annotate`),
-#: a sensitive conversation's sealed words (set only by `sensitivity.readable`).
-_OPTIONAL_ROW_FIELDS = ("app", "secret_request", "sealed")
+#: a sensitive conversation's sealed words (set only by `sensitivity.readable`), a line
+#: no person typed (`MessageOut.automatic`).
+_OPTIONAL_ROW_FIELDS = ("app", "secret_request", "sealed", "automatic")
 
 
 def message_dto(msg: Message) -> dict:

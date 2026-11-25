@@ -12,13 +12,14 @@ import datetime as dt
 import logging
 import uuid
 
-from django.db.models import OuterRef, Q, Subquery
+from django.db.models import OuterRef, Prefetch, Q, Subquery
 from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
 from apps.agents.holding import runner_may_hold_agent
+from apps.agents.models import Agent, AgentGoogleMint
 from apps.api.route_gates import gate
 from apps.canopy_sessions import control, handoff
 from apps.canopy_sessions import services as chat_services
@@ -27,7 +28,9 @@ from apps.canopy_sessions.models import HandoffArchive, Message, RunnerBinding, 
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import session_sync
+from . import runner_projects, runner_sync, session_sync
+from . import runners as harness_runners
+from . import services as harness_services
 
 # The one harness router and the helpers every harness route shares; api.py
 # imports this module after defining them.
@@ -65,6 +68,7 @@ from .schemas import (
     ReportSessionsIn,
     ResolveSessionIn,
     ResolveSessionOut,
+    RunnerSyncOut,
     SessionBackfillIn,
     SessionInterruptResultIn,
     SessionInterruptSyncOut,
@@ -125,8 +129,22 @@ def resolve_session(request: HttpRequest, runner_id: uuid.UUID, payload: Resolve
             None, payload.thread_key, runner, project=payload.project, workspace=ws,
             turn_id=payload.turn_id,
         )
-    agent = agent_for_read(request, payload.agent_slug)
+    agent = _held_agent(request, runner, payload.agent_slug)
     return session_sync.resolve_session(agent, payload.thread_key, runner, turn_id=payload.turn_id)
+
+
+def _held_agent(request: HttpRequest, runner: Runner, slug: str):
+    """The agent whose thread binding this runner asks about or moves to itself.
+
+    Reading the agent is not enough: `record-session` points the agent's chat
+    binding at THIS box (and `session-stream` then accepts its rows), and
+    `resolve-session` answers with the thread's summary. Only a box that may run
+    the agent's turns has any business doing either, so any other is a 404, the
+    same answer as an agent it cannot see."""
+    agent = agent_for_read(request, slug)
+    if not runner_may_hold_agent(runner, agent):
+        raise HttpError(404, "agent not found")
+    return agent
 
 
 @router.post("/runners/{runner_id}/record-session", response=ResolveSessionOut)
@@ -179,7 +197,7 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
         return session_sync.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws
         )
-    agent = agent_for_read(request, payload.agent_slug)
+    agent = _held_agent(request, runner, payload.agent_slug)
     title = payload.title
     if turn is not None:
         # The server names the session from the turn when it knows it: the email's
@@ -217,7 +235,7 @@ def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportS
     skipped: list = []
     count = session_sync.replace_reported_sessions(
         runner, ws, payload.sessions, payload.archived, complete=payload.complete,
-        skipped=skipped,
+        skipped=skipped, digest=session_sync.report_digest(payload.model_dump_json()),
     )
     return SessionReportOut(count=count, skipped=len(skipped))
 
@@ -247,7 +265,11 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     "ship only what is new" from "ship the history I am missing" — a Max alone can
     only ever append above the high-water mark and so can never fill a hole below
     it."""
-    runner = runner_or_404(request, runner_id)
+    return streams_for(runner_or_404(request, runner_id))
+
+
+def streams_for(runner) -> dict:
+    """`list_streams`'s answer for `runner` (also part of `/sync`)."""
     if is_sensitive_data_box(runner):
         # A sensitive-data box keeps its transcripts to itself: nothing to tail.
         return {"streams": []}
@@ -263,6 +285,9 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     )
     bindings = (
         RunnerBinding.objects.select_related("session")
+        # `emdash_project` reads an agent chat's agent slug: one read of every agent's slug,
+        # not one per binding (an agent's box backs hundreds of its chats).
+        .prefetch_related(Prefetch("session__agent", queryset=Agent.objects.only("id", "slug")))
         .filter(runner=runner)
         .filter(Q(session__status=Session.ACTIVE) | Q(session_id__in=full))
         # Its person deleted its words: never asked of this box again, coached or not.
@@ -401,7 +426,11 @@ def _turn_end_session(runner, session_id, transcript_id: str = ""):
 @gate("runner")
 def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
     """Sessions this runner has been asked to ship full history for."""
-    runner = runner_or_404(request, runner_id)
+    return backfills_for(runner_or_404(request, runner_id))
+
+
+def backfills_for(runner) -> dict:
+    """`list_backfills`'s answer for `runner` (also part of `/sync`)."""
     if is_sensitive_data_box(runner):
         # Never asked of a sensitive-data box (`transcript_read.backfill_refused`).
         return {"backfills": []}
@@ -426,7 +455,11 @@ def list_closes(request: HttpRequest, runner_id: uuid.UUID):
     API answers `ok:true`. Drained on the poll tick, so a lost frame costs a tick
     rather than leaving the emdash task open and the session active forever.
     """
-    runner = runner_or_404(request, runner_id)
+    return closes_for(runner_or_404(request, runner_id))
+
+
+def closes_for(runner) -> dict:
+    """`list_closes`'s answer for `runner` (also part of `/sync`)."""
     bindings = (
         RunnerBinding.objects.select_related("session")
         .filter(runner=runner, close_requested=True)
@@ -604,7 +637,11 @@ def list_menu_answers(request: HttpRequest, runner_id: uuid.UUID):
 
     Drained on the poll tick the runner already runs, same as `/backfills`.
     """
-    runner = runner_or_404(request, runner_id)
+    return menu_answers_for(runner_or_404(request, runner_id))
+
+
+def menu_answers_for(runner) -> dict:
+    """`list_menu_answers`'s answer for `runner` (also part of `/sync`)."""
     bindings = (
         RunnerBinding.objects.select_related("session")
         .filter(runner=runner)
@@ -653,7 +690,11 @@ def list_session_interrupts(request: HttpRequest, runner_id: uuid.UUID):
     record, drained on the poll tick, so a frame lost while the control channel
     was down costs a tick rather than the stop. A request older than
     `control.INTERRUPT_TTL` is not offered."""
-    runner = runner_or_404(request, runner_id)
+    return session_interrupts_for(runner_or_404(request, runner_id))
+
+
+def session_interrupts_for(runner) -> dict:
+    """`list_session_interrupts`'s answer for `runner` (also part of `/sync`)."""
     bindings = (
         RunnerBinding.objects.select_related("session")
         .filter(runner=runner)
@@ -770,3 +811,55 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     if payload.final:
         chat_services.finish_rebuild(session)
     return {"written": written}
+
+
+@router.get("/runners/{runner_id}/sync", response={200: RunnerSyncOut, 304: None},
+            summary="Every piece of work this runner owes, behind an ETag")
+@gate("runner")
+def get_runner_sync(request: HttpRequest, runner_id: uuid.UUID, response: HttpResponse):
+    """The drains in one read. `ETag` is the runner's sync version; send it back as
+    `If-None-Match` and an unchanged version answers 304 with nothing else read.
+    Every list is whole (never a diff since the last read), so a box that missed a
+    doorbell, or a bump, finds the work on its next read."""
+    runner = runner_or_404(request, runner_id)
+    # The version comes off the row read above, BEFORE any of the rows below: work
+    # recorded in between makes this answer newer than its tag, never older.
+    tag = runner_sync.etag(runner.sync_version)
+    if tag in [t.strip() for t in request.headers.get("If-None-Match", "").split(",")]:
+        not_modified = HttpResponse(status=304)
+        not_modified["ETag"] = tag
+        return not_modified
+    response["ETag"] = tag
+    return sync_for(runner)
+
+
+def sync_for(runner) -> dict:
+    """`get_runner_sync`'s 200 body for `runner`."""
+    executing = Turn.objects.filter(
+        claimed_by=runner, status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
+    ).values_list("pk", flat=True)
+    return {
+        "version": runner.sync_version,
+        **session_interrupts_for(runner),
+        **menu_answers_for(runner),
+        **closes_for(runner),
+        **backfills_for(runner),
+        "handoffs": handoff.due_for(runner),
+        **streams_for(runner),
+        "cancel_turn_ids": harness_services.cancel_requested_turn_ids(runner, [str(t) for t in executing]),
+        "add_projects": [{"id": r.pk, "name": r.name, "repo_url": r.repo_url,
+                          "requested_at": r.requested_at}
+                         for r in runner_projects.owed(runner)],
+        "mint_due": mint_due(runner),
+        "sections": {name: fn(runner) for name, fn in sorted(runner_sync.SECTIONS.items())},
+    }
+
+
+def mint_due(runner) -> bool:
+    """Whether `/mint/claim` has work for this box: its own sign-in asked to start or
+    handed a code, or an agent's Google sign-in it was given."""
+    if harness_runners.claim_runner_mint(runner) is not None:
+        return True
+    return AgentGoogleMint.objects.filter(runner=runner).filter(
+        Q(status=AgentGoogleMint.REQUESTED)
+        | (Q(status=AgentGoogleMint.COMPLETING) & ~Q(code=""))).exists()

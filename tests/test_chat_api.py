@@ -1,6 +1,8 @@
 """SP2a Task 5 — the /api/canopy-sessions surface: create, get, send (stub inline), tenancy."""
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client
@@ -474,8 +476,8 @@ def test_send_client_id_over_100_chars_is_truncated(client):
     assert r.status_code == 200, r.content
 
     turn = Turn.objects.get(pk=r.json()["turn_id"])
-    assert turn.idempotency_key.endswith(f":{long_id[:100]}")
-    assert not turn.idempotency_key.endswith(f":{long_id}")
+    # Capped at 100, then the whole key cut to its 128-character column (PostgreSQL enforces it).
+    assert turn.idempotency_key == f"chat:{uuid.UUID(sid).hex}:{long_id[:100]}"[:128]
 
 
 # ---- ledger-path peer visibility ----

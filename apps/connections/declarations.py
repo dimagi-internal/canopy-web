@@ -1,11 +1,18 @@
 """What a view or app page declares it may ask a connection to do.
 
-A screen that calls Salesforce through canopy-web says so up front, in a
+A screen that calls Salesforce or Google through canopy-web says so up front, in a
 `connections` declaration saved with the view (or in an app manifest):
 
     [{"provider": "salesforce", "as": "viewer" | "shared", "agent": "<slug>",
       "reads":  [{"method": "GET",   "path": "query"}],
-      "writes": [{"method": "PATCH", "path": "sobjects/Lead/*"}]}]
+      "writes": [{"method": "PATCH", "path": "sobjects/Lead/*"}]},
+     {"provider": "google", "as": "viewer",
+      "reads":  [{"method": "GET",  "path": "files"}, {"method": "GET", "path": "files/*/listLabels"}],
+      "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
+
+A composite call (`composite/batch`, `composite/sobjects`) is never declared: each call inside
+it must fit a line, exactly as if it were made alone (`calls.expand`). A query's next page
+(`query/<locator>`) is covered by the screen's `GET query` line.
 
 `path` is a pattern in the canonical, decoded form `calls.match` returns: literal
 segments, and `*` standing for exactly one segment. A write names its object
@@ -17,7 +24,8 @@ against the same lines. The two checks are separate on purpose: saving can be
 wrong, a run is where a token is used.
 
 `as: "viewer"` calls with the viewer's own connection; `as: "shared"` with the
-connection `agent` shared. One entry per (provider, as, agent).
+connection `agent` shared (never for a `calls.VIEWER_ONLY` provider). One entry per
+(provider, as, agent).
 
 This module imports only `calls`: the view and app code that saves a declaration
 may import it, and it knows no model. So it also holds the registry of surfaces:
@@ -41,10 +49,13 @@ AS_VALUES = ("viewer", "shared")
 #: An agent's slug as canopy-web makes one (a Django slug, at most 80 characters).
 AGENT_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
-# One id-shaped segment standing in for `*` when a pattern is checked: it fits an
-# id and an object name both, so a read's `*` may be either.
-_PLACEHOLDER = "A00000000000000"
+# One id-shaped segment standing in for `*` when a pattern is checked: for Salesforce it fits an
+# id and an object name both, so a read's `*` may be either; for Google, a Drive id and a Gmail id
+# both (lowercase hex of a Drive id's length).
+_PLACEHOLDER = {"salesforce": "A00000000000000", "google": "a000000000000000000000000000"}
 _ENTRY_KEYS = {"provider", "as", "agent", "reads", "writes"}
+#: What a `*` may stand for in a write: a record or file id, a Gmail id, a Sheets range. Never a name.
+_WRITE_STARS = frozenset({"{id}", "{gid}", "{range}"})
 
 
 @dataclass(frozen=True)
@@ -186,7 +197,9 @@ def _line(where: str, raw, kind: str) -> dict:
 def _check_line(entry_provider: str, line: dict) -> dict:
     shown, kind, method, path = line["shown"], line["kind"], line["method"], line["path"]
     segments = path.split("/")
-    probe = "/".join(_PLACEHOLDER if s == "*" else s for s in segments)
+    stand_in = _PLACEHOLDER.get(entry_provider, _PLACEHOLDER["salesforce"])
+    # `*` stands for one segment; `*:verb` for one that ends in Google's custom method (`*:batchUpdate`).
+    probe = "/".join(stand_in if s == "*" else stand_in + s[1:] if s.startswith("*:") else s for s in segments)
     try:
         found = calls.match(entry_provider, method, probe)
     except calls.NotAllowed as exc:
@@ -194,6 +207,11 @@ def _check_line(entry_provider: str, line: dict) -> dict:
     if found.path != probe:
         raise ValueError(f"{shown}: that is not a path this screen may call: write it plainly, not encoded")
     rule = found.rule
+    if calls.is_composite(found):
+        raise ValueError(f"{shown}: declare the calls a composite call holds, not the composite call: "
+                         "each one inside it is checked against those")
+    if rule.declared_as is not None:
+        raise ValueError(f"{shown}: that is covered by {rule.method} {rule.declared_as}: declare that instead")
     if kind == "read" and rule.kind != "read":
         raise ValueError(f"{shown}: that is a write, not a read: declare it under writes")
     if kind == "write" and rule.kind != "write":
@@ -201,7 +219,8 @@ def _check_line(entry_provider: str, line: dict) -> dict:
     if kind == "write":
         tokens = rule.pattern.split("/")
         for i, seg in enumerate(segments):
-            if seg == "*" and not (i < len(tokens) and tokens[i] == "{id}"):
+            token = tokens[i].partition(":")[0] if i < len(tokens) else ""
+            if (seg == "*" or seg.startswith("*:")) and token not in _WRITE_STARS:
                 raise ValueError(f"{shown}: a write names its object, flow or class exactly: "
                                  "only a record id may be *")
     return {"method": method, "path": path}
@@ -238,6 +257,9 @@ def validate(raw, *, agent_exists: Callable[[str], bool] | None = None) -> list[
         as_ = entry.get("as", "viewer")
         if as_ not in AS_VALUES:
             raise ValueError(f"{at}: as must be 'viewer' or 'shared'")
+        if as_ == "shared" and provider in calls.VIEWER_ONLY:
+            raise ValueError(f"{at}: {provider} calls from a screen use the viewer's own account only, "
+                             "not an agent's shared one")
         agent = entry.get("agent")
         if as_ == "viewer":
             if agent not in (None, ""):
@@ -296,11 +318,17 @@ def allows(declared: list[dict], provider: str, as_: str, agent_slug: str | None
                   and e.get("as") == as_ and e.get("agent") == wanted_agent), None)
     if entry is None:
         return False
-    segments = match_result.path.split("/")
+    # A query's next page is covered by the query: what the screen declared is the `GET query`.
+    segments = (rule.declared_as or match_result.path).split("/")
     for line in entry.get("writes" if rule.kind == "write" else "reads") or []:
         if line.get("method") != rule.method:
             continue
         want = str(line.get("path")).split("/")
-        if len(want) == len(segments) and all(w in ("*", s) for w, s in zip(want, segments)):
+        if len(want) == len(segments) and all(_line_fits(w, s) for w, s in zip(want, segments)):
             return True
     return False
+
+
+def _line_fits(want: str, seg: str) -> bool:
+    """One declared segment against one called: `*` is any one, `*:verb` any one ending in `:verb`."""
+    return want in ("*", seg) or (want.startswith("*:") and seg.endswith(want[1:]) and len(seg) > len(want) - 1)

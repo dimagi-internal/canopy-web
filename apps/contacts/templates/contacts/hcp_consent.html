@@ -18,6 +18,12 @@
       {% endfor %}
       </tbody>
     </table>
+    <p class="muted">Anything it reads may be used for at most {{ copy_hours }} hour{{ copy_hours|pluralize }} before it must ask again, and stops being usable at once if you revoke this.</p>
+    {% if excluded %}<p class="muted"><strong>Left out by your standing rules:</strong> {{ excluded|join:", " }}.</p>{% endif %}
+    <p><strong>What it may use it for:</strong></p>
+    <ul class="notes">
+      {% for pu in purposes %}<li>{{ pu.description }}</li>{% endfor %}
+    </ul>
     <ul class="notes">
       {% for n in settings_notes %}<li>{{ n }}</li>{% endfor %}
     </ul>

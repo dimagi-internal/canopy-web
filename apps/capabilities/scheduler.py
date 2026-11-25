@@ -10,7 +10,7 @@ fails), so N tasks still sweep about once per interval.
 
 Why not an ECS scheduled task: a Fargate run-task of this image takes about a
 minute to start, every interval, to do a second of work; the web task is always
-up (DesiredCount 1, a rolling deploy keeps one healthy). The stack's own
+up (Application Auto Scaling keeps at least MinTasks, a rolling deploy keeps them healthy). The stack's own
 backstop Lambda covers the case this cannot — canopy-web not running at all.
 """
 from __future__ import annotations

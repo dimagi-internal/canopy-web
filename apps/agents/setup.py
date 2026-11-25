@@ -309,6 +309,13 @@ def _checkout(slug: str) -> str:
 def _job(agent: Agent) -> dict:
     custom = set(agent.skills.values_list("name", flat=True)) - scaffold_skill_names()
     folder = _checkout(agent.slug)
+    if agent.is_stored:
+        return _step(
+            "job", "Give it a job", DONE if custom else TODO,
+            f"Skills: {', '.join(sorted(custom))}." if custom else
+            "A persona and its first real skill. Edit its definition (persona.md, skills/) and "
+            "publish the draft.",
+            href=f"/w/{agent.workspace_id}/agents/{agent.slug}/definition", action="Edit its definition")
     command = (
         f"git clone {agent.repo_url} {folder} && cd {folder} && claude \"Continue "
         f"/canopy:create-agent for {agent.slug} at Step 4's `job` step: fill in persona.md "
@@ -350,6 +357,21 @@ def setup_steps(agent: Agent, *, viewer_is_admin: bool = False, vault_state: dic
     vault = [_vault(agent, settings, vault_state, facts), *[s for s in [_canopy_login(agent, settings)] if s]]
     # The vault comes first: Google's token is sealed to whoever can open it, and with
     # no one the mint fails with `zk-no-recipients`.
+    if agent.is_stored:
+        # No repository and no GitHub identity: canopy keeps the definition, runners
+        # materialize it, and it changes by a draft a person publishes.
+        live = agent.live_revision
+        return [
+            _step("definition", "Its definition is stored in canopy", DONE if live else TODO,
+                  f"Revision {live.number} is live; its runners materialize it." if live else
+                  "It has no published revision yet.",
+                  href=f"{base}/definition", action="Open its definition"),
+            *vault,
+            mailbox,
+            _runner(agent, settings, viewer_is_admin, facts),
+            _job(agent),
+            _first_turn(agent, base),
+        ]
     return [
         _step("repo", "Give it a repository", DONE if agent.repo_url else TODO,
               f"Code lives in {repo or agent.repo_url}." if agent.repo_url else

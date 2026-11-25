@@ -59,11 +59,12 @@ def _display_name(user) -> str:
     return (user.get_full_name() or "").strip() or user.email
 
 
-# The sources a PERSON types into a chat from. Everything else that lands on a
+# The sources a PERSON types into a chat from (`site_message`: on a host's own
+# channel, relayed). Everything else that lands on a
 # chat session is a program speaking: an email turn (bound to its thread's
 # session by `email_thread_session`, prompt `/echo:turn --thread …`), a
 # scheduled turn, an MCP/API caller, a transfer preamble.
-_CHAT_ORIGINS = frozenset({"canopy_web_chat", "slack", "ace_web"})
+_CHAT_ORIGINS = frozenset({"canopy_web_chat", "slack", "ace_web", "site_message"})
 # `send_message` keys every send `chat:<session>:<client_id|index|nonce>`; a
 # transfer (`transfer:…`) or any other enqueue on the session does not.
 _SEND_KEY_PREFIX = "chat:"

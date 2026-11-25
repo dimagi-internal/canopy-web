@@ -4,7 +4,7 @@ import { AgentSecretsPanel } from '@/pages/agents/AgentSecretsPanel'
 import { AgentSecurityPanel } from '@/pages/agents/AgentSecurityPanel'
 import { Section } from '@/components/objectPage/settingsLayout'
 
-// Security: its vault (secrets, who can open them, storage and key), then its canopy login.
+// Security: its vault (secrets, who can open them, storage and key) and its canopy login.
 
 export function SecurityTab({ agent, isAdmin }: { agent: AgentOutletContext['agent']; isAdmin: boolean }) {
   // A counter the canopy login bumps so the vault's table re-reads.

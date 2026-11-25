@@ -1,5 +1,7 @@
-import { useEffect, useState, type JSX, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type JSX, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { Button } from 'canopy-ui/ui'
+import { scopedPath } from '@/lib/scopedLinks'
 import { type ProjectDetail, type ProjectPatch } from '@/api/work'
 import { PriorityPicker } from '@/components/work/bits'
 import { PROJECT_STATUSES, displayAgent, priorityLabel } from '@/components/work/meta'
@@ -14,20 +16,32 @@ import {
 import { useDirectory } from '@/components/work/useDirectory'
 import { ProjectKbLink, ProjectMcpInstall } from '@/pages/projects/WorkspaceProjects'
 
+type ProjectLink = NonNullable<ProjectDetail['links']>[number]
+
+/** The project's main screen: its one `primary` link, a page of its own workspace. */
+export function primaryLink(detail: Pick<ProjectDetail, 'links'>): ProjectLink | null {
+  return (detail.links ?? []).find((l) => l.kind === 'primary') ?? null
+}
+
 export function PropertyHeader({
   detail,
   workspace,
   onSave,
+  actions,
 }: {
   detail: ProjectDetail
   workspace: string
   onSave: (body: ProjectPatch) => Promise<void>
+  /** The page's own buttons under the name (its main screen, Add…). */
+  actions?: ReactNode
 }): JSX.Element {
   const editable = detail.may_edit
   const directory = useDirectory(workspace)
   const lead = detail.agent_slug || detail.steward_slug || ''
   const members = detail.member_agents ?? []
-  const links = detail.links ?? []
+  const links = (detail.links ?? []).filter((l) => l.kind !== 'primary')
+  // On a phone the property grid folds behind one button; from sm up it is always open.
+  const [details, setDetails] = useState(false)
   return (
     <header className="mb-8 mt-3 border-b border-border pb-5" data-testid="project-header">
       <EditableText
@@ -43,7 +57,20 @@ export function PropertyHeader({
           Only its lead and the agents on it can see this project.
         </p>
       )}
-      <dl className="mt-3 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-[13px] sm:grid-cols-[7rem_1fr_7rem_1fr]" data-testid="project-properties">
+      {actions}
+      <button
+        type="button"
+        aria-expanded={details}
+        onClick={() => setDetails((on) => !on)}
+        className="mt-3 text-[12px] text-muted-foreground hover:text-foreground sm:hidden"
+        data-testid="project-details-toggle"
+      >
+        {details ? 'Hide details' : 'Status, lead and dates'}
+      </button>
+      <dl
+        className={`mt-3 ${details ? 'grid' : 'hidden'} grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-[13px] sm:grid sm:grid-cols-[7rem_1fr_7rem_1fr]`}
+        data-testid="project-properties"
+      >
         <Prop label="Status">
           <StatusControl detail={detail} onChange={(status) => void onSave({ status })} />
         </Prop>
@@ -77,6 +104,17 @@ export function PropertyHeader({
         <Prop label="Target">
           <DateField label="Target date" value={detail.target_date} disabled={!editable} onChange={(target_date) => void onSave({ target_date })} />
         </Prop>
+        {editable && (
+          <Prop label="Main screen">
+            <PrimaryScreenField
+              workspace={workspace}
+              current={primaryLink(detail)}
+              onSave={(link) =>
+                void onSave({ links: [...(detail.links ?? []).filter((l) => l.kind !== 'primary'), ...(link ? [link] : [])] })
+              }
+            />
+          </Prop>
+        )}
       </dl>
       <div className="mt-3">
         {editable ? (
@@ -246,5 +284,68 @@ function EditableText({
         className={field}
       />
     </h1>
+  )
+}
+
+/** Set, change or clear the project's main screen: a name and a page of this workspace. */
+function PrimaryScreenField({
+  workspace,
+  current,
+  onSave,
+}: {
+  workspace: string
+  current: ProjectLink | null
+  onSave: (link: ProjectLink | null) => void
+}): JSX.Element {
+  const [editing, setEditing] = useState(false)
+  const [label, setLabel] = useState(current?.label ?? '')
+  const prefix = scopedPath(workspace, '/')
+  const [url, setUrl] = useState(current?.url ?? prefix)
+  const valid = label.trim() && url.trim().startsWith(prefix) && url.trim().length > prefix.length
+  if (!editing) {
+    return (
+      <span className="flex min-w-0 items-center gap-2">
+        {current ? (
+          <span className="truncate text-foreground-secondary" title={current.url}>
+            {current.label} <span className="font-mono text-[11.5px] text-muted-foreground">{current.url}</span>
+          </span>
+        ) : (
+          <span className="text-foreground-subtle">None</span>
+        )}
+        <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setEditing(true)}>
+          {current ? 'Change' : 'Set'}
+        </button>
+        {current && (
+          <button type="button" className="text-[12px] text-muted-foreground hover:text-foreground" onClick={() => onSave(null)}>
+            Clear
+          </button>
+        )}
+      </span>
+    )
+  }
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!valid) return
+    onSave({ label: label.trim(), url: url.trim(), kind: 'primary', waiting_on: '' })
+    setEditing(false)
+  }
+  const field = 'rounded border border-input bg-input px-1.5 py-0.5 text-[12px] text-foreground placeholder:text-placeholder'
+  return (
+    <form onSubmit={submit} className="flex flex-wrap items-center gap-1.5" data-testid="primary-screen-form">
+      <input aria-label="Main screen name" placeholder="Home" value={label} onChange={(e) => setLabel(e.target.value)} className={`${field} w-24`} />
+      <input
+        aria-label="Main screen page"
+        placeholder={`${prefix}apps/…`}
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        className={`${field} w-56 font-mono`}
+      />
+      <Button size="xs" type="submit" disabled={!valid}>
+        Save
+      </Button>
+      <Button size="xs" variant="ghost" type="button" onClick={() => setEditing(false)}>
+        Cancel
+      </Button>
+    </form>
   )
 }

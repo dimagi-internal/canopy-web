@@ -31,9 +31,12 @@ beforeEach(() => {
   FakeSocket.opened = []
   vi.stubGlobal('WebSocket', FakeSocket)
   vi.useFakeTimers()
+  // The middle of the ±50% jitter band: each wait is exactly its ladder step.
+  vi.spyOn(Math, 'random').mockReturnValue(0.5)
 })
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 

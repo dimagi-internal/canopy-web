@@ -65,6 +65,24 @@ key outside that file — that pair is the signature of an access decision.
   `/w/<workspace>/`; a row with no workspace has no address.
 - Pinned by `tests/test_nothing_outside_a_workspace.py`.
 
+## A reference to another workspace's object reaches nothing
+
+A route's gate asks about the workspace the caller is in; the object a body, path or query
+names can be in another one. A project address, a parent task key, a share's owner, a run id
+or a narrative slug (free text any uploader picks) each crossed a tenant once. So a route
+looks up what it is handed inside the caller's scope, or asks the gate again of the object's
+own workspace (`apps/agents/services/tasks.py::_may_work_in`), and a free-text grouping
+(`apps/runs/aggregate.py::EVERY_WORKSPACE`) always takes the caller's scope as a required argument.
+A timeline source takes the scope the same way (`apps/timeline/sources.py::_call_source`).
+
+`tests/test_two_tenant_isolation.py` tries the attack on every operation in the OpenAPI
+schema: two mirrored tenants in different organisations (`tests/fixtures/two_tenant_world.py`),
+a member of A only, and each reference parameter in turn swapped to B's twin. Nothing of B may
+come back (every B row carries a canary) and no row of B, or row pointing at B, may change. A
+new route is swept by default. An operation that is cross-workspace on purpose goes in
+`CROSS_WORKSPACE_BY_DESIGN` with why; `MUST_REACH` and `MIN_REACHED` fail the build when the
+sweep's own requests stop reaching the routes they are meant to test.
+
 ## Runners and tenancy
 
 A runner's tenant is its pairing owner's workspaces it is enrolled in, never
@@ -126,7 +144,12 @@ failure again.
 
 - **Sign-in:** Google OAuth via django-allauth, restricted to `AUTH_ALLOWED_EMAIL_DOMAIN`
   (`config/settings/base.py`; the deployed value is in `deploy/aws/canopy-web.cfn.yaml`).
-  A new login domain also needs the Google consent screen to allow it.
+  A new login domain also needs the Google consent screen to allow it. An allowlisted
+  address counts only when Google marks it verified AND the account is a Google Workspace
+  account of an allowlisted domain (its `hd` claim), so a consumer Google account made for
+  an allowlisted address is refused; an agent's own Google account signs in as the agent's
+  login, with its normal permissions (`apps/common/auth_adapter.py::CustomSocialAccountAdapter.pre_social_login`,
+  [access.md](access.md) § Browser sign-in for an agent).
 - **Personal access tokens** (`apps/tokens/`) authenticate machine callers with
   `Authorization: Bearer <raw>`; `apps.tokens.middleware.BearerTokenAuthMiddleware` resolves
   them after `AuthenticationMiddleware` and before `LoginRequiredMiddleware`. An MCP OAuth
@@ -134,6 +157,12 @@ failure again.
   visitor who has an account) resolves to a `User`; every surface applies that user's ACL.
   A token acts with exactly its person's role (`roles.md` → "A token can do whatever its
   person can").
+- **No stored password signs anyone in.** allauth's password form refuses
+  (`auth_adapter.CustomAccountAdapter.authenticate`), and `/admin/` has no login form: it opens
+  only to an active staff user's browser session, never a token or a token-minted session
+  (`apps/common/admin_access.py`). The passkey relying party is pinned to `canopy.dimagi.com`
+  in production (`config/settings/production.py`; `PASSKEY_RP_ID` / `PASSKEY_ORIGINS`
+  override), never the request's Host.
 - **One resolver, and a prefix per kind.** REST, MCP and the WebSocket handshake all resolve a
   bearer with `apps/tokens/principal.py::resolve_bearer`. Tokens name their kind by prefix (each model's `PREFIX`, listed in
   `apps/tokens/principal.py`). A prefixed token is looked up in its own table only, and refused

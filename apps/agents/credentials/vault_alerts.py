@@ -30,7 +30,13 @@ request: an email and a Web Push, each linking to the agent's Credentials.
 * `device-proof` — a resolve refused for a bad or missing device proof. NOT a
   good proof from an approved box that does not run the agent: that is routing,
   recorded as an `agent.credentials.refused` event with no alert
-  (`unrouted_box_refused`).
+  (`unrouted_box_refused`) — nor the caller's OWN machine whose key is
+  enrolled and waiting for them to approve it (`pending_key_refused`: only they can
+  approve it, and they were already emailed the link).
+* `zk-wrap-missing` — an approved machine with no copy of the vault key. Told to
+  whoever can end the wait (`zk.wrap_route`): nobody while a keeper is about to grant
+  an endorsed machine (`wrap_waiting_for_keeper`, an event), the machine's own person
+  when they can Confirm access, and only otherwise the owner.
 
 Debounced to one alert per kind per agent per hour: a repeat inside the hour
 bumps the open alert's `occurrences` and tells no one again. One RUNNER fault
@@ -175,6 +181,52 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
         logger.exception("unrouted-box event failed for %s", agent.slug)
 
 
+def pending_key_refused(agent, request, *, key) -> None:
+    """A resolve refused because the proof is the CALLER'S OWN machine's key, registered
+    but not yet approved — a person's first session on a new laptop, typically seconds
+    after it enrolled. An event, never an owner alert: nothing was handed out, the
+    caller is the only one who may approve it (`runners.may_trust_device_keys`), and
+    registering it already emailed them the approve link. A key that stays pending
+    keeps showing on the event's count."""
+    try:
+        runner = key.runner
+        events.record([{
+            "source": "agents.credentials",
+            "kind": "agent.credentials.refused",
+            "level": "info",
+            "key": f"{agent.slug}:pending:{key.pk}",
+            "summary": (f"{runner.name} asked for {agent.slug}'s secrets before {_who(request.user)} "
+                        "approved its device key; refused, nothing handed out")[:300],
+            "payload": {"agent": agent.slug, "runner": str(runner.pk), "runner_name": runner.name,
+                        "device_key": str(key.pk), "user": _who(request.user),
+                        "reason": "key_pending"},
+        }], workspace=agent.workspace)
+    except Exception:  # noqa: BLE001 - must not turn a 401 into a 500
+        logger.exception("pending-key event failed for %s", agent.slug)
+
+
+def wrap_waiting_for_keeper(agent, request, *, device_key) -> None:
+    """A resolve refused because the machine, endorsed for this agent, has no copy of the
+    vault key YET: a keeper grants it within minutes, with nobody asked
+    (`zk.wrap_route`). An event, never an alert; one a keeper sits on past
+    `zk.KEEPER_GRACE` is routed to the owner instead."""
+    try:
+        runner = device_key.runner
+        events.record([{
+            "source": "agents.credentials",
+            "kind": "agent.credentials.refused",
+            "level": "info",
+            "key": f"{agent.slug}:wrap-pending:{device_key.pk}",
+            "summary": (f"{runner.name} asked for {agent.slug}'s secrets before a keeper gave it the "
+                        "vault key; refused, nothing handed out")[:300],
+            "payload": {"agent": agent.slug, "runner": str(runner.pk), "runner_name": runner.name,
+                        "device_key": str(device_key.pk), "user": _who(request.user),
+                        "reason": "wrap_pending_keeper"},
+        }], workspace=agent.workspace)
+    except Exception:  # noqa: BLE001 - must not turn a 409 into a 500
+        logger.exception("wrap-pending event failed for %s", agent.slug)
+
+
 def _count_read(agent) -> int:
     """This resolve's place in the agent's current 5-minute window."""
     window = int(timezone.now().timestamp() // BURST_WINDOW_S)
@@ -192,18 +244,24 @@ MAX_REPEATS = 20
 
 
 def raise_alert(agent, kind: str, *, detail: str, refs=(), user=None, runner=None,
-                turn_id: str = "", request=None):
+                turn_id: str = "", request=None, route: str = "", recipients_override=None):
     """Record (and, unless one of this kind is open this hour, notify) an alert.
     Returns the new row, or None when it only counted against an open one.
 
     With `request`, who asked is kept (`request_context`) — on the row the first time,
-    and appended to `repeats` for each repeat the debounce swallows."""
+    and appended to `repeats` for each repeat the debounce swallows.
+
+    `route` names who can act on it (kept in `context["route"]`, choosing the
+    explanation); `recipients_override` emails those people instead of the owner — the
+    person who can end a wait, when it is not the owner (`zk.wrap_route`)."""
 
     now = timezone.now()
     context = request_context(request, turn_id) if request is not None else {}
     software = runner_software(runner)
     if software:
         context["software"] = software
+    if route:
+        context["route"] = route
     with transaction.atomic():
         # Serialise per agent so two concurrent reads cannot both open an alert.
         Agent.objects.select_for_update().filter(pk=agent.pk).first()
@@ -222,7 +280,7 @@ def raise_alert(agent, kind: str, *, detail: str, refs=(), user=None, runner=Non
             user=user if getattr(user, "is_authenticated", False) else None,
             runner=runner, turn_id=(turn_id or "")[:120], context=context,
         )
-    alert.notified = _notify(agent, alert)
+    alert.notified = _notify(agent, alert, to=recipients_override)
     AgentCredentialAlert.objects.filter(pk=alert.pk).update(notified=alert.notified)
     _record_event(agent, alert)
     return alert
@@ -333,7 +391,8 @@ def turn_summary(turn_id: str) -> dict:
 
 #: A turn's origin in an owner's words, not the enum.
 _ORIGIN_WORDS = {"canopy_web_chat": "Canopy chat", "slack": "Slack", "email": "email",
-                 "canopy_scheduler": "scheduled", "api": "API"}
+                 "canopy_scheduler": "scheduled", "api": "API",
+                 "site_message": "a host site's message"}
 
 
 def context_lines(context: dict) -> list[str]:
@@ -446,18 +505,27 @@ _WHY = {
                             "the turn above or the runner is not yours. Every alert like "
                             "this, with each repeat and the turn it came from, is at the "
                             "second link below."),
-    "zk-wrap-missing": ("Nothing is wrong or unsafe. Approving a machine lets it identify itself; "
-                        "it does not hand it the agent's secrets. An admin of the agent does "
-                        "that separately, once per machine. Open the link, find the machine "
-                        "under the agent's approved machines, choose Grant, and confirm with "
-                        "your passkey. Until then, every turn that machine runs for this "
-                        "agent fails on its first secret read. The person named above "
-                        "has no way to fix this themselves."),
+    "zk-wrap-missing": ("You need to act: only an admin of the agent can reach this machine. "
+                        "Approving a machine lets it identify itself; it does not hand it the "
+                        "agent's secrets. Open the link, find the machine under the agent's "
+                        "approved machines, choose Give access, and confirm with your passkey. "
+                        "Until then, every turn that machine runs for this agent fails on its "
+                        "first secret read. (A machine whose own person can confirm it, or one a "
+                        "keeper is about to grant, is never emailed to you.)"),
+    # The person the machine works for holds a vault key, so they end the wait.
+    "zk-wrap-missing:person": ("You need to act, once for this machine: it is approved but has not "
+                               "been given the agent's vault key. On canopy-web open Settings \u2192 "
+                               "Your runners, find this machine and choose Confirm access (your "
+                               "passkey). A keeper then gives it the key within minutes, and the "
+                               "agent's turns on it work."),
 }
 
 
 def _why(alert) -> str:
-    """The explanation for `alert`: its kind's, or the runner-token variant of it."""
+    """The explanation for `alert`: its kind's, or its route's / the runner-token variant."""
+    route = (alert.context or {}).get("route")
+    if route and _WHY.get(f"{alert.kind}:{route}"):
+        return _WHY[f"{alert.kind}:{route}"]
     if (alert.context or {}).get("via") == RUNNER_TOKEN:
         runner_why = _WHY.get(f"{alert.kind}:runner")
         if runner_why:
@@ -487,7 +555,7 @@ def _already_told(agent, alert) -> dict[str, str]:
     return told
 
 
-def _notify(agent, alert) -> dict:
+def _notify(agent, alert, to=None) -> dict:
     """Email + Web Push to each recipient, except anyone `_already_told` about this
     runner's fault this hour. Never raises."""
     from django.core.mail import EmailMultiAlternatives
@@ -524,9 +592,17 @@ def _notify(agent, alert) -> dict:
                 f"on the same runner within the hour are listed on their own alert pages, "
                 f"not emailed again. You are getting this because you own "
                 f"{escape(agent.slug)} on Canopy.</p>")
+        if to is not None:
+            # Told because they can act, not because they own the agent.
+            mine = f"You are getting this because you own {agent.slug} on Canopy."
+            why_you = ("You are getting this because the machine is yours and only you can confirm "
+                       f"it; {agent.slug}'s owner is not emailed.")
+            text = text.replace(mine, why_you)
+            html = html.replace(f"You are getting this because you own {escape(agent.slug)} on Canopy.",
+                                escape(why_you))
         rel = link.split("://", 1)[-1]
         rel = rel[rel.find("/"):] if "/" in rel else "/"
-        for person in recipients(agent):
+        for person in (to if to is not None else recipients(agent)):
             if person.email in told:
                 result["already_told"][person.email] = told[person.email]
                 continue

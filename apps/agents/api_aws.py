@@ -1,16 +1,18 @@
-"""`POST /api/agents/{slug}/aws-credentials` — one hour of a NAMED AWS role, as the agent.
+"""`POST /api/agents/{slug}/aws-credentials` — at most an hour of a NAMED AWS role, as the agent.
 
 Why. An agent turn that needs labs telemetry (CloudWatch metrics, alarm history, ECS
-service state) used to need the `labs` SSO profile: AdministratorAccess, renewed by a
+service state) would otherwise need the `labs` SSO profile: AdministratorAccess, renewed by a
 person approving a device code on their phone (`canopy aws login`). A turn on a laptop
-or a cloud runner can now ask canopy-web instead, for a role that can read only
-NON-SENSITIVE things — `labs-read` (old name `labs-observe`) is
-`labs-jj-observe-readonly` (connect-labs `infra/labs-observe-readonly.yml`): metrics,
-alarms, resource and RDS metadata, with explicit denies on log events, object bodies,
-secrets, task commands and environments, and database content. An agent that must
-CHANGE labs asks for `labs-readwrite` = `labs-jj-agent-readwrite`
-(`infra/labs-agent-readwrite.yml`): agent-named RDS copies of production and one psql
-client task, production source-only, IAM changes denied.
+or a cloud runner asks canopy-web instead, for a role that can do one bounded thing. What
+each role can do is one line in `settings.CANOPY_AWS_ROLE_SUMMARIES`, the line an approver
+reads: `labs-read` (alias `labs-observe`) is `labs-jj-observe-readonly` (connect-labs
+`infra/labs-observe-readonly.yml`): AWS ReadOnlyAccess (raw logs, objects, task definitions,
+CloudTrail) with denies on secret values, KMS decrypt and exec; `labs-readwrite` is
+`labs-jj-agent-readwrite` (`infra/labs-agent-readwrite.yml`): AdministratorAccess minus
+guardrails (no org/SSO/IAM-user changes, no edits to the access roles, no audit tampering,
+production database and backups not deletable); `labs-config` is `labs-jj-agent-config`
+(`infra/labs-agent-config.yml`): create and update the labs app secrets named `labs-jj-app-*`,
+never read a value, no deletes, no IAM.
 
 How. canopy-web's own task role (`canopy-web-task-role`) calls `sts:AssumeRole` on the
 role, stamping the agent onto the session — `SourceIdentity=canopy-agent-<slug>` (sticky,
@@ -22,10 +24,35 @@ Which roles. Only the names in `settings.CANOPY_AWS_ROLES` (name -> role ARN). A
 not there is a 404: this is not a general assume-role service, and adding a role is a
 settings change a person reviews. The role's own trust policy must also name
 canopy-web-task-role, so canopy-web cannot vend a role its owner did not agree to.
-A role in `settings.CANOPY_AWS_ROLE_AGENTS` goes only to the agents listed there
-(`labs-readwrite`): a 403 names who may have it. canopy-web is the ONLY source of a
-listed role; a cloud runner's box broker never vends one, because it cannot verify
-which agent is asking.
+
+Fenced roles are requested when needed and approved by a person. A role named in
+`settings.CANOPY_AWS_ROLE_AGENTS` is fenced, and every role is. The agents listed beside a
+role get it with no approval (labs-read: the devops agents, Ada and Hal; the write roles: none);
+any other agent gets it only while it holds a LIVE GRANT (`AgentAwsRoleRequest`,
+`apps/agents/aws_grants.py`):
+
+1. The agent (its own login or turn, or a member who may work it) asks:
+   `POST /api/agents/{slug}/aws-role-requests {role, reason, minutes}` (15 to 480 minutes,
+   default 60; `apps/approvals/api_aws_roles.py`, `canopy aws request`). An agent standing for
+   the role is refused there, since it needs no approval.
+2. That files an approval of kind `agent.aws_role` (`apps/approvals/kinds/agent_aws_role.py`,
+   `step_up`): its preview names the agent, the role and its ARN, the role's summary line and
+   the duration, beside the reason as the requester's own words. It waits 24 hours.
+3. An OWNER of the agent's workspace or a canopy SUPERUSER approves it on the approval's page,
+   with a passkey. Never an agent — not the one asking, not another — and an agent's own admins
+   are not enough: these are AWS account rights. Approving makes the grant, which ends `minutes`
+   after the approval (`expires_at`).
+4. Here, a fenced role is vended to a non-listed agent only under a live grant, and the STS
+   session lasts the grant's remaining time, at most an hour (STS's limit for a chained role)
+   and never past the grant. Under 15 minutes left (STS's shortest session) counts as no grant.
+   Without one the answer is 403 with
+   `{"error": "approval_required", "request_with": "POST /api/agents/<slug>/aws-role-requests"}`.
+5. `DELETE /api/agents/{slug}/aws-role-requests/{id}` revokes a grant at once — by the person
+   who approved it, a workspace owner or a superuser — or withdraws a pending request (also by
+   whoever asked). Keys already handed out last until their own expiry.
+
+canopy-web is the ONLY source of every role; a cloud runner's box broker vends none, because it
+cannot verify which agent is asking and so cannot honour an approval.
 
 Who. The agent's own canopy login (what a turn and a laptop agent session hold), or a
 member who may work the agent (`agent.work`), with a TOKEN: a browser session is refused,
@@ -41,6 +68,7 @@ import re
 
 from django.conf import settings
 from django.http import HttpRequest
+from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
@@ -50,6 +78,7 @@ from apps.api.route_gates import gate
 from apps.events import services as events
 from apps.passkeys import stepup
 
+from . import aws_grants
 from .gates import agent_for_work
 
 logger = logging.getLogger(__name__)
@@ -58,6 +87,8 @@ router = Router(auth=session_auth, tags=["agents"])
 
 #: STS's own limit for a role-chained session, and the role's MaxSessionDuration.
 SESSION_SECONDS = 3600
+#: STS's shortest session: a grant with less left than this vends nothing.
+MIN_SESSION_SECONDS = 900
 _STS_NAME = re.compile(r"[^\w+=,.@-]")
 
 
@@ -92,17 +123,18 @@ def _sts_name(text: str) -> str:
 
 
 @router.post("/{slug}/aws-credentials", response=AwsCredentialsOut,
-             summary="One hour of a named AWS role, as this agent")
+             summary="At most an hour of a named AWS role, as this agent")
 # the agent's own login, or agent.work — with a token; a browser session is refused
 @gate("agent.work", "agent-login", kind="ephemeral-credential",
       step_up="token callers only: a browser session is refused, the keys go to a CLI's cache")
 def agent_aws_credentials(request: HttpRequest, slug: str, payload: AwsCredentialsIn) -> AwsCredentialsOut:
-    """Short-lived AWS keys for ONE role named in canopy-web's settings
-    (`labs-read` = read-only, non-sensitive labs observability; `labs-readwrite` =
-    agent-named RDS copies and a psql client task, for listed agents only), with the
-    agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). 404 for a role
-    name canopy-web does not vend; 403 for a browser session or an agent the role is
-    not for; 502 when AWS refused."""
+    """Short-lived AWS keys for ONE role named in canopy-web's settings (`labs-read` = read-only,
+    `labs-readwrite` = admin minus guardrails, `labs-config` = app secrets; all fenced), with
+    the agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). A fenced role goes to
+    the agents listed for it, and to another agent only while it holds a live grant a person
+    approved (`POST /api/agents/{slug}/aws-role-requests`), for at most the grant's remaining time.
+    404 for a role name canopy-web does not vend; 403 for a browser session, or `approval_required`
+    (with `request_with`) for a fenced role and no live grant; 502 when AWS refused."""
     agent = agent_for_work(request, slug, allow_own_login=True,
                            forbidden=f"AWS credentials for {slug} need the editor role or above, "
                                      "or the agent's own login")
@@ -115,16 +147,28 @@ def agent_aws_credentials(request: HttpRequest, slug: str, payload: AwsCredentia
     if not role_arn:
         raise HttpError(404, f"canopy does not vend an AWS role named '{payload.role}'"
                              + (f" (it vends: {', '.join(sorted(roles))})" if roles else ""))
-    only = (getattr(settings, "CANOPY_AWS_ROLE_AGENTS", {}) or {}).get(payload.role)
+    duration, grant = SESSION_SECONDS, None
+    only = aws_grants.standing(payload.role)
     if only is not None and agent.slug not in only:
-        raise ProblemError(403, "This AWS role is not for this agent",
-                           detail=f"canopy vends {payload.role} only to: {', '.join(sorted(only)) or 'nobody'}")
+        grant = aws_grants.live_grant(agent, payload.role)
+        left = int((grant.expires_at - timezone.now()).total_seconds()) if grant else 0
+        if left < MIN_SESSION_SECONDS:
+            request_with = f"POST /api/agents/{agent.slug}/aws-role-requests"
+            raise ProblemError(
+                403, "This AWS role needs a person's approval",
+                detail=(f"{agent.slug} holds no live grant for {payload.role}"
+                        + (" (the grant ends in under 15 minutes)" if grant else "")
+                        + f". Ask with {request_with} {{role, reason, minutes}} (canopy aws request "
+                        f"--role {payload.role} --reason ...); an owner of {agent.workspace_id} approves it "
+                        "with a passkey."),
+                members={"error": "approval_required", "request_with": request_with})
+        duration = min(SESSION_SECONDS, left)
     caller = "agent-login" if agent.is_own_login(request.user) else f"user-{request.user.pk}"
     try:
         out = sts_client().assume_role(
             RoleArn=role_arn,
             RoleSessionName=_sts_name(f"canopy-{agent.slug}"),
-            DurationSeconds=SESSION_SECONDS,
+            DurationSeconds=duration,
             SourceIdentity=_sts_name(f"canopy-agent-{agent.slug}"),
             Tags=[{"Key": "agent", "Value": agent.slug}, {"Key": "caller", "Value": caller}],
         )
@@ -143,9 +187,11 @@ def agent_aws_credentials(request: HttpRequest, slug: str, payload: AwsCredentia
                 "kind": "agent.aws.issued",
                 "level": "info",
                 "key": f"{agent.slug}:{payload.role}",
-                "summary": f"{agent.slug}: one hour of AWS role {payload.role}",
+                "summary": f"{agent.slug}: {duration // 60} minutes of AWS role {payload.role}"
+                           + (f" (grant {grant.pk})" if grant else ""),
                 "payload": {"agent": agent.slug, "role": payload.role, "role_arn": role_arn,
-                            "caller": caller, "expires": str(expiration)},
+                            "caller": caller, "expires": str(expiration), "seconds": duration,
+                            "grant": grant.pk if grant else None},
             }],
             workspace=agent.workspace,
         )

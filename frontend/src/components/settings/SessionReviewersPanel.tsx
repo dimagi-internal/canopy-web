@@ -3,26 +3,30 @@ import { useEffect, useState } from 'react'
 import { addMySessionReviewer, listMySessionReviewers, removeMySessionReviewer } from '@/api/people'
 import type { SessionReviewers as SessionReviewersData } from '@/api/people'
 
-/** The one coach the detailed consent below was checked against. Its weekly limit,
- *  address, record and replies are that agent's own behaviour, so another coach
- *  (`COACHING_AGENT_SLUG`) gets only what canopy-web itself guarantees until its
- *  copy has been checked the same way. */
+/** The one coach whose own behaviour (weekly limit, address, record, replies) the detailed
+ *  consent below was checked against. Any other coach gets only what canopy-web itself
+ *  guarantees until its copy has been checked the same way. */
 const CHECKED_COACH = 'trellis'
 
-type CoachNames = { agent: string; name: string }
+/** True when Trellis is among these coaches, so its checked details apply. */
+export function includesCheckedCoach(slugs: string[]): boolean {
+  return slugs.includes(CHECKED_COACH)
+}
 
-/** The words every coaching opt-in uses, so the first-run checkbox and this
- *  switch promise the same thing. */
-export function coachLabel({ agent, name }: CoachNames): string {
-  if (agent !== CHECKED_COACH) {
-    return `Have ${name} coach me: it reads my canopy sessions, read-only, and my computer uploads them in full so it can. The people who run ${name} can read its working logs. Turn off any time.`
-  }
-  return `Have ${name} coach me: it reads my canopy sessions and emails me short feedback about them. The people who run ${name} can read its working logs, and members of its workspace can read its mail, including notes to me. Turn off any time.`
+/** The words every coaching opt-in uses, so the first-run checkbox and this switch promise the
+ *  same thing. Coaching is canopy's: you opt in to it, not to an agent, and who coaches can change
+ *  (this panel always lists them). */
+export function coachLabel(names: string[], checked: boolean): string {
+  const who = names.length ? names.join(', ') : "canopy's coaches"
+  const base = `Opt in to coaching: ${who} may read my canopy sessions, read-only, and my computer uploads them in full so they can. Who coaches me can change as canopy does, and I can always see the list. The people who run a coach can read its working logs. Turn off any time.`
+  return checked
+    ? `${base} Trellis also emails me short feedback, and members of its workspace can read its mail, including notes to me.`
+    : base
 }
 
 // Each paragraph is a claim about code. What it rests on, so a change to one
 // changes the other:
-// - reads: apps/canopy_sessions/access.py (`_review_grant_q`, `sessions_of_q`), behind the
+// - reads: apps/canopy_sessions/access.py (`_coach_q`, `coach_scope`, `review_grantors`, `sessions_of_q`), behind the
 //   tenant gate on the agent login's memberships (`_visible_slugs`, audience.pieces).
 // - upload: apps/canopy_sessions/coaching.py, apps/harness/api_session_sync.py::list_streams
 //   (active sessions are listed for everyone; no workspace filter on the coached set).
@@ -60,7 +64,7 @@ const CONSENT: { title: string; body: (name: string) => string }[] = [
   {
     title: 'Who else can see it',
     body: (n) =>
-      `Its mail: ${n}'s mailbox is hosted on canopy, and any member of its workspace can open it, so each note and your reply stay there for them to read. Its work log: each time ${n} reads your sessions it is a "turn" on canopy, and these people can open a turn's log: whoever started it, ${n}'s owner and admins, the owners and admins of its workspace, and the owner of the machine that ran it. Anyone that owner made an admin of the machine can read the turn's session. A turn inside a chat is read by that chat's people instead. That log can contain lines quoted from your sessions and the note itself. In manual mode a person who runs ${n} approves a note before it goes. Anyone allowed to edit ${n} can change its instructions, which can change what a later run does with what it reads. Your uploaded sessions follow the rule for all your sessions: people you added and that machine's admins can read them. Each session's "Who can see this" line says who.`,
+      `Its mail: ${n}'s mailbox is hosted on canopy, and any member of its workspace can open it, so each note and your reply stay there for them to read. Its work log: each time ${n} reads your sessions it is a "turn" on canopy, and these people can open a turn's log: whoever started it, ${n}'s owner and admins, the owners and admins of its workspace, and the owner of the machine that ran it. Anyone that owner made an admin of the machine can read the turn's session. A turn inside a chat is read by that chat's people instead. That log can contain lines quoted from your sessions and the note itself. In manual mode a person who runs ${n} approves a note before it goes. Anyone allowed to edit ${n} can change its instructions, which can change what a later run does with what it reads. Any person a workspace owner has designated as a coach for your workspace can also read the sessions the coaches read, directly in canopy and read-only; each session's "Who can see this" line names every coach. Your uploaded sessions follow the rule for all your sessions: people you added and that machine's admins can read them. Each session's "Who can see this" line says who.`,
   },
   {
     title: 'What it keeps',
@@ -82,8 +86,9 @@ const CONSENT_ACTIONS: ((name: string) => string)[] = [
 
 /** "What does this mean?" beside the box. Outside the box's `<label>`, so opening
  *  it never ticks anything. Renders nothing for a coach this copy was not checked for. */
-export function CoachConsentDetails({ agent, name }: CoachNames) {
-  if (agent !== CHECKED_COACH) return null
+export function CoachConsentDetails({ checked }: { checked: boolean }) {
+  if (!checked) return null
+  const name = 'Trellis'
   return (
     <details className="text-xs text-muted-foreground">
       <summary className="cursor-pointer text-foreground-secondary">What does this mean?</summary>
@@ -106,8 +111,7 @@ export function CoachConsentDetails({ agent, name }: CoachNames) {
   )
 }
 
-/** "Who can review your sessions": the coach canopy offers (one switch), and any
- *  other agent you let read your sessions, each with Stop. Read-only grants,
+/** Coaching: one switch, and the list of who coaches you now (what you agree to). Read-only,
  *  enforced by the session ACL (apps/canopy_sessions/access.py, leg 5). */
 export function SessionReviewersPanel() {
   const [data, setData] = useState<SessionReviewersData | null>(null)
@@ -136,53 +140,41 @@ export function SessionReviewersPanel() {
   }
 
   if (!data) return null
-  const coach = data.coach?.member ? data.coach : null
-  const others = data.reviewers.filter((r) => r.agent !== coach?.agent)
-  if (!coach && others.length === 0) return null
+  // Nobody coaches your workspaces and you are not opted in: there is nothing to opt into.
+  if (!data.on && data.coaches.length === 0) return null
+  const checked = includesCheckedCoach(data.coaches.map((c) => c.slug))
   return (
     <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-      <h2 className="text-sm font-semibold text-foreground">Who can review your sessions</h2>
+      <h2 className="text-sm font-semibold text-foreground">Coaching</h2>
       <p className="text-xs text-muted-foreground">
-        An agent you let in reads the chats you start and the sessions on your own runners — never a
-        private (sensitive) one — and changes nothing. Turning it on or off is on your memory audit.
+        Coaches read the chats you start and the sessions on your own runners — never a private
+        (sensitive) one — and change nothing. Turning it on or off is on your memory audit.
       </p>
-      {coach && (
-        <div className="space-y-2">
-          <label className="flex items-start gap-2 text-sm text-foreground">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={coach.on}
-              disabled={busy}
-              onChange={() =>
-                void act(() => (coach.on ? removeMySessionReviewer(coach.agent) : addMySessionReviewer(coach.agent)))
-              }
-            />
-            <span>{coachLabel(coach)}</span>
-          </label>
-          <CoachConsentDetails {...coach} />
+      <div className="space-y-2">
+        <label className="flex items-start gap-2 text-sm text-foreground">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={data.on}
+            disabled={busy}
+            onChange={() => void act(() => (data.on ? removeMySessionReviewer() : addMySessionReviewer()))}
+          />
+          <span>{coachLabel(data.coaches.map((c) => c.name), checked)}</span>
+        </label>
+        <CoachConsentDetails checked={checked} />
+      </div>
+      {data.coaches.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-foreground">Who coaches you now</p>
+          <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
+            {data.coaches.map((c) => (
+              <li key={`${c.kind}:${c.slug || c.name}:${c.workspace}`}>
+                <span className="text-foreground">{c.name}</span>{' '}
+                {c.kind === 'agent' ? 'an agent' : 'a person'} designated for {c.workspace}
+              </li>
+            ))}
+          </ul>
         </div>
-      )}
-      {others.length > 0 && (
-        <ul className="space-y-2">
-          {others.map((r) => (
-            <li key={r.agent} className="flex items-center justify-between gap-3 text-sm">
-              <span>
-                <span className="font-medium text-foreground">{r.name}</span>{' '}
-                <span className="text-xs text-muted-foreground">
-                  since {new Date(r.granted_at).toLocaleDateString()}
-                </span>
-              </span>
-              <button
-                className="text-xs text-destructive hover:underline disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void act(() => removeMySessionReviewer(r.agent))}
-              >
-                Stop
-              </button>
-            </li>
-          ))}
-        </ul>
       )}
       {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
     </div>

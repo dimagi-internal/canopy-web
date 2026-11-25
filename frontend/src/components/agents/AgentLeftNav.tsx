@@ -41,6 +41,8 @@ export function AgentLeftNav({ agent, waiting }: { agent: AgentDetailOut; waitin
     // Cloud machines and pools it may lease, and the workspace admin's grant
     // of each — its own entry so the grant has a URL to send an admin.
     { to: 'capabilities', label: 'Capabilities' },
+    // A stored agent's files live in canopy, not a repo: its definition, drafts and revisions.
+    ...(agent.definition?.source === 'stored' ? [{ to: 'definition', label: 'Definition' }] : []),
     // Last, and its own entry: every control that CONFIGURES the agent — owner,
     // admins, capabilities, turn mode, Slack, runners, credentials. They were
     // sections of Overview, a page named after a dashboard.

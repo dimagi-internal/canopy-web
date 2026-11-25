@@ -147,6 +147,16 @@ def test_the_payload_carries_count_for_the_service_worker_badge(user, sub):
     assert payload["count"] == 3
 
 
+def test_the_payload_carries_kind_only_when_given(user, sub):
+    """`kind="decision"` is what sw-push.js keys on to keep an approval on screen with a
+    "Review & decide" button; every other push leaves it out and looks as it always did."""
+    with patch("apps.push.services._send_one") as send:
+        push_services.send_to_user(user, title="t", body="b", url="/x", kind="decision")
+        push_services.send_to_user(user, title="t", body="b", url="/x")
+    assert send.call_args_list[0][0][1]["kind"] == "decision"
+    assert "kind" not in send.call_args_list[1][0][1]
+
+
 def test_a_user_with_no_subscription_gets_nothing(user):
     with patch("apps.push.services._send_one") as send:
         assert push_services.send_to_user(user, title="t", body="b", url="/") == 0

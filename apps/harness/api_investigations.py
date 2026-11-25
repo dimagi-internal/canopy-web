@@ -87,8 +87,9 @@ def resolve_failure_investigation(request: HttpRequest, investigation_id: int,
     its alert and notifies nobody. Give `fix_commit` (and `fix_committed_at`) when
     the fix is to the runner code that failed: while a runner it hit does not run
     that commit yet, the alert stays open quietly as pending deploy and closes on
-    its own once the fix is live everywhere it failed. 409 when it is with a
-    person (handed off) and you are the debugger: only a person closes it then."""
+    its own once the fix is live everywhere it failed. One handed to a person
+    may be resolved by the debugger too, once it has checked their fix: say what
+    you checked in `note`."""
     inv = _investigation_or_404(request, investigation_id)
     try:
         return auto_debug.resolve(inv, note=payload.note, by=request.user,

@@ -54,6 +54,33 @@ afterEach(() => {
 const show = (ui: React.ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>)
 
 describe('AlertList', () => {
+  it('draws an approval request apart from alerts: its own chip, mark and a filled Approve', async () => {
+    loadAlerts.mockResolvedValue([
+      alert({}),
+      alert({ id: 2, kind: 'approval_request', severity: 'action', title: 'Add Wouter to dimagi',
+        actions: [
+          { id: 'approve', label: 'Approve', closes: true, href: '' },
+          { id: 'decline', label: 'Decline', closes: true, href: '' },
+          { id: 'open', label: 'Open the whole request', closes: false, href: '/w/dimagi/approvals/2' },
+        ] }),
+    ])
+    show(<AlertList />)
+
+    const [plain, ask] = await screen.findAllByTestId('alert-row')
+    expect(plain.dataset.decision).toBeUndefined()
+    expect(within(plain).getByRole('img', { name: 'blocking' })).toBeTruthy()
+
+    expect(ask.dataset.decision).toBe('true')
+    const row = within(ask)
+    expect(row.getByText('Your decision')).toBeTruthy()
+    expect(row.getByRole('img', { name: 'your decision' })).toBeTruthy()
+    // The buttons are the answer, without the "closes" hint fixes carry.
+    const approve = row.getByRole('button', { name: 'Approve' })
+    expect(approve.className).toContain('bg-primary')
+    expect(row.getByRole('button', { name: 'Decline' }).className).not.toContain('bg-primary')
+    expect(row.queryByText('closes')).toBeNull()
+  })
+
   it('renders one line per alert with closes tags', async () => {
     loadAlerts.mockResolvedValue([
       alert({}),

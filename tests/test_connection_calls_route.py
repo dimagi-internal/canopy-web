@@ -32,6 +32,9 @@ from tests.fixtures.connections import FakeSF, _resp, _stored, _token_body, seal
 
 pytestmark = pytest.mark.django_db
 
+#: What `Answer` sends as `Sforce-Limit-Info`, which comes back to the page as `limits`.
+LIMITS = "api-usage=1/15000"
+
 J = "application/json"
 URL = "/api/connections/salesforce/request"
 CODE = "function View({ canopy }) { return <div/>; }"
@@ -111,7 +114,7 @@ def test_viewer_read_returns_status_and_body(w):
     with FakeSF(), Salesforce(Answer(body={"totalSize": 7})) as sf:
         r = post(w)
     assert r.status_code == 200, r.content
-    assert r.json() == {"status": 200, "body": {"totalSize": 7}}
+    assert r.json() == {"status": 200, "body": {"totalSize": 7}, "limits": LIMITS}
     call = sf.calls[0]
     assert call["method"] == "GET"
     assert call["url"] == f"{INSTANCE}/services/data/v65.0/query?q=SELECT+Id+FROM+Lead"
@@ -131,7 +134,7 @@ def test_salesforce_error_status_passes_through(w):
     with FakeSF(), Salesforce(Answer(status=400, body=refused)):
         r = post(w)
     assert r.status_code == 200
-    assert r.json() == {"status": 400, "body": refused}
+    assert r.json() == {"status": 400, "body": refused, "limits": LIMITS}
 
 
 def test_non_json_answer_is_null_body_and_first_1000_chars(w):
@@ -145,7 +148,7 @@ def test_non_json_answer_is_null_body_and_first_1000_chars(w):
 def test_an_empty_answer_is_null_body_with_no_text(w):
     with FakeSF(), Salesforce(Answer(status=204, raw=b"")):
         r = lead_write(w)
-    assert r.json() == {"status": 204, "body": None}
+    assert r.json() == {"status": 204, "body": None, "limits": LIMITS}
 
 
 # ---- who may call --------------------------------------------------------------------------
@@ -349,9 +352,16 @@ def test_a_method_override_in_the_query_refused(w):
     token.assert_not_called()
 
 
-def test_google_not_supported(w):
-    r = w.client.post("/api/connections/google/request", json.dumps(body_of(w)), content_type=J)
+def test_an_unknown_provider_not_supported(w):
+    r = w.client.post("/api/connections/nope/request", json.dumps(body_of(w)), content_type=J)
     assert r.status_code == 409 and error_of(r) == "provider_not_supported"
+
+
+def test_a_google_call_the_view_did_not_declare(w):
+    # Drive itself is `test_connection_calls_google`; this view declares Salesforce only.
+    r = w.client.post("/api/connections/google/request", json.dumps(body_of(w, path="files", query=None)),
+                      content_type=J)
+    assert r.status_code == 403 and error_of(r) == "not_declared"
 
 
 def _redeclare(world, *reads):
@@ -424,24 +434,13 @@ def test_a_switched_off_app_is_404_even_to_its_manager(w):
 
 # ---- limits ---------------------------------------------------------------------------------
 
-def test_rate_limit_429(w):
-    with mock.patch.object(call_service, "CALLS_PER_MINUTE", 2), \
-            mock.patch.object(server_tokens, "access", return_value=server_tokens.Access(ACCESS, INSTANCE, "d")) as token, \
-            Salesforce() as sf:
-        assert post(w).status_code == 200
-        assert post(w).status_code == 200
-        r = post(w)
-    assert r.status_code == 429 and error_of(r) == "rate_limited"
-    assert "rate-limit" in r.json()["type"]
-    assert r.headers["Retry-After"]
-    assert token.call_count == 2 and len(sf.calls) == 2, "refused before the token is read"
-    assert cache.get(f"connections:calls:{w.person.pk}:salesforce") is not None
-
-
-def test_a_refused_call_spends_no_budget(w):
-    with mock.patch.object(call_service, "CALLS_PER_MINUTE", 1), FakeSF(), Salesforce():
-        assert error_of(post(w, path="limits", query=None)) == "not_declared"
-        assert post(w).status_code == 200
+def test_no_count_of_calls_over_time(w):
+    """How many calls a person makes is the provider's to limit (`test_connection_calls_composite`:
+    Salesforce's 429 is `provider_rate_limited`)."""
+    assert not hasattr(call_service, "CALLS_PER_MINUTE")
+    with mock.patch.object(server_tokens, "access", return_value=server_tokens.Access(ACCESS, INSTANCE, "d")), \
+            Salesforce():
+        assert all(post(w).status_code == 200 for _ in range(5))
 
 
 def test_response_over_5mb_refused(w):
@@ -494,7 +493,7 @@ def test_401_forces_one_refresh_and_retry(w):
     with FakeSF(token=tokens) as fake, Salesforce(Answer(status=401, body=[{"errorCode": "INVALID_SESSION_ID"}]),
                                                   Answer(body={"totalSize": 2})) as sf:
         r = post(w)
-    assert r.status_code == 200 and r.json() == {"status": 200, "body": {"totalSize": 2}}
+    assert r.status_code == 200 and r.json() == {"status": 200, "body": {"totalSize": 2}, "limits": LIMITS}
     assert len(fake.token_calls()) == 2
     assert [sf.bearer(0), sf.bearer(1)] == [f"Bearer {ACCESS}", "Bearer 00D!access_2"]
     # And the next call uses the new token without another refresh.
@@ -670,7 +669,7 @@ def test_a_token_another_request_refreshed_is_not_expired(w):
 
     with FakeSF(token=tokens) as fake, Salesforce(another_request_refreshes, Answer(body={"ok": True})) as sf:
         r = post(w)
-    assert r.json() == {"status": 200, "body": {"ok": True}}
+    assert r.json() == {"status": 200, "body": {"ok": True}, "limits": LIMITS}
     assert sf.bearer(1) == "Bearer 00D!access_2"
     assert len(fake.token_calls()) == 2, "no refresh of its own"
     w.conn.refresh_from_db()
@@ -832,3 +831,51 @@ def test_the_provider_call_holds_no_transaction(key):
     with FakeSF(), Salesforce() as sf:
         assert post(world).status_code == 200
     assert sf.in_atomic == [False]
+
+
+# ---- "Create anyway": allow_duplicates ---------------------------------------------------
+# canopy's own header (`call_service.DUPLICATE_RULE_HEADER`), only on one record's create or update,
+# refused on anything else before a token is read.
+
+HEADER = "Sforce-Duplicate-Rule-Header"
+
+
+def test_an_update_may_save_past_duplicate_rules(w):
+    with FakeSF(), Salesforce() as sf:
+        r = lead_write(w, allow_duplicates=True)
+    assert r.status_code == 200, r.content
+    headers = sf.calls[0]["headers"]
+    assert headers[HEADER] == "allowSave=true"
+    assert headers["Authorization"].startswith("Bearer "), "the token header is canopy's, never replaced"
+    assert Event.objects.get(kind="connections.connection_call").payload["allow_duplicates"] is True
+
+
+def test_without_the_flag_no_header_is_sent(w):
+    with FakeSF(), Salesforce() as sf:
+        assert lead_write(w).status_code == 200
+    assert HEADER not in sf.calls[0]["headers"]
+    assert "allow_duplicates" not in Event.objects.get(kind="connections.connection_call").payload
+
+
+@pytest.mark.parametrize("over", [
+    {},  # GET query
+    {"method": "DELETE", "path": f"sobjects/Lead/{LEAD}", "query": None},
+    {"method": "POST", "path": "composite/sobjects", "query": None,
+     "body": {"records": [{"attributes": {"type": "Lead"}, "LastName": "X", "Company": "Y"}]}},
+])
+def test_refused_on_any_other_call_before_a_token(w, over):
+    with mock.patch.object(server_tokens, "access") as token, Salesforce() as sf, \
+            mock.patch.object(call_service, "_check_operation", return_value=None):
+        r = post(w, allow_duplicates=True, operation_id="op-1", **over)
+    assert r.status_code == 403 and error_of(r) == "not_allowed", r.content
+    assert "duplicate" in r.json()["detail"].lower()
+    token.assert_not_called()
+    assert sf.calls == []
+
+
+def test_the_page_cannot_name_a_header(w):
+    """The flag is a boolean; a page has no way to send a header of its own."""
+    with FakeSF(), Salesforce() as sf:
+        r = lead_write(w, headers={"X-Evil": "1"})
+    assert r.status_code == 422
+    assert sf.calls == []

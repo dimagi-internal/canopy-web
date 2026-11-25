@@ -229,3 +229,23 @@ def test_a_client_cannot_write_its_own_on_behalf_record(world):
                   origin_ref={"on_behalf_of": {"email": JJ, "user_id": world["jj"].pk}})
     assert r.status_code == 201, r.content
     assert "on_behalf_of" not in Turn.objects.get(pk=r.json()["id"]).origin_ref
+
+
+def test_between_the_persons_messages_a_held_session_login_still_works_for_them(world):
+    """A laptop session: the person's message has finished, the agent works on (a background task
+    finishing, a follow-up it starts). While the session stays held on the runner its login was issued
+    to, it still works for the person who sent the newest message; once released, for no one."""
+    from apps.canopy_sessions.models import RunnerBinding
+
+    session = Session.objects.create(workspace=world["ws"], agent=world["hal"], status=Session.ACTIVE)
+    RunnerBinding.objects.create(session=session, runner=world["laptop"], session_key="hal-chat")
+    turn = _turn(world, agent=None, chat_session=session)
+    bearer = _login(world, turn, session=session)
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    r = _dispatch(world, bearer, runner_id=None)
+    assert r.status_code == 201, r.content
+    assert Turn.objects.get(pk=r.json()["id"]).origin_ref["on_behalf_of"]["email"] == JJ
+    RunnerBinding.objects.filter(session=session).update(runner=None)
+    r = _dispatch(world, bearer, runner_id=None)
+    assert r.status_code == 201, r.content
+    assert "on_behalf_of" not in Turn.objects.get(pk=r.json()["id"]).origin_ref

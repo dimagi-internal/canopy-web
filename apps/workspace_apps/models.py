@@ -109,8 +109,9 @@ class AppInstallation(models.Model):
 class AppVersion(models.Model):
     DRAFT, PUBLISHED, SUPERSEDED, DISCARDED = "draft", "published", "superseded", "discarded"
     STATUSES = [(s, s) for s in (DRAFT, PUBLISHED, SUPERSEDED, DISCARDED)]
-    #: Why the version exists: a customization, a template update, a rollback, the install.
-    ORIGINS = [(s, s) for s in ("install", "edit", "upgrade", "rollback")]
+    #: Why the version exists: a customization, a template update, a rollback, the install, or a
+    #: new version of the workspace's own template published whole (`services.release`).
+    ORIGINS = [(s, s) for s in ("install", "edit", "upgrade", "rollback", "release")]
 
     installation = models.ForeignKey(AppInstallation, on_delete=models.CASCADE, related_name="versions")
     number = models.PositiveIntegerField()
@@ -132,6 +133,11 @@ class AppVersion(models.Model):
     #: it, test it and run its checks — never publish, discard or roll back. The
     #: draft closing ends it, so no grant outlives the work it was given for.
     helpers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="+")
+    #: What going live with this version changed about who can see and do what, in plain words
+    #: (`template_diff.changes` of the version it replaced against this one). Empty: nothing.
+    reach_changes = models.JSONField(default=list, blank=True)
+    #: The right it went live under: `admin`, `maintainer:content` or `maintainer:permissions`.
+    published_under = models.CharField(max_length=24, blank=True, default="")
 
     class Meta:
         ordering = ["-number"]
@@ -151,11 +157,21 @@ class AppRoleGrant(models.Model):
     """An app role given to one workspace member by name, beside the roles the
     manifest derives from workspace capabilities (`access.roles_for`). How a
     viewer becomes an interviewer, or the head of HR becomes the app's maintainer,
-    without becoming a workspace editor or admin."""
+    without becoming a workspace editor or admin.
+
+    For the `maintainer` role, `level` is how far the admin trusted them
+    (`access.py`): `content` publishes versions that change nothing about who can
+    see or do what; `permissions` may also publish ones that do (connections,
+    browser, roles, readers, public surfaces) — the admin pre-approved that for
+    this one app. Every other role ignores it."""
+
+    CONTENT, PERMISSIONS = "content", "permissions"
+    LEVELS = [(CONTENT, "Content"), (PERMISSIONS, "Content and permissions")]
 
     installation = models.ForeignKey(AppInstallation, on_delete=models.CASCADE, related_name="grants")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     role = models.CharField(max_length=40)
+    level = models.CharField(max_length=12, choices=LEVELS, default=CONTENT)
     granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")
     granted_at = models.DateTimeField(auto_now_add=True)
@@ -258,3 +274,54 @@ class AppScheduledEmail(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["status", "send_at"])]
+
+
+class AppBundleBlob(models.Model):
+    """One file's bytes in a bundle page's file set (`bundles.py`), stored once by content.
+    Shared by every bundle that holds the same bytes, and by no workspace: a blob is reached
+    only through a bundle that names it, so knowing it means knowing its content already."""
+
+    sha256 = models.CharField(max_length=64, unique=True)
+    size = models.PositiveIntegerField()
+    data = models.BinaryField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AppBundle(models.Model):
+    """The files of a template version's bundle pages: {path: sha256}. `digest` is the hash of
+    that mapping, so a bundle never changes and its URL (`/app-bundles/<digest>/…`) is cached for
+    good. Written by `bundles.build`, never by hand; the manifest carries only its id and paths."""
+
+    digest = models.CharField(max_length=64, unique=True)
+    files = models.JSONField(default=dict)
+    size = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AppAiCall(models.Model):
+    """One `canopy.ai.complete` call from an app page (`ai.py`): who asked, from which app, for
+    which alias, what it cost and how it ended. Never the prompt or the answer: those are the
+    page's data, and canopy keeps none of them. Also the per-viewer rate limit's count."""
+
+    OK, FAILED, REFUSED = "ok", "failed", "refused"
+    STATUSES = [(OK, "ok"), (FAILED, "failed"), (REFUSED, "refused")]
+
+    installation = models.ForeignKey(AppInstallation, on_delete=models.CASCADE, related_name="ai_calls")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    #: "live", or the draft's test copy it was asked from.
+    space = models.CharField(max_length=40, default=LIVE)
+    alias = models.CharField(max_length=20)
+    #: The model the alias named when it was asked (`ai.ALIASES`), e.g. "vertex/gemini-3.5-flash".
+    model = models.CharField(max_length=120, blank=True, default="")
+    #: The page's own label for what it was doing ("record-summary"), free text, for reading the log.
+    feature = models.CharField(max_length=60, blank=True, default="")
+    status = models.CharField(max_length=10, choices=STATUSES)
+    error = models.CharField(max_length=300, blank=True, default="")
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    ms = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["user", "-created_at"]),
+                   models.Index(fields=["installation", "-created_at"])]

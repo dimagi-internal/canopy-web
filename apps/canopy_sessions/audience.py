@@ -20,8 +20,9 @@ from apps.agents.models import AgentAdmin
 from apps.harness import sensitivity
 from apps.harness.models import Runner, RunnerAdmin
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import WorkspaceMembership
 
-from .models import RunnerBinding, Session, SessionReviewAsk, SessionReviewGrant
+from .models import CoachingOptIn, CoachingRole, RunnerBinding, Session, SessionReviewAsk
 
 #: Where an email-born session keeps its thread (`harness.session_sync.EMAIL_THREAD_KEY`).
 EMAIL_THREAD_KEY = "email_thread_key"
@@ -75,20 +76,53 @@ def _own_login(session) -> set[int]:
     return set()
 
 
-def _coaches(session) -> dict[int, str]:
-    """Leg 5: the logins of agents the session's person let review their sessions
-    (`access.sessions_of_q`), never a sensitive or a contact's session. {user id: agent name}."""
+def _grantor(session):
+    """The person whose session this is, for coaching: its creator, or the owner of the box a
+    discovered session (not an agent's) runs on. None for a contact's, a deleted one's, a sensitive
+    one, one someone in it took out of learning, one outside what the person's learning consent allows
+    coaching (its workspaces and standing rules, `brain.eligibility.coaching_allows`), and a person who has not opted in to coaching (`access._coach_q`)."""
+    from apps.brain.eligibility import coaching_allows  # noqa: PLC0415 — brain imports this module's neighbours
+    from apps.brain.models import LearningConsent  # noqa: PLC0415 — brain imports this module's neighbours
+
+    from . import access  # noqa: PLC0415 — access imports this module's neighbours at load
+
     if session.contact_id or session.content_deleted_at or sensitivity.is_sensitive(session):
-        return {}
+        return None
     person = session.created_by_id
     if person is None and _discovered(session) and not session.agent_id:
         b = _binding(session)
         person = b.runner.owner_id if (b is not None and b.runner_id) else None
+    if person is None or not CoachingOptIn.objects.filter(user_id=person, revoked_at__isnull=True).exists():
+        return None
+    if access.is_removed_from_learning(session):
+        return None
+    consent = LearningConsent.objects.filter(user_id=person, revoked_at__isnull=True).first()
+    if not coaching_allows(consent, session.workspace_id):
+        return None
+    return person
+
+
+def _coaches(session) -> dict[int, str]:
+    """Leg 5: the coaches of the session's person: every agent login and every person holding a live
+    `CoachingRole` that covers this session's workspace (that workspace or one above it), when the
+    person opted in. {user id: name}. An agent coach reads only inside a running turn; it is named here
+    as the ACL's widest case."""
+    person = _grantor(session)
     if person is None:
         return {}
-    grants = (SessionReviewGrant.objects.filter(user_id=person, revoked_at__isnull=True,
-                                                agent__user__isnull=False).select_related("agent"))
-    return {g.agent.user_id: (g.agent.name or g.agent.slug) for g in grants}
+    covering = wsvc.with_ancestors({session.workspace_id})
+    out: dict[int, str] = {}
+    roles = (CoachingRole.objects.filter(revoked_at__isnull=True, workspace_id__in=covering)
+             .select_related("agent", "user"))
+    for r in roles:
+        scope = {r.workspace_id} | wsvc.descendant_slugs({r.workspace_id})
+        if not WorkspaceMembership.objects.filter(user_id=person, workspace_id__in=scope).exists():
+            continue                      # the rule reads only people in a workspace the coach covers
+        if r.agent_id and r.agent.user_id:
+            out[r.agent.user_id] = r.agent.name or r.agent.slug
+        elif r.user_id:
+            out[r.user_id] = r.user.get_full_name() or r.user.email or r.user.username
+    return out
 
 
 def _asked_reviewers(session) -> dict[int, str]:
@@ -118,6 +152,14 @@ def _runner_admins(session) -> set[int]:
     return set(RunnerAdmin.objects.filter(runner_id=b.runner_id).values_list("user_id", flat=True))
 
 
+def _project_readers(session) -> set[int]:
+    """Leg 7, the brain's: the people who read this session because it is tied to a project they may read
+    (`brain.readers.project_reader_ids`; empty while the brain's rollout gate is off)."""
+    from apps.brain import readers  # noqa: PLC0415 — brain imports this module's neighbours
+
+    return readers.project_reader_ids(session)
+
+
 def pieces(session) -> dict:
     """Every leg's people for this session, each already inside the tenant."""
     members = wsvc.member_user_ids(session.workspace_id)
@@ -133,6 +175,7 @@ def pieces(session) -> dict:
         "coaches": {uid: name for uid, name in coaches.items() if uid in members},
         "asked_reviewers": asked,
         "runner_admins": within(_runner_admins(session)),
+        "project_readers": within(_project_readers(session)),
     }
 
 
@@ -141,7 +184,7 @@ def readers(session) -> set[int]:
     session (the panel) has no member readers beyond these."""
     p = pieces(session)
     out = p["creator"] | p["participants"] | p["box_owner"] | p["agent_admins"] | p["own_login"]
-    out |= set(p["coaches"]) | p["runner_admins"]
+    out |= set(p["coaches"]) | p["runner_admins"] | p["project_readers"]
     return out
 
 
@@ -195,10 +238,12 @@ def summary(session, viewer) -> dict:
         label = ("Only you" + _added(added, True)) if vid == session.created_by_id \
             else (_name(creator) + _added(added, False))
 
-    for name in sorted(set(p["coaches"].values())):
-        extras.append(f"{name} may review (coaching)")
+    if p["coaches"]:
+        extras.append(", ".join(sorted(set(p["coaches"].values()))) + " may review (coaching)")
     for name in sorted(set(p["asked_reviewers"].values())):
         extras.append(f"{name} may review this one session (asked from its page)")
     if p["runner_admins"] - p["box_owner"]:
         extras.append("This machine's admins can read it, to move it")
+    if p["project_readers"] - set(p["participants"]) - p["creator"]:
+        extras.append("People who can read its project may read it (read-only, secrets scrubbed)")
     return {"label": label, "extras": extras, "count": total}

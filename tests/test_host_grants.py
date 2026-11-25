@@ -66,6 +66,10 @@ def site():
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
     priv, pub = _keypair()
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
+    # A site canopy trusts for email, so its members' verified addresses resolve them
+    # (`contacts.services.resolve_arrival`).
+    AppCredential.objects.filter(pk=app.pk).update(asserts_verified_email=True)
+    app.asserts_verified_email = True
     app.public_keys = [pub]
     app.host_issuer = ISSUER
     app.host_mcp_resource = RESOURCE

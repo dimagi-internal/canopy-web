@@ -99,7 +99,21 @@ def _runner_rows(request: HttpRequest, qs) -> list:
         # and the drill panel are gated by different routes.
         r.can_administer = r.pk in administered
     runner_repos.annotate_for_caller(request.user, rows, administered)
+    prime_github_readiness([r for r in rows if r.health])
     return _with_roots(request, rows)
+
+
+def prime_github_readiness(runners) -> None:
+    """Read the `github.<slug>` health checks of every row at once
+    (`schemas.runners.github_readiness`): the agents each box runs from one read of
+    the lot (`routing.agents_routed_to_of`), and each agent's readiness once however
+    many boxes run it."""
+    rows = list(runners)
+    routed = routing.agents_routed_to_of(rows)
+    shared: dict = {}
+    for r in rows:
+        r._routed_agents = routed[r.pk]
+        r._readiness_memo = shared
 
 
 @router.patch("/runners/{runner_id}", response=RunnerOut)
@@ -132,7 +146,8 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     jobs_trusted = (rtok is not None and rtok.runner_id == runner.pk
                     and runner.kind == Runner.CLOUD)
     jobs_said = payload.capabilities.pop("jobs", None)
-    reported = ("projects", "profiles", "envelope", "midturn", "unprepared", "data_mode",
+    reported = ("projects", "profiles", "envelope", "midturn", "isolated", "stored_projects", "sync", "unprepared",
+                "data_mode",
                 "data_mode_hash", "claude_model", "clis", "clis_unknown")
     payload.capabilities = {k: v for k, v in payload.capabilities.items()
                             if not (k in reported and runner.capabilities.get(k) == v)}
@@ -144,7 +159,8 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "routable, open it as a project in emdash on that runner (or set "
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
-    for key in ("profiles", "envelope", "midturn", "unprepared", "data_mode", "data_mode_hash",
+    for key in ("profiles", "envelope", "midturn", "isolated", "stored_projects", "sync", "unprepared", "data_mode",
+                "data_mode_hash",
                 "claude_model", "clis", "clis_unknown"):
         if key in payload.capabilities:
             # Reported, like `projects` — and here it is a SECURITY property: a hand

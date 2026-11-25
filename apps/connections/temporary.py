@@ -6,6 +6,10 @@ provider's consent screen is the person's yes. The token is kept encrypted with 
 (`TemporaryAccess`), for one agent, and handed only to the runner holding a turn that person
 started. It ends when they end it, which revokes it at the provider, or when the token runs out.
 
+Or, started with `for_screens=1` and no agent, it is for the person's own calls from screens in that
+workspace (`for_screens`, `call_service`): the one way a screen calls Google, so a Drive page never
+rests on a stored refresh token. It is never handed to a turn.
+
 Everything `apps.connections.services` says about sealing does not apply here, on purpose:
 canopy-web can read this token. See `TemporaryAccess` for what that costs and buys.
 """
@@ -51,8 +55,9 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     replaces this person's last one for that agent and provider."""
     parked, app = services.take_parked(session, provider=provider, workspace=workspace, state=state)
     p = services._configured(app)
-    agent = agent_for(workspace, parked.get("for_agent") or "")
-    if agent is None:
+    screens = bool(parked.get("for_screens"))
+    agent = None if screens else agent_for(workspace, parked.get("for_agent") or "")
+    if agent is None and not screens:
         raise services.ConnectionError("bad_state", "that agent is no longer in this workspace")
     subject = services._parked_subject(provider, parked)
     try:
@@ -80,20 +85,23 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
 
     now = timezone.now()
     with transaction.atomic():
-        before = TemporaryAccess.objects.select_for_update().filter(user=by, agent=agent, provider=provider).first()
+        # A person's screens: one per workspace app. An agent's: one per agent and provider.
+        key = {"user": by, "agent": None, "app": app} if screens else {"user": by, "agent": agent,
+                                                                       "provider": provider}
+        before = TemporaryAccess.objects.select_for_update().filter(**key).first()
         other_account = before is not None and before.account_id != ident.account_id
         old_token = decrypt_secret(before.token) if other_account else ""
         row, _ = TemporaryAccess.objects.update_or_create(
-            user=by, agent=agent, provider=provider,
-            defaults={"app": app, "account_id": ident.account_id, "account_label": ident.label,
+            **key,
+            defaults={"app": app, "provider": provider, "account_id": ident.account_id, "account_label": ident.label,
                       "scopes": " ".join(token.scopes or p.requested_scopes()),
                       "token": encrypt_secret(token.access_token),
                       "expires_at": min(token.expires_at, now + MAX_LIFETIME)})
     # The same account's old token is left to run out: at Google, revoking it would end the new one too.
     if old_token:
         _revoke(p, subject, old_token)
-    services.record(_subject(row), "temporary_connected", by=by, agent=agent.slug,
-                    expires_at=row.expires_at.isoformat())
+    services.record(_subject(row), "temporary_connected", by=by, agent=agent.slug if agent else None,
+                    screens=screens, expires_at=row.expires_at.isoformat())
     return row
 
 
@@ -158,3 +166,19 @@ def sweep(now=None) -> int:
     """Delete what has run out: a dead token, kept by nobody. Counted for the connections sweep."""
     deleted, _ = TemporaryAccess.objects.filter(expires_at__lte=now or timezone.now()).delete()
     return deleted
+
+
+def for_screens(user, provider: str, workspace: str) -> TemporaryAccess | None:
+    """The person's own short-lived access for screens in `workspace`, while it lasts and while they may
+    still use that workspace: what a screen's call for a `calls.TEMPORARY_ONLY` provider runs on."""
+    row = (TemporaryAccess.objects.select_related("app")
+           .filter(user=user, agent__isnull=True, provider=provider, app__workspace_id=workspace,
+                   app__removed_at__isnull=True, expires_at__gt=timezone.now())
+           .first())
+    if row is None or not services.person_may_use(user, workspace):
+        return None
+    return row
+
+
+def token_of(row: TemporaryAccess) -> str:
+    return decrypt_secret(row.token)

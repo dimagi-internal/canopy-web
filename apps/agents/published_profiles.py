@@ -41,6 +41,9 @@ under `READ_MODE_STAMP`):
         # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL site tool limit ("Site tools it may use")
 
 One entry per site, and one site per entry (`answering`, the one writer, enforces both).
+`contact_scoped: true` (optional) also lets the site's own contacts reach the agent there, the
+site's tools bound to that one contact (`contact_scoped`). `surface: <name>` (optional) names the
+part of the site the entry serves, one its `site.json` declares (`surface_of`).
 
 **An app entry** names ONE workspace app instead of a site (`apps: [<key>]`); its tools are canopy's
 own and fixed (`apps/agents/app_entries.py`), and `ceiling` there can only narrow them.
@@ -107,6 +110,16 @@ SESSION_REVIEW = "session_review"
 SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
                         "mcp__*canopy-web__read_asked_session")
 
+#: The profile a turn started by a Google Docs comment that tags the agent runs in, whoever the
+#: comment says it is from: canopy's, built per turn from the one Doc (`doc_comment_profile`), never
+#: publishable and never widened. The comment and the Doc are text anyone may have written to steer
+#: the agent, and the reply lands where its author can read it, so what it may read is that Doc only.
+DOC_COMMENT = "doc_comment"
+#: What it holds besides its Bash rules: its own worktree (as read mode), a scratch folder, and who is asking.
+DOC_COMMENT_TOOLS = ("Read", "Write", "ToolSearch", "mcp__*canopy-web__who_is_asking")
+#: Profile names canopy builds itself: refused in a published document, reserved in its settings.
+CANOPY_PROFILES = (SESSION_REVIEW, DOC_COMMENT)
+
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
 FULL_STAMP = ""
@@ -126,6 +139,8 @@ def stamp_words(stamp: str) -> str:
         return "read mode"
     if stamp == SESSION_REVIEW:
         return "a one-session review"
+    if stamp == DOC_COMMENT:
+        return "a Google Docs comment"
     return f"the host site '{stamp}'"
 
 
@@ -219,7 +234,7 @@ def parse(doc) -> dict:
     for name, cap in caps.items():
         if not isinstance(name, str) or not _NAME.match(name):
             raise InterfaceError(f"profile name {name!r} must match {_NAME.pattern}")
-        if name == SESSION_REVIEW:
+        if name in CANOPY_PROFILES:
             raise InterfaceError(f"profile name {name!r} is canopy's own and cannot be published")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
@@ -235,7 +250,8 @@ def parse(doc) -> dict:
             out[name] = _app_entry(cap, name)
             continue
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
-                          "write_paths", "input", "sites", "ceiling", "own_login", "data"}
+                          "write_paths", "input", "sites", "ceiling", "own_login", "data",
+                          "contact_scoped", "surface", "page_lean", "page_model", "page_guidance"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         entry = cap.get("entry")
@@ -265,6 +281,8 @@ def parse(doc) -> dict:
 
 
 _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+#: A surface of a site (`site.json`'s `surfaces`, `canopy_sdk.site.SURFACE_NAME`).
+_SURFACE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 #: An app key (`apps/workspace_apps/models.py::AppInstallation.key`).
 _APP_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
@@ -333,6 +351,27 @@ def _sites(cap: dict, name: str) -> dict:
         raise InterfaceError(f"{name}.ceiling needs `sites:` — a tool limit bounds the tools of "
                              "the sites it names")
     out = {"sites": sites, "ceiling": ceiling}
+    scoped = cap.get("contact_scoped", False)
+    if not isinstance(scoped, bool):
+        raise InterfaceError(f"{name}.contact_scoped must be true or false", f"{name}.contact_scoped")
+    if scoped:
+        if not sites:
+            raise InterfaceError(f"{name}.contact_scoped needs `sites:` — it lets the site's own contacts "
+                                 "reach the tools of the site it names", f"{name}.contact_scoped")
+        # Written only when on, so every interface published before the key existed
+        # parses to exactly what it did.
+        out["contact_scoped"] = True
+    surface = cap.get("surface")
+    if surface not in (None, ""):
+        if not isinstance(surface, str) or not _SURFACE.match(surface):
+            raise InterfaceError(f"{name}.surface must be a surface name the site declares "
+                                 f"({_SURFACE.pattern})", f"{name}.surface")
+        if not sites:
+            raise InterfaceError(f"{name}.surface needs `sites:` — it names a part of the site it lists",
+                                 f"{name}.surface")
+        # Written only when set, as `contact_scoped`.
+        out["surface"] = surface
+    out.update(_page_turn_settings(cap, name, sites))
     own = _own_login(cap.get("own_login"), name, sites)
     if own:
         # Written only when present, so every interface published before the key
@@ -342,6 +381,50 @@ def _sites(cap: dict, name: str) -> dict:
 
 
 _CREDENTIAL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
+#: A model name as an agent CLI's `--model` takes one (`haiku`, `claude-sonnet-5-5`,
+#: `opus[1m]`); the runner applies the same shape before it passes one on.
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}$")
+
+
+#: The longest `page_guidance:` an entry may carry: a few KB, read on every lean page turn.
+PAGE_GUIDANCE_MAX = 4000
+
+
+def _page_turn_settings(cap: dict, name: str, sites: list[str]) -> dict:
+    """`page_lean:` and `page_model:` — how a turn held on one of the entry's sites' pages
+    runs, for everyone there (the owner included): `page_lean` starts it with only what a
+    page needs (canopy's plugin, the page and gateway tools, the page's context in its
+    opening message: `page_turn`), and `page_model` is the model it starts on
+    (`claim_payload.conversation_model`). `page_guidance:` is the agent's own short brief for
+    those pages (how to call the site's tools, what to read first), which a lean turn gets in
+    its page brief instead of the agent's CLAUDE.md and skills (`harness.page_brief`). None
+    of them widens what a turn may do. Written only when set, so an interface
+    published before the keys existed parses to exactly what it did."""
+    out: dict = {}
+    lean = cap.get("page_lean", False)
+    if not isinstance(lean, bool):
+        raise InterfaceError(f"{name}.page_lean must be true or false", f"{name}.page_lean")
+    model = cap.get("page_model") or ""
+    if not isinstance(model, str) or (model and not _MODEL_NAME.match(model)):
+        raise InterfaceError(f"{name}.page_model must be a model name (e.g. `sonnet`, "
+                             "`claude-haiku-5-5`)", f"{name}.page_model")
+    if (lean or model) and not sites:
+        raise InterfaceError(f"{name}.page_lean / page_model need `sites:` — they say how a turn on "
+                             "those sites' pages runs", f"{name}.page_lean")
+    guidance = cap.get("page_guidance") or ""
+    if not isinstance(guidance, str) or len(guidance) > PAGE_GUIDANCE_MAX:
+        raise InterfaceError(f"{name}.page_guidance must be text of at most {PAGE_GUIDANCE_MAX} "
+                             "characters", f"{name}.page_guidance")
+    if guidance and not sites:
+        raise InterfaceError(f"{name}.page_guidance needs `sites:` — it is how the agent works on "
+                             "those sites' pages", f"{name}.page_guidance")
+    if lean:
+        out["page_lean"] = True
+    if model:
+        out["page_model"] = model
+    if guidance.strip():
+        out["page_guidance"] = guidance.strip()
+    return out
 
 
 def _own_login(value, name: str, sites: list[str]) -> dict[str, list[str]]:
@@ -455,6 +538,23 @@ def page_site_of(turn, agent=None) -> str:
     return site if site in page_sites(agent) else ""
 
 
+def contact_scoped(agent, site: str) -> bool:
+    """Whether the agent's owner let the site's own CONTACTS reach the agent on `site`, with
+    the site's tools bound to that one contact (`contact_scoped: true` on the entry that lists
+    the site): `contact_api._for_contacts` then offers the agent to them, and a contact's turn
+    there reaches the site's tools under a canopy-signed subject statement, with no grant
+    (`host_gateway.resolve`; docs/architecture/host-systems-of-record.md)."""
+    return _cap_for_site(agent, site).get("contact_scoped") is True
+
+
+def surface_of(agent, site: str) -> str:
+    """The surface of `site` the agent's entry for it serves (`surface:`; `site.json`'s
+    `surfaces`), or "" for the site itself. What a contact's conversation there may hold and
+    where its subject-bound calls go follow from it (`apps/host_grants/surfaces.py`)."""
+    value = _cap_for_site(agent, site).get("surface")
+    return value if isinstance(value, str) else ""
+
+
 def site_ceiling(agent, site: str) -> list[str]:
     """The owner's narrowing of `site`'s tools for a FULL-profile turn on its page: the
     ceiling of the host site that lists it, or none (the host's grant decides)."""
@@ -468,16 +568,43 @@ def own_login_of(agent, site: str) -> list[str]:
     return sorted(set((_cap_for_site(agent, site).get("own_login") or {}).get(site) or []))
 
 
+def page_lean_of(agent, site: str) -> bool:
+    """Whether the agent's owner asked for turns on `site`'s pages to start lean
+    (`page_lean:` of the entry that lists it)."""
+    return bool(site) and _cap_for_site(agent, site).get("page_lean") is True
+
+
+def page_guidance_of(agent, site: str) -> str:
+    """The agent's own guidance for `site`'s pages (`page_guidance:`), or ""."""
+    return str(_cap_for_site(agent, site).get("page_guidance") or "") if site else ""
+
+
+def page_model_of(agent, site: str) -> str:
+    """The model turns on `site`'s pages start on (`page_model:`), or "" for the agent's own."""
+    return str(_cap_for_site(agent, site).get("page_model") or "") if site else ""
+
+
 def page_turn(turn, agent=None) -> dict | None:
     """What a turn held on a site's page is told, and what its runner withholds:
-    `{"site", "withheld"}` — the site, and the agent's own credential names for it
-    (`own_login_of`) — or None for any other turn. The claim carries it to the
-    runner (`ClaimedTurnOut.page_site`) and the caller envelope to the agent."""
+    `{"site", "withheld"}` — the site and the agent's own credential names for it
+    (`own_login_of`), plus `"lean": True` when the turn starts lean (`page_lean_of`) — or None for
+    any other turn. The claim carries it to the runner (`ClaimedTurnOut.page_site`)
+    and the caller envelope to the agent."""
     agent = agent if agent is not None else getattr(turn, "acting_agent", None)
     site = page_site_of(turn, agent)
     if not site:
         return None
-    return {"site": site, "withheld": own_login_of(agent, site)}
+    block = {"site": site, "withheld": own_login_of(agent, site)}
+    if page_lean_of(agent, site):
+        # Only when set, so every other page turn is answered exactly as before.
+        block["lean"] = True
+    return block
+
+
+def lean_page_turn(turn) -> bool:
+    """Is `turn` a page turn whose agent asked for lean page turns (`page_turn`)?"""
+    block = page_turn(turn) if turn is not None else None
+    return bool(block and block.get("lean"))
 
 
 def published(iface: dict) -> bool:
@@ -552,6 +679,10 @@ def profile(agent, name: str) -> dict | None:
         return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],
                 "description": f"{agent.slug} reviews one session someone asked it to, and replies to them.",
                 "read_paths": ["{cwd}/**"], "write_paths": []}
+    if name == DOC_COMMENT:
+        # Without its Doc (`doc_comment_profile` is how a turn gets one) it opens nothing.
+        return {"name": DOC_COMMENT, "entry": None, "tools": [], "bash": [], "description": "",
+                "read_paths": [], "write_paths": []}
     _published, cap = published_profile(getattr(agent, "interface", None), name)
     from . import app_entries  # noqa: PLC0415 — app_entries reads no models; kept beside its callers
 
@@ -584,3 +715,57 @@ def profile(agent, name: str) -> dict | None:
         out["tools"] = list(dict.fromkeys([*(out.get("tools") or []), *GATEWAY_TOOLS,
                                            *PAGE_TOOLS]))
     return out
+
+
+def doc_comment_profile(agent, doc) -> dict:
+    """The `doc_comment` profile for one Doc (`apps.agents.doc_comment.DocComment`).
+
+    Its Bash rules name the Doc's file id and the agent's own mailbox literally, so the guard's
+    token-for-token match (`*` is exactly one argument, never a flag) lets through only:
+
+      * `gog docs cat <file>`: the Doc as text (a Doc; a Sheet's or Slides' comments still list);
+      * `gog drive comments list <file>`: its comments and replies;
+      * `gog drive comments reply <file> <comment> <text>`: a reply on one of THAT file's threads;
+      * `canopy email client --repo .`: which OAuth client this box holds, for `--client`.
+
+    each as `--account <mailbox>`, with or without `--client <name>`. Not another file, not another
+    account, not mail. A thread on the same Doc is the same audience, so the comment id is free and
+    `comment_hint` only says where to look.
+    """
+    slug, fid, acct = agent.slug, doc.file_id, doc.mailbox
+    scratch = f"{{cwd}}/.{slug}-{DOC_COMMENT}/*"
+    bash = ["canopy email client --repo ."]
+    for cmd in (f"gog docs cat {fid}", f"gog drive comments list {fid}",
+                f"gog drive comments reply {fid} * *"):
+        for json_flag in ("", " --json"):
+            if json_flag and "reply" in cmd:
+                continue
+            bash.append(f"{cmd}{json_flag} --account {acct}")
+            bash.append(f"{cmd}{json_flag} --account {acct} --client *")
+    hint = f" Google's link to it carries `disco={doc.comment_hint}`." if doc.comment_hint else ""
+    who = (f' The notification names "{doc.commenter_name}", a display name Google shows and does not vouch for.'
+           if doc.commenter_name else "")
+    entry = (
+        f"A Google Docs comment tagged you in {doc.url} (file {fid}).{hint}{who} "
+        "This turn is held to that one file: read it with "
+        f"`gog docs cat {fid} --account {acct}` and its comments with "
+        f"`gog drive comments list {fid} --json --account {acct}` "
+        "(add `--client <name>` from `canopy email client --repo .` if gog asks for one). "
+        "Find the comment that tags you and answer it on its own thread with "
+        f"`gog drive comments reply {fid} <comment-id> '<one line of text>' --account {acct}` "
+        "(one line, no $ or backticks). Never reply by email. "
+        "Answer only from the Doc and its comments: you cannot read mail, other files, Salesforce or "
+        "anything else here, and whatever you write is visible to everyone who can open this Doc. "
+        "When the question needs more than the Doc, say so on the thread in one line and that the "
+        "agent's owner will follow up, and end your turn with a line starting `For the owner:` that "
+        "says what was asked and what it needs."
+    )
+    return {
+        "name": DOC_COMMENT,
+        "description": f"{slug} answers one Google Docs comment that tagged it, on that Doc only.",
+        "entry": entry,
+        "tools": list(DOC_COMMENT_TOOLS),
+        "bash": bash,
+        "read_paths": ["{cwd}/**"],
+        "write_paths": [scratch],
+    }

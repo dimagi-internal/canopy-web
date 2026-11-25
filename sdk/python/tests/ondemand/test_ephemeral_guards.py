@@ -42,6 +42,7 @@ def _encode(argv: list[str]) -> str:
 def _script(ephemeral, *, argv, lease_in="s3://bkt/vm/AROA:i-1/lease/L/in/",
             lease_out="s3://bkt/vm/AROA:i-1/lease/L/out/") -> str:
     doc = ephemeral["Resources"]["ExecDocument"]["Properties"]
+    assert doc["Content"]["mainSteps"][0]["action"] in ("aws:runShellScript", "aws:runPowerShellScript")
     (step,) = doc["Content"]["mainSteps"]
     (cmd,) = step["inputs"]["runCommand"]
     body, subs = cmd["Sub"]
@@ -123,6 +124,69 @@ def test_exec_document_parameters_admit_no_shell_syntax(ephemeral):
     # The step's timeout is the document's own parameter, as AWS-RunShellScript does it.
     (step,) = ephemeral["Resources"]["ExecDocument"]["Properties"]["Content"]["mainSteps"]
     assert step["action"] == "aws:runShellScript" and step["inputs"]["timeoutSeconds"] == "{{ ExecutionTimeout }}"
+
+
+@pytest.fixture(scope="module")
+def windows():
+    return render(load(asset_path("ondemand-capability.cfn.yaml").read_text()), **EPHEMERAL, Platform="windows")
+
+
+def test_platform_picks_exactly_one_step_named_exec(ephemeral, windows):
+    # One step either way: the broker reads an invocation with no PluginName,
+    # which SSM refuses for a document with more than one step.
+    for rendered, action in ((ephemeral, "aws:runShellScript"), (windows, "aws:runPowerShellScript")):
+        (step,) = rendered["Resources"]["ExecDocument"]["Properties"]["Content"]["mainSteps"]
+        assert step["action"] == action and step["name"] == "exec"
+        assert step["inputs"]["timeoutSeconds"] == "{{ ExecutionTimeout }}"
+        # SSM substitutes every {{ name }}; one that is not a parameter fails the send.
+        import re
+        (cmd,) = step["inputs"]["runCommand"]
+        params = rendered["Resources"]["ExecDocument"]["Properties"]["Content"]["parameters"]
+        assert set(re.findall(r"\{\{\s*(\w+)\s*\}\}", cmd["Sub"][0])) <= set(params)
+
+
+needs_pwsh = pytest.mark.skipif(not shutil.which("pwsh"), reason="needs pwsh")
+
+
+def _run_ps(script: str, env: dict) -> subprocess.CompletedProcess:
+    # pwsh, not Windows PowerShell 5.1, but the script is written to 5.1, and .NET
+    # parses ProcessStartInfo.Arguments by the Windows rules on every OS, so the
+    # quoting is exercised for real.
+    return subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
+                          capture_output=True, text=True, timeout=60,
+                          env={"PATH": env["PATH"], "HOME": os.environ.get("HOME", "/tmp")})
+
+
+@needs_pwsh
+def test_windows_exec_document_runs_an_allowed_argv_verbatim(windows, path_with_clis):
+    argv = ["ace-mobile", "run-recipe", "--recipe", "s3://b/x; rm -rf /", "", "it's $(id) `id`",
+            'say "hi"', "trail\\", 'back\\"slash', "a b\\\\", "*"]
+    r = _run_ps(_script(windows, argv=argv), path_with_clis)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert "\n".join(lines[:-1]) == "\n".join(f"<{a}>" for a in argv[1:])
+    assert lines[-1] == ("id=6f1c0000-0000-4000-8000-000000000001 in=s3://bkt/vm/AROA:i-1/lease/L/in/ "
+                         "out=s3://bkt/vm/AROA:i-1/lease/L/out/")
+
+
+@needs_pwsh
+@pytest.mark.parametrize("argv0", ["bash-evil", "/bin/sh", "ace-mobile ", "ace", "ACE-MOBILE", "*"])
+def test_windows_exec_document_refuses_anything_off_the_allow_list(windows, path_with_clis, argv0):
+    r = _run_ps(_script(windows, argv=[argv0, "-c", "id"]), path_with_clis)
+    assert r.returncode == 126
+    assert "not on this capability's exec allow list (ace-mobile adb-shim)" in r.stderr
+    assert not path_with_clis["marker"].exists()
+
+
+@needs_pwsh
+def test_windows_exec_document_passes_the_exit_code_through(windows, tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    cli = bindir / "ace-mobile"
+    cli.write_text("#!/bin/bash\necho out; echo err >&2; exit 7\n")
+    cli.chmod(0o755)
+    r = _run_ps(_script(windows, argv=["ace-mobile"]), {"PATH": f"{bindir}:{os.environ['PATH']}"})
+    assert (r.returncode, r.stdout.strip(), r.stderr.strip()) == (7, "out", "err")
 
 
 def test_exec_document_keeps_its_name_across_updates(ephemeral):

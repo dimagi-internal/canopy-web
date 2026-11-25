@@ -15,7 +15,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.harness import runner_protocol
+from apps.harness import runner_protocol, runner_sync
 from apps.harness.models import Runner
 from apps.realtime import groups
 
@@ -133,6 +133,7 @@ def create(owner, *, runner_id, kind: str, hello: dict) -> ListenSession:
                 runner=runner, kind=ListenSession.MEETING).exclude(state=ListenSession.ENDED).exists():
             raise Refused(409, "A meeting is already running on that computer")
         session = ListenSession.objects.create(owner=owner, runner=runner, kind=kind, hello=hello)
+        runner_sync.bump(runner)
         transaction.on_commit(lambda: groups.publish(groups.runner_group(runner.pk), {
             "type": "runner.listen_start", "session_id": str(session.pk),
             "kind": session.kind, "hello": session.hello,
@@ -160,6 +161,12 @@ def pending_for(runners) -> list[ListenSession]:
                    | Q(laptop_seen_at__lt=now - dt.timedelta(seconds=STALE_S)))
     rejoin = Q(state=ListenSession.LIVE, kind=ListenSession.MEETING) & laptop_gone
     return list(ListenSession.objects.filter(Q(runner__in=runners) & (waiting | rejoin)).order_by("created_at"))
+
+
+def pending_rows(runner) -> list[dict]:
+    """`pending_for(runner)` as the pending route's items, for the box's `/sync`."""
+    return [{"session_id": str(s.pk), "runner_id": str(s.runner_id), "kind": s.kind, "hello": s.hello}
+            for s in pending_for([runner])]
 
 
 # -- roles (the consumer's bookkeeping) ----------------------------------------

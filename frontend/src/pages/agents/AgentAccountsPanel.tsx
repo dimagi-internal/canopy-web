@@ -24,7 +24,10 @@ export function AgentAccountsPanel({
   agent,
   isAdmin = false,
 }: {
-  agent: { slug: string; email?: string | null; name?: string; workspace?: string | null }
+  agent: {
+    slug: string; email?: string | null; name?: string; workspace?: string | null
+    definition?: { source?: string } | null
+  }
   isAdmin?: boolean
 }) {
   const [rows, setRows] = useState<AgentCredentialStatusOut[] | null>(null)
@@ -122,7 +125,8 @@ export function AgentAccountsPanel({
       <ConnectionsBanner conns={conns} />
 
       <div role="list" className="divide-y divide-border" data-testid="credential-status">
-        <AgentGitHubSection slug={agent.slug} />
+        {/* A stored agent has no repository, so no GitHub identity to lend it. */}
+        {agent.definition?.source !== 'stored' && <AgentGitHubSection slug={agent.slug} />}
         {hasMailbox && (
           // Signing in is the only way a mailbox token is minted, so the action sits on its row.
           <AccountRow

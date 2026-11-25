@@ -85,6 +85,12 @@ def note_change(*, scope: str, before: Any, after: Any, workspace=None, summary:
     return changed
 
 
+def note_acting(request, acting: dict) -> None:
+    """Say who acted on this request's audit row, when it is not plainly the caller: an agent in its own turn acting
+    for the person it answers to (`brain.actor`). Ids and addresses only."""
+    request.audit_acting = dict(acting)
+
+
 # ---- what a route wrote, when it reports nothing ----
 
 def _plain(field, value):
@@ -217,6 +223,7 @@ def _record(request, op: str, kwargs: dict, notes: list) -> None:
         target=target[:300],
         summary=summary[:500],
         request={"path": path_args, "body": redact(body)},
+        acting=dict(getattr(request, "audit_acting", None) or {}),
         changes=[{"scope": n["scope"], "before": n["before"], "after": n["after"],
                   **({"also_deleted": n["also_deleted"]} if n.get("also_deleted") else {})}
                  for n in changed],

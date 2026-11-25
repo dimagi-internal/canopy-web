@@ -71,9 +71,13 @@ def test_a_send_alone_never_asks_only_a_turn_that_needs_the_grant_does(w, host, 
                                     "reason": "look up the  orgs\nyou shortlisted"})
     seen = panel.get("/api/embed/host-grant").json()["grant"]
     assert seen["requested"] is True and seen["requested_reason"] == "look up the orgs you shortlisted"
-    assert pushed == [(groups.session_group(w["session"].id),
-                       {"type": "host_grant.requested", "grant_id": waiting.pk,
-                        "user_id": w["visitor"].pk})]
+    asks = [(g, m) for g, m in pushed if m["type"] == "host_grant.requested"]
+    assert asks == [(groups.session_group(w["session"].id),
+                     {"type": "host_grant.requested", "grant_id": waiting.pk,
+                      "user_id": w["visitor"].pk})]
+    # And the panel shows that the turn is waiting for them (`host_gateway.WAIT_NOTE`).
+    assert [m["text"] for _, m in pushed if m["type"] == "chat.live_text"] == [
+        host_gateway.WAIT_NOTE]
     assert host.calls == []
 
 

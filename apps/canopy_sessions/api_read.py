@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import uuid
+from typing import Literal
 
 from django.db.models import Q
 from django.http import Http404, HttpRequest
@@ -63,7 +64,7 @@ from .api import (
     me_router,
     router,
 )
-from .session_row import mark_people_in, mark_started_by_you, session_out
+from .session_row import is_brain_only, mark_brain_only, mark_people_in, mark_started_by_you, session_out
 
 #: Published operationIds keep this app's label (apps/api/api.py `_app_label`): an
 #: operationId is an MCP tool name and a `generated.ts` key.
@@ -122,7 +123,9 @@ def list_sessions(
     rows = session_state.with_state(transcript_read.with_driving_turn(rows))
     if reply:
         rows = transcript_read.with_last_reply(rows)
-    out = [session_out(s, reply=reply, viewer=request.user) for s in mark_started_by_you(mark_people_in(rows, request.user), request.user)]
+    out = [session_out(s, reply=reply, viewer=request.user)
+           for s in mark_brain_only(mark_started_by_you(mark_people_in(rows, request.user), request.user),
+                                    request.user)]
     # Waiting first, then running, then genuinely-most-recent: last_activity_at,
     # not created_at, under which a dead repo and a live one "created" in the
     # same report sweep interleave arbitrarily. The client can re-group by
@@ -242,7 +245,9 @@ def search_sessions(
     more = len(page) > limit
     page = page[:limit]
     return {
-        "sessions": [session_out(s, viewer=request.user) for s in mark_started_by_you(mark_people_in(page, request.user), request.user)],
+        "sessions": [session_out(s, viewer=request.user)
+                     for s in mark_brain_only(mark_started_by_you(mark_people_in(page, request.user), request.user),
+                                              request.user)],
         "next_cursor": _encode_cursor(page[-1]._activity, page[-1].id) if more else None,
     }
 
@@ -259,8 +264,13 @@ def _read_window(request: HttpRequest, session, rows) -> list:
 
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
 @gate("session-acl")
-def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False):
+def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False,
+                view: Literal["full", "conversation", "userinput", "opening"] | None = None):
     """A session and the tail of its transcript.
+
+    `view` names a whole-session read instead of the tail: `full` every row,
+    `conversation` user and assistant text, `userinput` what people typed, `opening`
+    their first few lines, short. Omitted, the tail as before.
 
     `session_id` is the session's id. When no session you can read has that id,
     it is tried as the runner's `session_key` instead (a cloud session's key is
@@ -272,24 +282,31 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     # last SESSION_TAIL_DEFAULT messages + a backward cursor; ?full=true is the
     # explicit escape hatch. Scroll-back pages via GET /{id}/messages?before=.
     try:
-        session = _session_or_404(request, session_id)
+        session = _session_or_404(request, session_id, brain=True)
     except Http404:
-        session = _session_by_key_or_404(request, session_id)
+        session = _session_by_key_or_404(request, session_id, brain=True)
+    session._brain_only = brain_only = is_brain_only(session, request.user)
     data = session_out(session, viewer=request.user)
     if data["you_are_in_it"] is False:
         asked = join_requests.latest_of(session, request.user)
         data["your_join_request"] = asked.status if asked is not None else ""
-    rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
+    if view is None:
+        rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
+    else:
+        rows = transcript_read.view_messages(session, view)
+        has_more, oldest = False, (rows[0].turn_index if rows else None)
     rows = _read_window(request, session, rows)
     data["messages"] = [MessageOut.from_orm(m) for m in rows]
     data["has_more_before"] = has_more
     data["oldest_loaded_turn_index"] = oldest
     # Same reader as the WS snapshot, so opening a session over REST and over
     # the socket can never disagree about whether an agent is waiting.
-    data["menu"] = serializers.pending_menu(session)
-    data["subagents"] = serializers.session_subagents(session)
-    data["turn_status"] = status_feed.status_for_session(session)
-    data["my_role"] = access.role_for(request.user, session)
+    # Read only through the brain's project leg: the transcript, scrubbed, and nothing else that carries
+    # words (a pending question, a subagent's task, a turn's error).
+    data["menu"] = None if brain_only else serializers.pending_menu(session)
+    data["subagents"] = [] if brain_only else serializers.session_subagents(session)
+    data["turn_status"] = None if brain_only else status_feed.status_for_session(session)
+    data["my_role"] = access.role_for(request.user, session, brain=True)
     data["can_add_people"] = access.can_add_people(request.user, session)
     data["audience"] = audience.summary(session, request.user)
     data["can_move"] = filing.can_move(request.user, session)
@@ -489,7 +506,7 @@ def list_messages(
     # Clamp here (not in transcript_read.messages_before, which stays a pure helper) —
     # an unclamped `?limit=-1`/`0` hits `queryset[:limit]` and raises
     # ValueError("Negative indexing is not supported"), surfacing as a 500.
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, brain=True)    # scrubbed and recorded (`_read_window`)
     limit = clamp_limit(limit)
     rows, has_more = transcript_read.messages_before(session, before=before, limit=limit)
     rows = _read_window(request, session, rows)
@@ -533,11 +550,12 @@ def list_human_inputs(
     runner's `session_key`.
     """
     try:
-        session = _session_or_404(request, session_id)
+        session = _session_or_404(request, session_id, brain=True)    # scrubbed and recorded below
     except Http404:
-        session = _session_by_key_or_404(request, session_id)
+        session = _session_by_key_or_404(request, session_id, brain=True)
     rows, next_cursor, source = transcript_read.human_inputs(
         session, after=after, limit=clamp_limit(limit))
+    rows = transcript_read.brain_redacted(session, rows, user=request.user)
     return {
         "messages": [MessageOut.from_orm(m) for m in rows],
         "next_cursor": next_cursor,

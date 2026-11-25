@@ -55,12 +55,24 @@ class ClientError(Exception):
         self.body = body
 
 
+#: How long `Client.runner_mailboxes` reuses its last answer.
+MAILBOXES_TTL_SECONDS = 600.0
+
+
 class Client:
     def __init__(self, base_url: str, token):
         """`token`: the owner's PAT, or a `runner_token.RunnerCredential` — this
         runner signing in with its device key, the PAT only as its fallback."""
         self.base_url = base_url.rstrip("/")
         self._token = token
+        # (fetched_at monotonic, rows) of the last `runner_mailboxes` answer.
+        self._mailboxes: tuple[float, list[dict]] | None = None
+        # The `/sync` answer the drains read while canopy-web serves it
+        # (runner_sync.py); None (or inactive) = each drain asks its own route.
+        self.sync_box = None
+        # The (project, emdash task) set of the last session report: a change is
+        # a binding the server adds without moving the sync version.
+        self._reported: frozenset | None = None
 
     @property
     def token(self) -> str:
@@ -85,8 +97,7 @@ class Client:
         idempotent — a retry after the server already claimed a turn would risk a
         double-claim. Everything else is either a pure state transition
         (`start`/`finish`/`fail_turn`), an upsert (`record_session`), a level
-        report (`heartbeat`), or idempotency-keyed (`enqueue_turn`,
-        `fire_schedule`).
+        report (`heartbeat`), or idempotency-keyed (`enqueue_turn`).
         """
         label = label or path
         attempts = RETRY_ATTEMPTS if retry else 1
@@ -211,6 +222,33 @@ class Client:
         So does `health`: a laptop reports one only once it has refreshed (refresh.py),
         and its `bootstrapped_at` is what discharges the runner page's Refresh.
         """
+        body = self.heartbeat_body(
+            active_turn_ids, degraded=degraded, note=note, host=host, ready=ready,
+            ready_note=ready_note, code_branch=code_branch, code_version=code_version,
+            code_sha=code_sha, code_committed_at=code_committed_at, projects=projects,
+            profiles=profiles, mailboxes_readable=mailboxes_readable, health=health)
+        # Every heartbeat path ends here, so this is where the menu bar learns
+        # whether canopy still accepts this box (server_status.py).
+        from . import server_status
+        try:
+            _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
+        except Exception as exc:
+            server_status.refused(exc)
+            raise
+        server_status.accepted(payload or {})
+        if self.sync_box is not None and isinstance(payload, dict):
+            self.sync_box.see(payload.get("sync_version"))
+        return payload or {}
+
+    def heartbeat_body(self, active_turn_ids: list[str], degraded: bool = False,
+                       note: str = "", host: str = "", ready: bool = True, ready_note: str = "",
+                       code_branch: str | None = None, code_version: str | None = None,
+                       code_sha: str | None = None, code_committed_at: int | None = None,
+                       projects: list[str] | None = None, profiles: int | None = None,
+                       mailboxes_readable: list[str] | None = None,
+                       health: dict | None = None) -> dict:
+        """The heartbeat's body (see `heartbeat`): the REST beat posts it, and the
+        control socket sends it as a `heartbeat` action (`main.run_once`)."""
         from . import provenance
         body = {"active_turn_ids": active_turn_ids, "degraded": degraded, "note": note,
                 "host": host, "ready": ready, "ready_note": ready_note,
@@ -236,6 +274,16 @@ class Client:
         # Delivers a follow-up into a running chat turn.
         from .chat_bridge import MIDTURN_VERSION
         body["midturn"] = MIDTURN_VERSION
+        # Makes a stored agent's checkout its emdash project, so it may be handed the
+        # agent's confined turns (`stored_agents.ensure_emdash_project`).
+        from .stored_agents import STORED_PROJECTS_VERSION
+        body["stored_projects"] = STORED_PROJECTS_VERSION
+        # The reply this loop reads is the slim one (`RunnerHeartbeatSlimOut`): its
+        # fields are exactly what server_status, honour_stops and the observers read.
+        body["slim_reply"] = 1
+        # This code reads its work through `GET /runners/{id}/sync` when `v` moves
+        # (runner_sync.py), and each drain route on a server without it.
+        body["sync"] = 1
         # The model this box's sessions start on (`claude_model.configured`), so
         # the chat can size a session's context window. Every beat, absent = "".
         from . import claude_model
@@ -243,16 +291,7 @@ class Client:
         # Which OS this is, so the server's fix-it text fits the box (Runner.platform).
         from .browser_pair import platform_name
         body["platform"] = platform_name()
-        # Every heartbeat path ends here, so this is where the menu bar learns
-        # whether canopy still accepts this box (server_status.py).
-        from . import server_status
-        try:
-            _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
-        except Exception as exc:
-            server_status.refused(exc)
-            raise
-        server_status.accepted(payload or {})
-        return payload or {}
+        return body
 
     def set_paused(self, runner_id: str, paused: bool, note: str = "",
                    until: str = "") -> dict:
@@ -347,6 +386,12 @@ class Client:
             f"/runners/{runner_id}/sessions",
             {"sessions": sessions, "archived": archived or [], "complete": complete},
         )
+        held = frozenset((str(s.get("project") or ""), str(s.get("emdash_task") or ""))
+                         for s in sessions if isinstance(s, dict))
+        if held != self._reported:
+            self._reported = held
+            if self.sync_box is not None:
+                self.sync_box.stale()
 
     def claim_admission_notices(self, runner_id: str, mailboxes: dict[str, str]) -> list[dict]:
         """Lease the automatic replies canopy-web could not send, for the agents
@@ -363,8 +408,46 @@ class Client:
 
     def sync_streams(self, runner_id: str) -> list[dict]:
         """The sessions a viewer is watching, which this runner should tail live."""
+        if self._syncing():
+            return self.sync_box.streams()
         _, payload = self._call("GET", f"/runners/{runner_id}/streams")
         return (payload or {}).get("streams", [])
+
+    def _syncing(self) -> bool:
+        return self.sync_box is not None and self.sync_box.active
+
+    def get_sync(self, runner_id: str, etag: str = "") -> tuple[int, str, dict | None]:
+        """`GET /runners/{id}/sync`: (200, etag, body), or (304, etag, None) when
+        `etag` is still current. A server without the route raises ClientError with
+        status 404/405. Its own request, not `_call`: it sends `If-None-Match` and
+        reads `ETag`, and urllib raises a 304 as an HTTPError."""
+        url = f"{self.base_url}/api/harness/runners/{runner_id}/sync"
+        for attempt in (1, 2):
+            req = urllib.request.Request(url, method="GET")
+            bearer = self.token
+            if bearer:
+                req.add_header("Authorization", f"Bearer {bearer}")
+            if etag:
+                req.add_header("If-None-Match", etag)
+            _identify(req)
+            try:
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                    raw = resp.read()
+                    return resp.status, resp.headers.get("ETag", ""), (json.loads(raw) if raw else None)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 304:
+                    return 304, exc.headers.get("ETag", "") or etag, None
+                from .runner_token import PREFIX, RunnerCredential
+
+                if (exc.code == 401 and attempt == 1 and bearer.startswith(PREFIX)
+                        and isinstance(self._token, RunnerCredential) and self._token.drop()):
+                    continue
+                raise ClientError(f"GET /sync -> {exc.code}", transient=exc.code >= 500,
+                                  status=exc.code) from exc
+            except (urllib.error.URLError, TimeoutError, ConnectionError,
+                    http.client.HTTPException, ValueError) as exc:
+                raise ClientError(f"GET /sync -> {exc!r}", transient=True) from exc
+        raise ClientError("GET /sync -> 401", status=401)
 
     def post_session_stream(self, runner_id: str, session_id: str, events: list[dict],
                             transcript_id: str = "") -> None:
@@ -387,6 +470,8 @@ class Client:
 
     def sync_closes(self, runner_id: str) -> list[dict]:
         """Sessions we have been asked to close and have not closed yet."""
+        if self._syncing():
+            return self.sync_box.take("closes")
         _, payload = self._call("GET", f"/runners/{runner_id}/closes")
         return (payload or {}).get("closes", [])
 
@@ -400,6 +485,8 @@ class Client:
 
     def sync_handoffs(self, runner_id: str) -> list[dict]:
         """What we owe as the SOURCE of a transfer: worktrees to pack, tasks to close."""
+        if self._syncing():
+            return self.sync_box.take("handoffs")
         _, payload = self._call("GET", f"/runners/{runner_id}/handoffs")
         return (payload or {}).get("handoffs", [])
 
@@ -444,6 +531,8 @@ class Client:
 
     def sync_menu_answers(self, runner_id: str) -> list[dict]:
         """Answers a human has given that we have not pressed yet."""
+        if self._syncing():
+            return self.sync_box.take("answers")
         _, payload = self._call("GET", f"/runners/{runner_id}/menu-answers")
         return (payload or {}).get("answers", [])
 
@@ -457,6 +546,8 @@ class Client:
     def sync_session_interrupts(self, runner_id: str) -> list[dict]:
         """Stops a person asked of a session here that we have not carried out yet
         (the durable twin of the `session_interrupt` frame)."""
+        if self._syncing():
+            return self.sync_box.take("interrupts")
         _, payload = self._call("GET", f"/runners/{runner_id}/session-interrupts")
         return (payload or {}).get("interrupts", [])
 
@@ -468,6 +559,8 @@ class Client:
 
     def sync_backfills(self, runner_id: str) -> list[dict]:
         """Sessions the server asked this runner to ship full history for."""
+        if self._syncing():
+            return self.sync_box.take("backfills")
         _, payload = self._call("GET", f"/runners/{runner_id}/backfills")
         return (payload or {}).get("backfills", [])
 
@@ -522,27 +615,6 @@ class Client:
         )
         return not (payload or {}).get("truncated", False)
 
-    def sync_schedules(self, runner_id: str) -> list[dict]:
-        """The schedules this runner may fire (tenant-scoped server-side). The runner
-        evaluates their cron locally and reports what came due — the server stores the
-        config, the runner is the tick. Response is a Page; callers want the items."""
-        from urllib.parse import urlencode
-        _, payload = self._call("GET", "/schedules/?" + urlencode({"runner_id": runner_id}))
-        return (payload or {}).get("items", [])
-
-    def fire_schedule(self, schedule_id: int, runner_id: str, slot: str) -> dict:
-        """Report a due slot; the server materializes it as a normal turn.
-
-        Safe to race — both macOS-account runners may report the same slot, and the
-        server's slot-derived idempotency_key collapses it inside enqueue_turn. The
-        route answers 201 either way, so a fresh turn and a replay are indistinguishable
-        here (and both are success — there is nothing for the runner to reconcile).
-        """
-        from urllib.parse import urlencode
-        path = f"/schedules/{schedule_id}/fire?" + urlencode({"runner_id": runner_id})
-        _, payload = self._call("POST", path, {"slot": slot})
-        return payload or {}
-
     def enqueue_turn(self, agent_slug: str, origin: str, idempotency_key: str, *,
                      prompt: str = "", origin_ref: dict | None = None,
                      routing: str = "prefer_local") -> dict:
@@ -564,9 +636,19 @@ class Client:
         InboundPushConfig so a tenant sets one in the UI, instead of someone
         hand-editing runner.json on every box. (An older server sends only the
         rows with a topic, and no `agent_slug`.)
+
+        Cached for MAILBOXES_TTL_SECONDS: the rows change when someone edits a
+        workspace's push config or an agent's mailbox, and both callers (the probe
+        and the watch re-arm) act on day-scale clocks, while the loop ticks every
+        few seconds. A failed fetch raises as before and caches nothing.
         """
+        now = time.monotonic()
+        if self._mailboxes is not None and now - self._mailboxes[0] < MAILBOXES_TTL_SECONDS:
+            return list(self._mailboxes[1])
         _status, payload = self._call_api("/inbound/runner-mailboxes", method="GET")
-        return (payload or {}).get("items", []) if isinstance(payload, dict) else []
+        rows = (payload or {}).get("items", []) if isinstance(payload, dict) else []
+        self._mailboxes = (now, rows)
+        return list(rows)
 
     def report_watch(self, address: str, expires_at, error: str = "") -> dict:
         """Tell canopy-web the state of this mailbox's Gmail watch.
@@ -622,6 +704,11 @@ class Client:
 
     def fail_turn(self, turn_id: str, note: str) -> None:
         self._call("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+
+    def abort_turn(self, turn_id: str, reason: str, tool: str = "") -> None:
+        """End a turn FAILED and raise it as a failure investigation — also a turn that
+        already reads DONE, as every laptop turn does once its session exists."""
+        self._call("POST", f"/turns/{turn_id}/abort", {"reason": reason, "tool": tool})
 
     def get_turn(self, turn_id: str) -> dict:
         _, payload = self._call("GET", f"/turns/{turn_id}")

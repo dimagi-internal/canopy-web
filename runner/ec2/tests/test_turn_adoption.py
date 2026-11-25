@@ -335,6 +335,30 @@ def test_an_acp_turn_survives_its_daemon_and_is_finished_by_the_next(cr, tmp_pat
     assert [e["payload"]["text"] for e in emitted if e["kind"] == "assistant"] == ["hello world"]
 
 
+def test_an_acp_turn_cut_off_before_its_prompt_is_reported_without_a_session(cr, tmp_path, monkeypatch):
+    # The daemon went after the adapter opened its session but before `session/prompt`:
+    # the message reached nobody, so the turn is reported sessionless and runs again.
+    _quiet_conclusion(cr, monkeypatch)
+    core = cr._acp_core()
+    assert core is not None
+    spawn = lambda argv, cwd, env: cr.RelayProc.spawn(  # noqa: E731
+        TURN, list(argv), cwd=cwd, env=dict(os.environ), stdin=True, executor="acp")
+    agent = core.AcpAgent(cwd=tmp_path, argv=_fake_adapter(tmp_path, tmp_path / "gate"), spawn=spawn)
+    agent.start()
+    agent.new_session(timeout=10)
+    attempt = cr.TURN_STATE_ROOT / TURN / "attempt-1"
+    _state(cr, tmp_path, executor="acp", cli_session_id="s1")
+
+    summary = cr.adopt_turns("rid")
+    assert summary["adopted"] == [] and summary["reported"] == [f"{TURN[:8]} (never prompted)"]
+    [finish] = _finishes(cr)
+    assert finish["status"] == "failed" and "given its message" in finish["result_note"]
+    assert "session_key" not in finish          # sessionless: canopy-web runs it again
+    assert cr.RelayProc.attach(attempt).poll() is not None      # the adapter was stopped
+    assert "lost" in _lifecycle_events(cr)
+    assert not (cr.TURN_STATE_ROOT / TURN).exists()
+
+
 def test_each_transition_is_one_journal_line_and_one_turn_event(cr, capsys):
     cr._lifecycle(TURN, "adopted", pid=42, agent="ace", session="", executor="acp")
     line = next(l for l in capsys.readouterr().out.splitlines() if "turn-lifecycle" in l)

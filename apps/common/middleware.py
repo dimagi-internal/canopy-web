@@ -18,7 +18,7 @@ from config.views import FLAT_ARTIFACT_PATH
 
 PUBLIC_PATH_PREFIXES = (
     "/accounts/",            # allauth login/logout/callback
-    "/admin/",               # Django admin has its own auth
+    "/admin/",               # the admin gates itself: staff, Google session only (apps/common/admin_access.py)
     "/health/",              # health check for Cloud Run
     "/static/",              # static assets
     # The built SPA's content-hashed bundles — the same class of thing as
@@ -47,8 +47,10 @@ PUBLIC_PATH_PREFIXES = (
     # unrevoked app that has valid frame origins, and carries no data).
     "/embed/",
     "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
+    "/api/sites/resources-updated",  # auth=None — self-enforces: a JWS signed by the site's own registered key, naming only that site's resource URIs (apps/host_grants/resources_updated.py)
     "/api/sites/agents",         # auth=None — self-enforces: a request signed by the site's own registered key (apps/host_grants/api.py)
     "/api/sites/sign-offs",      # auth=None — self-enforces: a request signed by the site's own registered key (apps/host_grants/sign_offs_api.py); the approver's /api/sign-offs/ stays behind login
+    "/api/sites/contacts",       # auth=None — self-enforces: a request signed by the site's own registered key, writing only that site's own people (apps/host_grants/contact_records_api.py); also /erase
     "/api/sites/runner-attestations",  # auth=None — self-enforces: a request signed by the site's own registered key, carrying a runner's single-use device-key proof (apps/host_grants/runner_attestations_api.py)
     "/api/runner-sessions/",     # auth=None — self-enforces: an approved device key's proof (apps/harness/api_runner_sessions.py)
     "/api/harness/runners/pair-by-role",  # auth=None — self-enforces: the box's instance-role proof + an invitation its creator approved behind a passkey (apps/harness/api_runner_invitations.py)
@@ -60,6 +62,9 @@ PUBLIC_PATH_PREFIXES = (
     # anything that can sign (apps/oauth_server/views_oauth.py). Exact paths.
     "/oauth/client.json",
     "/oauth/jwks.json",
+    # The CLI mint's code exchange: the loopback holds no credential yet, and the
+    # one-time code `cli_authorize` sent it is the proof (apps/tokens/cli_authorize_views.py).
+    "/auth/cli/token/",
     # The OAuth token endpoint and discovery documents. The token endpoint
     # self-enforces every grant it serves: canopy's own jwt-bearer grant
     # (private_key_jwt + DPoP + a signed grant, one allowed client —
@@ -108,6 +113,11 @@ PUBLIC_PATH_PREFIXES = (
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
     "/api/beta-requests",        # auth=None — the public site's request-access form; grants nothing
     "/api/public-apps/",         # auth=None — an enabled AND public workspace app's public pages, projections and create-only forms (apps/workspace_apps)
+    # A stored agent's git repository (apps/agent_definitions/git_http.py): git asks
+    # with HTTP Basic, which this middleware cannot see, and needs the view's own 401
+    # with `WWW-Authenticate: Basic` to prompt — never a 302 to Google sign-in. The view
+    # takes a canopy token and nothing else, and serves reads only.
+    "/git/",
     # NOTE: "/about" and "/get-started" are NOT here. Every other entry above
     # ends in "/" (or is a full path), so prefix-matching it is safe; "/about"
     # alone would also admit any future "/about-billing" or "/aboutus" route as
@@ -229,7 +239,10 @@ def _is_storyboard_link(request) -> bool:
 # page can take the pairing secret out of the QR link's `#pair=` fragment (which a
 # redirect to Google would drop) before the app sends a signed-out phone to sign in.
 # The shell reads nothing; every /api/listen/ route needs a session.
-_PUBLIC_PAGES = frozenset({"/about", "/get-started", "/listen"})
+# /ext/panel/ is the browser extension's side panel (apps/embedding/extension.py): it is
+# framed, and a framed bounce to Google is refused, so a signed-out panel must render its
+# own "Sign in to Canopy" button. The shell carries no data; every read needs a session.
+_PUBLIC_PAGES = frozenset({"/about", "/get-started", "/listen", "/ext/panel/", "/ext/panel"})
 
 
 def _is_public_page(path: str) -> bool:

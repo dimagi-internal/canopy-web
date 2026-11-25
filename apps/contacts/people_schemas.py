@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -166,6 +166,11 @@ class SessionAgentOut(StrictModel):
     name: str
 
 
+class PurposeOut(StrictModel):
+    code: str
+    description: str
+
+
 class SessionMemoryOut(StrictModel):
     """Your agent memory as it applies in one session, and what you have granted
     the session's agent. A feature that is on here but not granted is what the
@@ -177,6 +182,14 @@ class SessionMemoryOut(StrictModel):
     agent: SessionAgentOut | None = Field(default=None, description="The agent a grant here goes to.")
     categories: list[str] = Field(default_factory=list,
                                   description="The categories a grant covers (shown before you grant).")
+    purposes: list[PurposeOut] = Field(default_factory=list, description="What a grant is for, each in words "
+                                                                          "(HCP v2 6.1.5.2), shown before you grant.")
+    excluded_categories: list[str] = Field(default_factory=list, description="Categories a standing rule of "
+                                           "yours keeps from a grant to this agent (HCP v2 6.3), shown before you grant.")
+    longest_copy_hours: int = Field(default=1, description="The longest what an agent reads may be used before it "
+                                    "must be read again (HCP v2 7.6); it stops at once if you revoke.")
+    purposes_by_feature: dict[str, list[str]] = Field(default_factory=dict, description="Which purpose codes each "
+                                                      "feature (record, use) serves.")
     reach: str = Field(default="", description="What a grant here would reach, in words — by "
                                                "default the agent's organisation, all divisions "
                                                "(HCP 4.1.5.1). Derived, never chosen here.")
@@ -459,7 +472,8 @@ class MemoryViewersOut(StrictModel):
 
 
 class SessionReviewerIn(StrictModel):
-    agent: str = Field(description="The slug of an agent in a workspace you belong to.")
+    agent: str | None = Field(None, description="DEPRECATED and ignored: opting in names no agent. Coaching is "
+                                       "canopy's; who coaches you is shown in `coaches`.")
 
 
 class SessionReviewerOut(StrictModel):
@@ -496,11 +510,25 @@ class SessionReviewStateOut(StrictModel):
         None, description="Null when this is not your own session or no coach is within your reach.")
 
 
+class CoachOut(StrictModel):
+    kind: Literal["agent", "person"]
+    name: str
+    slug: str = Field(description="The agent's slug; empty for a person.")
+    workspace: str = Field(description="The workspace this coach is designated for (and everything below it).")
+
+
 class SessionReviewersOut(StrictModel):
-    reviewers: list[SessionReviewerOut]
-    agents: list[ViewerChoiceOut] = Field(description="Agents you could let review your sessions.")
+    on: bool = Field(description="Whether you have opted into coaching.")
+    since: dt.datetime | None = Field(None, description="When you opted in.")
+    coaches: list[CoachOut] = Field(
+        description="Who coaches you now: what you agree to when you opt in. Empty means no coach "
+                    "reaches your workspaces, so opting in would read nothing.")
+    reviewers: list[SessionReviewerOut] = Field(
+        description="Compatibility: the agents among `coaches`, while you are opted in. An agent's turn "
+                    "asked by you sees only itself.")
+    agents: list[ViewerChoiceOut] = Field(description="Deprecated: always empty.")
     coach: CoachOfferOut | None = Field(
-        None, description="The coach canopy offers, when there is one you can reach.")
+        None, description="The agent canopy offers for one-session reviews, when there is one you can reach.")
 
 
 class SessionGranterOut(StrictModel):

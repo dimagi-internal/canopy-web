@@ -21,6 +21,10 @@ reads made during it (`/credentials/resolve` with that turn's `X-Canopy-Turn-Id`
 """
 from __future__ import annotations
 
+import contextvars
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -74,10 +78,35 @@ def request(agent, user) -> AgentLicense:
     return lic
 
 
+_read_once: contextvars.ContextVar[dict | None] = contextvars.ContextVar("license_read_once", default=None)
+
+
+@contextmanager
+def read_once() -> Iterator[None]:
+    """Inside the block, `active` reads each (agent, person) once. For a read-only
+    request that asks one owner's license of each of their boxes (a keeper's
+    `GET /vault-keeper`); a demotion still applies from the next request."""
+    token = _read_once.set({})
+    try:
+        yield
+    finally:
+        _read_once.reset(token)
+
+
 def active(agent, user) -> AgentLicense | None:
     """The person's license if it is ACTIVE and the caller list still gives them the
-    whole agent — re-asked every time, so a demotion takes effect at once."""
+    whole agent — re-asked every time (once per `read_once` block), so a demotion
+    takes effect at once."""
+    memo = _read_once.get()
+    if memo is None:
+        return _active(agent, user)
+    key = (agent.pk, user.pk)
+    if key not in memo:
+        memo[key] = _active(agent, user)
+    return memo[key]
 
+
+def _active(agent, user) -> AgentLicense | None:
     lic = AgentLicense.objects.filter(agent=agent, user=user, status=AgentLicense.ACTIVE).first()
     if lic is None or _decision(agent, user).access != access.FULL:
         return None

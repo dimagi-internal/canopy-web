@@ -5,6 +5,8 @@ Registered on the harness router (`api.router`), in the order api.py imports
 this module, so the schema and the MCP tool names are unchanged."""
 from __future__ import annotations
 
+import datetime as dt
+
 import logging
 import uuid
 
@@ -54,6 +56,9 @@ from .schemas import (
     TranscriptAppendIn,
     TranscriptAppendOut,
     TurnAbortIn,
+    LiveTextIn,
+    LiveTextOut,
+    PageBriefOut,
     TurnEventCountOut,
     TurnEventsIn,
     TurnEventsOut,
@@ -155,7 +160,14 @@ def list_turns(
     limit: int = 100,
     huddle: str | None = None,
     parent_turn: uuid.UUID | None = None,
+    before: dt.datetime | None = None,
+    since: dt.datetime | None = None,
+    runner: str | None = None,
 ):
+    # Paging: the list is newest first and clamped to 200, so a window longer than
+    # 200 turns is read by passing the last row's `created_at` back as `?before=`.
+    # `?since=` bounds the window from below; `?runner=` (a runner's name) keeps the
+    # turns that runner claimed — what a box's occupancy is measured from.
     # `?agent=` names one agent, so the list cannot mix organisations: read it
     # within that agent's tenant tree and need no pin (fleet surveys — Ada's
     # `conduct`, `canopy agent health` — ask this per agent, unpinned). Without
@@ -195,6 +207,12 @@ def list_turns(
         qs = qs.filter(origin_ref__huddle=huddle)
     if parent_turn:
         qs = qs.filter(parent_turn_id=parent_turn)
+    if before:
+        qs = qs.filter(created_at__lt=before)
+    if since:
+        qs = qs.filter(created_at__gte=since)
+    if runner:
+        qs = qs.filter(claimed_by__name=runner)
     limit = max(1, min(limit, 200))  # clamp; default 100 keeps existing callers unchanged
     from . import turn_access
 
@@ -253,6 +271,59 @@ def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEv
         if event.kind == owner_ask.EVENT:
             owner_ask.record(turn, (event.payload or {}).get("line"))
     return {"count": count}
+
+
+def _running_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+    """A turn the caller reports on (`reporting_turn_or_404`) that is still running."""
+    turn = reporting_turn_or_404(request, turn_id)
+    if turn.status not in (Turn.CLAIMED, Turn.RUNNING):
+        raise ProblemError(409, "Turn not running", detail=f"status={turn.status}")
+    return turn
+
+
+@router.get("/turns/{turn_id}/page-brief", response=PageBriefOut)
+@gate("runner")
+def get_turn_page_brief(request: HttpRequest, turn_id: uuid.UUID, poll: bool = False):
+    """A LEAN page turn's opening context, for the runner to add to its session's system prompt:
+    the conversation's page and the site's tools, exactly as `current_page` and
+    `site_tools` would answer this turn — through the gateway, as the person who sent,
+    under their own act-as-you permission. Only for the box running the turn, only while it
+    runs, and only for a turn whose agent asked for lean page turns (`page_lean:`)."""
+    from apps.agents import published_profiles  # noqa: PLC0415 — the interface reads models, loaded with a call
+    from . import page_brief  # noqa: PLC0415 — reads the gateway, loaded with a call
+
+    turn = _running_turn_or_404(request, turn_id)
+    if not published_profiles.lean_page_turn(turn):
+        return {"refused": "not_a_lean_page_turn"}
+    out = page_brief.build(turn, poll=poll)
+    if out.get("waiting"):
+        # The person is being asked for their passkey: the runner asks again (`poll`)
+        # until they confirm or the turn's wait is over. Only the outcome is logged.
+        return out
+    # On the turn's own ledger: which site and how many tools, never what came back.
+    ledger.append_events(turn, [{"kind": "lifecycle", "payload": {
+        **({"waited": True} if poll else {}),
+        "event": "page_brief", "site": out["site"], "tools": out["tools"],
+        **({"refused": out["refused"][:200]} if out["refused"] else {})}}])
+    return out
+
+
+@router.post("/turns/{turn_id}/live-text", response=LiveTextOut)
+@gate("runner", kind="turn")
+def post_turn_live_text(request: HttpRequest, turn_id: uuid.UUID, payload: LiveTextIn):
+    """The reply the agent is writing right now, whole so far, for the people watching its
+    chat: fanned out to the conversation's socket as `chat.live_text` and never stored. The
+    stored reply arrives as it always has and takes its place. A sensitive conversation's
+    words never stream."""
+    from apps.realtime import groups  # noqa: PLC0415 — realtime imports harness
+
+    turn = _running_turn_or_404(request, turn_id)
+    if not turn.chat_session_id or sensitivity.is_sensitive(turn):
+        return {"sent": False}
+    groups.publish(groups.session_group(turn.chat_session_id), {
+        "type": "chat.live_text", "turn_id": str(turn.pk),
+        "message": payload.message, "text": payload.text})
+    return {"sent": True}
 
 
 @router.get("/turns/{turn_id}/events", response=TurnEventsOut)

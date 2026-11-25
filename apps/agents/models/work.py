@@ -234,7 +234,7 @@ class AgentProject(models.Model):
     @property
     def done_task_count(self) -> int:
         cached = getattr(self, "_done_task_count", None)
-        return self.tasks.filter(status=AgentTask.DONE).count() if cached is None else cached
+        return self.tasks.filter(status=AgentTask.DONE, recurrence__isnull=True).count() if cached is None else cached
 
     @property
     def address(self) -> str:
@@ -314,14 +314,14 @@ class AgentProject(models.Model):
         # The list route counts every project in one query and caches it here;
         # a single fetched project counts its own.
         cached = getattr(self, "_task_count", None)
-        return self.tasks.count() if cached is None else cached
+        return self.tasks.filter(recurrence__isnull=True).count() if cached is None else cached
 
     @property
     def open_task_count(self) -> int:
         cached = getattr(self, "_open_task_count", None)
         if cached is not None:
             return cached
-        return self.tasks.filter(status__in=AgentTask.LIVE_STATUSES).count()
+        return self.tasks.filter(status__in=AgentTask.LIVE_STATUSES, recurrence__isnull=True).count()
 
     @property
     def waiting_task_count(self) -> int:
@@ -678,7 +678,7 @@ class AgentTask(models.Model):
         "self", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="subtasks",
     )
-    #: Set, this task is a recurring TEMPLATE: `{"every": "day"|"week"|"2weeks"|"month"|"as_needed",
+    #: Set, this task is a recurring TEMPLATE: `{"every": "day"|"weekdays"|"week"|"2weeks"|"month"|"as_needed",
     #: "weekday": "mon".."sun" (week and 2weeks only), "auto": bool}` (`services.recurrence.clean`).
     #: A template stays in backlog and never completes; its periods' work is its instances.
     #: Null: an ordinary task.
@@ -939,6 +939,11 @@ class AgentTask(models.Model):
         if tpl.project_id != self.project_id and tpl.project_id and tpl.project.is_personal:
             return None
         return tpl.key
+
+    @property
+    def template_title(self) -> str | None:
+        """The title of the template this is an instance of, shown under the same rule as `template_key`."""
+        return self.template.title if self.template_key else None
 
     @property
     def last_done(self):

@@ -48,6 +48,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.harness import acting_person
 from apps.tokens import kinds
 
 from . import hcp, people
@@ -97,7 +98,7 @@ def hcp_route(view):
     def wrapper(request: HttpRequest, *args, **kwargs):
         try:
             asked = (request.headers.get("HCP-Version") or "").strip()
-            if asked and asked != hcp.HCP_VERSION:
+            if asked and asked != hcp.HCP_VERSION and not (asked == "2.0" and request.path.endswith("hcp-configuration")):
                 raise hcp.HcpError("unsupported-version", f"this instance serves {hcp.HCP_VERSION}")
             return view(request, *args, **kwargs)
         except hcp.HcpError as err:
@@ -142,6 +143,7 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
         grant = hcp._expire_if_due(tok.grant)
         if grant.status != PersonGrant.ACTIVE:
             raise hcp.HcpError("invalid-token", f"the grant is {grant.status}")
+        hcp.enforce_rules(grant)                                        # v2 6.3: on every request
         hcp.require(grant.person, need, None)
         return Principal(person=grant.person, actor=hcp_oauth.client_actor(tok.client),
                          grant=grant, workspace_slug=None, client=tok.client)
@@ -191,15 +193,29 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
     grant = hcp.grant_for(person, agent=serving, session=hcp.session_of(turn), action=action)
     if grant is None:
         raise hcp.denied(hcp.NOT_GRANTED)
+    hcp.enforce_rules(grant)                                            # v2 6.3: on every request
     return Principal(person=person, actor=hcp.agent_actor(serving), grant=grant,
                      workspace_slug=serving.workspace_id, turn=turn)
 
 
+#: The credentials a governance act may arrive with: the person's browser session, or a PAT.
+#: Everything else is refused, however much its user may otherwise reach: an OAuth sign-in
+#: (`oauth`, a connector or a self-registered MCP client acting for the person), a site's or
+#: host grant's delegated token, an act-as token, a caller token, a contact's or a runner's.
+GOVERNANCE_KINDS = frozenset({kinds.SESSION, kinds.PAT})
+
+
 def _person_principal(request: HttpRequest) -> Principal:
-    """The audit log, revocation and export are the PERSON's (4.3.3, 4.2.1,
-    3.3.5): an agent — its own login or a caller token — is refused outright,
-    whatever turn it names."""
+    """The audit log, revocation, export, confirmations, rules and directives are the PERSON's
+    (4.3.3, 4.2.1, 3.3.5; v2 1.6 governance): only their own browser session or a PAT they minted
+    by hand. An agent (its own login, a turn's login, a caller token, anything naming a turn), a
+    token minted through an OAuth grant, a site's token and an HCP client's token are refused
+    outright, whatever turn they name. MCP never reaches these routes (`api_tools.EXCLUDED`)."""
+    kind = kinds.of_request(request)
     if (getattr(request, "hcp_access", None) is not None
+            or kind is None or kind.name not in GOVERNANCE_KINDS
+            or getattr(request, "via_mcp", False)
+            or acting_person.refusal(request) is not None
             or people.agent_of_login(request.user) is not None
             or kinds.speaks_for_a_turn(request)):
         raise hcp.denied("only the person may do this")
@@ -263,6 +279,7 @@ class HcpSearchIn(_Body):
     purpose: str = Field(description="Plain language statement of purpose. Logged to the person's audit trail.")
     maxEntries: int = Field(default=hcp.DEFAULT_MAX_ENTRIES, description="Maximum entries to return. Default 5, maximum 20.")
     responseDetail: str = Field(default="full", description='"full" or "minimal" (id, category, dimension, value).')
+    purposeCode: str | None = Field(default=None, description="Optional (v2): the purpose code this read is for, one your grant carries. Omitted, the grant's own default is used.")
 
 
 class HcpAddIn(_Body):
@@ -275,6 +292,8 @@ class HcpAddIn(_Body):
     confidence: str | None = Field(default=None, description="high | medium | low — required for model-inferred, omitted otherwise.")
     sourceContext: str = Field(description="Conversation or document id this was derived from (e.g. turn:<id>).")
     model: str | None = Field(default=None, description="The model id that produced a model-inferred entry, e.g. claude-opus-5-5")
+    permittedPurposes: list[str] | None = Field(default=None, description="Optional (v2): purpose codes this entry may be used for. Omitted means no limit.")
+    derivedFrom: list[dict] | None = Field(default=None, description="Optional (v2): what this was inferred from — each {entryId} of another entry, or {source: {kind, ref}} such as a session. Recorded as a derivedFrom relationship.")
 
 
 class HcpEntryIn(_Body):
@@ -350,7 +369,12 @@ def _by_user(request: HttpRequest):
 def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:
     if detail == "minimal":
         return hcp.to_minimal(fact)
-    return hcp.to_entry(fact, redact=not p.actor.is_person)
+    entry = hcp.to_entry(fact, redact=not p.actor.is_person)
+    if not p.actor.is_person:
+        # v2 7.6, additive: when this copy stops being usable without fetching it again.
+        entry["record"]["metadata"]["canopy:useUntil"] = hcp.disclosure.use_until(
+            fact, notified=hcp.disclosure.has_notification_endpoint(p.grant)).isoformat()
+    return entry
 
 
 # --- discovery -------------------------------------------------------------------
@@ -358,6 +382,7 @@ def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:
 
 @router.get("/.well-known/hcp-configuration", auth=None, operation_id="hcp_configuration",
             summary="HCP discovery document")
+@hcp_route
 # `self` = the person's own instance; `hcp-grant` = an agent, for the person
 # who started its turn, under that client's grant. A missing entry is 403.
 # the discovery document; names no person
@@ -365,6 +390,11 @@ def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:
 def hcp_configuration(request: HttpRequest):
     """Appendix C: what this HCP instance supports."""
     base = request.build_absolute_uri("/api/hcp").rstrip("/")
+    if (request.headers.get("HCP-Version") or "").strip() == "2.0":
+        # v2 3.3 / 9.3: a client that asks for the version we also serve gets that version's document.
+        resp = JsonResponse(hcp.discovery_v2(base), content_type=LD_JSON)
+        resp["HCP-Version"] = "2.0"
+        return resp
     return _ok(hcp.discovery(base))
 
 
@@ -390,12 +420,15 @@ def hcp_search_preferences(request: HttpRequest, payload: HcpSearchIn, turn: str
         p.person, workspace_slugs=_search_workspace(p, workspace), query=payload.query,
         categories=payload.categories, purpose=payload.purpose, max_entries=payload.maxEntries,
         grant=p.grant, actor=p.actor, turn=p.turn,
-        project_id=project.pk if project is not None else None)
-    return _ok({"entries": [_render(f, p, payload.responseDetail) for f in hits],
-                "retrievalId": f"urn:uuid:{retrieval}",
-                "minimization": hcp.minimization(p.actor),
-                "categoriesSearched": searched or payload.categories,
-                "timestamp": timezone.now().isoformat()})
+        project_id=project.pk if project is not None else None, purpose_code=payload.purposeCode)
+    out = {"entries": [_render(f, p, payload.responseDetail) for f in hits],
+           "retrievalId": f"urn:uuid:{retrieval}",
+           "minimization": hcp.minimization(p.actor),
+           "categoriesSearched": searched or payload.categories,
+           "timestamp": timezone.now().isoformat()}
+    if not p.actor.is_person:
+        out["directives"] = hcp.rules.delivered(p.grant, hits)         # v2 6.4: with every result
+    return _ok(out)
 
 
 @router.post("/v1/preferences/add", operation_id="hcp_addPreference",
@@ -427,7 +460,8 @@ def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None
             # Learned while working on a board project: filed against it, so a later
             # turn on that project finds it first.
             project=hcp.project_of(p.turn, ws) if ws is not None else None,
-            captured_by_override="" if captured == p.actor.id else captured)
+            captured_by_override="" if captured == p.actor.id else captured,
+            permitted_purposes=payload.permittedPurposes, derived_from=payload.derivedFrom, grant=p.grant)
         return _ok({"entry": _render(fact, p)}, status=201)
     return _idempotent(request, body, run)
 
@@ -482,7 +516,8 @@ def hcp_create_entry(request: HttpRequest, payload: HcpEntryIn, turn: str | None
 @hcp_route
 @gate("self", "hcp-grant")
 def hcp_get_preference(request: HttpRequest, entry_id: str, purpose: str = "",
-                       version: int | None = None, turn: str | None = None):
+                       version: int | None = None, turn: str | None = None,
+                       purposeCode: str | None = None):
     """GET /v1/preferences/{entryId} (3.3.6). `purpose` is required and logged.
     `version` returns an earlier version. 403 for a missing entry too."""
     p = _principal(request, turn, hcp.USE)
@@ -493,9 +528,13 @@ def hcp_get_preference(request: HttpRequest, entry_id: str, purpose: str = "",
         fact = hcp.version_of(fact.entry_id, version) or None
         if fact is None:
             raise hcp.denied()
-    hcp.read_one(fact, actor=p.actor, grant=p.grant, purpose=purpose, turn=p.turn)
-    return _ok({"entry": _render(fact, p), "retrievalId": f"urn:uuid:{uuid.uuid4()}",
-                "minimization": hcp.minimization(p.actor), "timestamp": timezone.now().isoformat()})
+    hcp.read_one(fact, actor=p.actor, grant=p.grant, purpose=purpose, turn=p.turn,
+                 purpose_code=purposeCode)
+    out = {"entry": _render(fact, p), "retrievalId": f"urn:uuid:{uuid.uuid4()}",
+           "minimization": hcp.minimization(p.actor), "timestamp": timezone.now().isoformat()}
+    if not p.actor.is_person:
+        out["directives"] = hcp.rules.delivered(p.grant, [fact])
+    return _ok(out)
 
 
 @router.put("/v1/preferences/{entry_id}", operation_id="hcp_updatePreference",
@@ -570,6 +609,7 @@ def _event_dict(e: PersonAuditEvent) -> dict:
             "entryId": hcp.entry_urn(e.entry_id) if e.entry_id else None,
             "relatedEntryId": hcp.entry_urn(e.related_entry_id) if e.related_entry_id else None,
             "category": e.category or None, "purpose": e.purpose or None,
+            "purposeCode": e.purpose_code or None,
             "grantId": hcp.entry_urn(e.grant_id) if e.grant_id else None,
             "detail": e.detail or None}
 

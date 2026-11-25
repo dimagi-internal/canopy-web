@@ -480,7 +480,13 @@ export function MicRegrant({ onAllowed }: { onAllowed: () => void }): JSX.Elemen
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    el.setConstraints?.({ audio: true, video: false })
+    // Chrome takes an object per kind here, never `true` or `false` (those throw), and
+    // asks for only the kinds named. Whatever it makes of this, it must not break the page.
+    try {
+      el.setConstraints?.({ audio: {} })
+    } catch {
+      // The button still works with the browser's defaults.
+    }
     const onStream = () => {
       el.stream?.getTracks().forEach((t) => t.stop())
       allowed.current()

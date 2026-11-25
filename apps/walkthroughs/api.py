@@ -337,30 +337,6 @@ def upload_walkthrough(
             detail="cut_scene_ids names the scenes of a cut; send cut_id with it",
         )
 
-    # Backstop guard: refuse to publish a terminal DDD package artifact
-    # (hero_video / docs) for a narrative that has no story-bearing version —
-    # such a package renders as "no narrative". A supplied narrative_review_id is
-    # proof the narrative gate ran, so it's trusted and skips the check. Mirrors
-    # the plugin-side guard in scripts/ddd/upload.py so the rule holds even for
-    # older plugin versions or manual uploads.
-    if (
-        resolved_role in _NARRATIVE_REQUIRED_ROLES
-        and resolved_narrative_slug
-        and resolved_review_id is None
-        and not has_narrative_version(resolved_narrative_slug)
-    ):
-        raise ProblemError(
-            409,
-            "Narrative required",
-            type_=TYPE_CONFLICT,
-            detail=(
-                f"Refusing to publish a {resolved_role!r} artifact for narrative "
-                f"{resolved_narrative_slug!r}: it has no narrative version, so the run "
-                f"would render as \"no narrative\". Run the ddd-narrative-review "
-                f"gate for this run first, then re-upload."
-            ),
-        )
-
     # Resolve the owning workspace (tenant root) — one the uploader is ALREADY
     # in. The caller is never `ensure_member`ed into the org default (that would make
     # an upload a way to gain EDITOR of it); see wsvc.creation_workspace.
@@ -378,6 +354,31 @@ def upload_walkthrough(
             "Editor role required",
             type_=TYPE_FORBIDDEN,
             detail=f"uploading a walkthrough requires the editor role in {ws.slug!r}",
+        )
+
+    # Backstop guard (asked of the uploader's own workspace only, or it would
+    # answer whether another workspace has a narrative by that slug): refuse to publish a terminal DDD package artifact
+    # (hero_video / docs) for a narrative that has no story-bearing version —
+    # such a package renders as "no narrative". A supplied narrative_review_id is
+    # proof the narrative gate ran, so it's trusted and skips the check. Mirrors
+    # the plugin-side guard in scripts/ddd/upload.py so the rule holds even for
+    # older plugin versions or manual uploads.
+    if (
+        resolved_role in _NARRATIVE_REQUIRED_ROLES
+        and resolved_narrative_slug
+        and resolved_review_id is None
+        and not has_narrative_version(resolved_narrative_slug, {ws.slug})
+    ):
+        raise ProblemError(
+            409,
+            "Narrative required",
+            type_=TYPE_CONFLICT,
+            detail=(
+                f"Refusing to publish a {resolved_role!r} artifact for narrative "
+                f"{resolved_narrative_slug!r}: it has no narrative version, so the run "
+                f"would render as \"no narrative\". Run the ddd-narrative-review "
+                f"gate for this run first, then re-upload."
+            ),
         )
 
     # What made it (T76): the session/turn from the provenance headers (or the

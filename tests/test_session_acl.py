@@ -18,11 +18,12 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import access, attach
-from apps.harness import turn_asker
 from apps.canopy_sessions.consumers import SessionConsumer
 from apps.canopy_sessions.models import SessionParticipant
+from apps.harness import turn_asker
 from apps.workspaces.models import WorkspaceMembership
 from tests._source import iter_app_sources
+from tests.fixtures.brain_world import reads
 from tests.fixtures.session_world import make_member, make_user, session_world
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -46,7 +47,7 @@ def _socket_role(user, session):
         comm = WebsocketCommunicator(SessionConsumer.as_asgi(), f"/ws/canopy-sessions/{session.id}/")
         comm.scope["user"] = user
         comm.scope["url_route"] = {"kwargs": {"session_id": str(session.id)}}
-        connected, _ = await comm.connect()
+        connected, _ = await comm.connect(timeout=10)
         await comm.disconnect()
         return connected
     return async_to_sync(go)()
@@ -62,8 +63,8 @@ def _socket_pulls(user, session):
         comm.scope["user"] = user
         comm.scope["url_route"] = {"kwargs": {"session_id": str(session.id)}}
         before = await database_sync_to_async(attach.count)(session.id)
-        connected, _ = await comm.connect()
-        await comm.receive_json_from()   # the snapshot: sent once the attach decision is made
+        connected, _ = await comm.connect(timeout=10)
+        await comm.receive_json_from(timeout=10)   # the snapshot: sent once the attach decision is made
         during = await database_sync_to_async(attach.count)(session.id)
         await comm.disconnect()
         after = await database_sync_to_async(attach.count)(session.id)
@@ -71,9 +72,12 @@ def _socket_pulls(user, session):
     return async_to_sync(go)()
 
 
-def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person():
-    """ONE answer per (person, session), whichever route they come in by."""
-    people, shapes, _ws = _world()
+@pytest.mark.parametrize("brain", [False, True])
+def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person(brain, settings):
+    """ONE answer per (person, session), whichever route they come in by. With the brain's rollout gate
+    on as well as off: its project leg is a leg like the others."""
+    people, shapes, ws = _world()
+    reads(ws, brain)
     for who, user in people.items():
         c = _client(user)
         listed = {r["id"] for r in c.get("/api/canopy-sessions/?state=all").json()}
@@ -81,9 +85,10 @@ def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person():
             rows_before = SessionParticipant.objects.filter(session=s, user=user).count()
             rest = c.get(f"/api/canopy-sessions/{s.id}").status_code == 200
             sock = _socket_role(user, s)
-            expected = access.can_read(user, s)
+            # REST and the list carry the brain's project leg (they scrub); the socket never does.
+            expected = access.can_read(user, s, brain=True)
             assert rest is expected, f"REST disagrees on {who}/{label}"
-            assert sock is expected, f"socket disagrees on {who}/{label}"
+            assert sock is access.can_read(user, s), f"socket disagrees on {who}/{label}"
             assert (str(s.id) in listed) is expected, f"list disagrees on {who}/{label}"
             assert SessionParticipant.objects.filter(session=s, user=user).count() == rows_before, \
                 f"opening {label} as {who} wrote a participant row"
@@ -395,3 +400,60 @@ def test_who_you_could_add_is_the_workspace_s_members_not_yet_in_it():
     # A viewer of it may not add, so may not list.
     assert _client(people["viewer"]).get(
         f"/api/canopy-sessions/{chat.id}/participants/candidates").status_code == 403
+
+
+def test_a_person_designated_as_coach_reads_the_people_who_opted_in_and_no_more():
+    """Leg 5 for a PERSON coach: someone designated for the workspace (and below) reads, as themselves,
+    the sessions of people who opted into coaching: read-only, never sensitive, never a contact's, never
+    words the person deleted. Administering an agent, owning a workspace, or running a box is not coaching."""
+    from django.utils import timezone
+
+    from apps.canopy_sessions.models import CoachingOptIn, CoachingRole, Session
+
+    people, s, ws = _world()
+    mate_chat = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB)
+    sealed = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB,
+                                    metadata={"runner_requirements": ["sensitive_data"]})
+    deleted = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB,
+                                     content_deleted_at=timezone.now())
+    # The owner owns the workspace and administers the coaching agent, yet reads nothing of mate's.
+    assert access.can_read(people["owner"], mate_chat) is False
+    opt = CoachingOptIn.objects.create(user=people["mate"])
+    assert access.can_read(people["owner"], mate_chat) is False           # opted in, but no coach role yet
+    role = CoachingRole.objects.create(workspace=ws, user=people["viewer"], granted_by=people["owner"])
+    assert access.can_read(people["viewer"], mate_chat) is True
+    assert access.role_for(people["viewer"], mate_chat) == SessionParticipant.VIEWER
+    assert access.can_write(people["viewer"], mate_chat) is False and access.may_pull(people["viewer"], mate_chat) is False
+    assert access.can_read(people["viewer"], sealed) is False and access.can_read(people["viewer"], deleted) is False
+    for who in ("box_admin", "hal_login", "outsider", "owner"):
+        assert access.can_read(people[who], mate_chat) is False, who
+    assert access.can_read(people["viewer"], s["agent_thread"]) is False  # not a person's session
+    # Opting out ends it at once; so does removing the role.
+    opt.revoked_at = timezone.now()
+    opt.save(update_fields=["revoked_at"])
+    assert access.can_read(people["viewer"], mate_chat) is False
+    CoachingOptIn.objects.create(user=people["mate"])
+    assert access.can_read(people["viewer"], mate_chat) is True
+    role.revoked_at = timezone.now()
+    role.save(update_fields=["revoked_at"])
+    assert access.can_read(people["viewer"], mate_chat) is False
+
+
+def test_an_agent_coach_reads_only_inside_a_running_turn_and_a_plain_agent_never():
+    from apps.canopy_sessions.models import CoachingOptIn, CoachingRole, Session
+
+    people, s, ws = _world()
+    mate_chat = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB)
+    CoachingOptIn.objects.create(user=people["mate"])
+    assert access.can_read(people["coach"], mate_chat) is False           # Trellis's login, no turn: no read
+    setattr(people["coach"], turn_asker.STANDING_ATTR, turn_asker.AnsweringTo("t", unattended=True,
+                                                                             reads_for=people["mate"].pk))
+    assert access.can_read(people["coach"], mate_chat) is True
+    assert access.can_read(people["hal_login"], mate_chat) is False       # an agent with no coaching role
+    # Ada is a coach too, once a role says so: another agent, same rule.
+    hal = Agent.objects.get(slug="hal")
+    CoachingRole.objects.create(workspace=ws, agent=hal)
+    assert access.can_read(people["hal_login"], mate_chat) is False       # no turn yet
+    setattr(people["hal_login"], turn_asker.STANDING_ATTR,
+            turn_asker.AnsweringTo("t", unattended=True, reads_for=people["mate"].pk))
+    assert access.can_read(people["hal_login"], mate_chat) is True

@@ -8,6 +8,7 @@ const VIEWS = [
   { to: 'health', label: 'Health' },
   { to: 'analytics', label: 'Analytics' },
   { to: 'network', label: 'Network' },
+  { to: 'brain', label: 'Learning' },
 ]
 
 export function HealthViews({ title }: { title: string }): JSX.Element {

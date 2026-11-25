@@ -2,6 +2,154 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.40.0 — 2026-11-23
+
+**An ephemeral capability can run Windows machines.**
+
+- `ondemand-capability.cfn.yaml` takes `Platform` (`linux`, the default, or `windows`). On
+  `windows` the exec document's one step is `aws:runPowerShellScript` with the bash step's
+  contract: decode the NUL-terminated argv, refuse an `argv[0]` off `ExecAllow` (exit 126),
+  export `CANOPY_LEASE_ID`/`_IN`/`_OUT`, and run the argv verbatim (each argument quoted by the
+  CommandLineToArgvW rules and started through .NET, since Windows PowerShell 5.1's `&` drops
+  empty arguments and mangles quotes). Still ONE step, because the broker reads an invocation
+  with no `PluginName`. A linux stack renders exactly the document it had, so updating it makes
+  no new document version.
+
+## 0.39.0 — 2026-11-23
+
+**The site agents response has its own size cap.**
+
+- `contract.MAX_SITE_AGENTS_BYTES = 64 * 1024` (the most `canopy_sdk.fetch` reads at all).
+  `verify_site_agents` checks canopy's signed answer against it instead of `MAX_JWT_BYTES`.
+  That answer has one entry per agent allowed on the site, and six agents outgrew 8 KB: a host
+  then refused it as `malformed` ("not a compact JWS of acceptable size") and, once its cached
+  copy expired, showed no agent at all.
+- `jose.unverified_header(..., max_bytes=)` takes the cap; it defaults to `MAX_JWT_BYTES`, so
+  visitor assertions, ID-JAGs, DPoP proofs and every other token keep the 8 KB cap.
+
+## 0.38.0 — 2026-11-23
+
+**A relay site declares its reply webhook in its signed `site.json`.**
+
+- `site.json`'s `site` block takes optional `reply_url` (where canopy POSTs the agent's
+  replies in the conversations the site relays, `canopy_sdk.host.replies`) and `reply_mode`
+  (`final` | `stream`, `canopy_sdk.site.REPLY_MODES`). `SiteFacts.reply_url` / `reply_mode`
+  read them back.
+- Django hosts declare them from settings they already have: `CANOPY_HOST["REPLY_URL"]`
+  (the `aud` `verify_reply` requires) and the new `CANOPY_HOST["REPLY_MODE"]`; a bad
+  `REPLY_MODE` fails `canopy_host.E012`.
+- canopy adopts a declared `reply_url` as the host site's reply webhook only when the
+  document verifies against the site's registered keys, the URL is https, its origin is one of
+  the site's registered origins and it passes canopy's outbound checks; a webhook a person set
+  in canopy wins. Additive under contract v1.
+
+## 0.37.0 — 2026-11-22
+
+**A site may declare surfaces: parts of it that serve different people.**
+
+- `site.json` takes an optional top-level `surfaces`: `{name: {sensitive, mcp_resource?,
+  person_scheme?, title?}}` (`canopy_sdk.site.SURFACE_NAME`, at most `MAX_SURFACES`).
+  `sensitive` is required on each. `SiteNeeds.surfaces` / `SiteNeeds.surface(name)` and
+  `SiteSurface` read it back; `site_document(..., surfaces=)` builds it.
+- Django hosts declare them with `CANOPY_HOST["SURFACES"]`, or `SITE_NEEDS` returning
+  `"surfaces"`.
+- An agent's host-site entry names the surface it serves (`surface:`). canopy lets a site's
+  contact hold a conversation on a surface the site declares `sensitive: false`, and sends that
+  contact's subject-bound tool calls (`canopy_sdk.host.verify_subject`) to the surface's
+  `mcp_resource`, which is then the statement's `aud`. Additive under contract v1: a site with no
+  surfaces is one surface, as before.
+- `canopy_sdk.host.verify_subject(..., resource=)` checks a statement against a surface's
+  `mcp_resource` (its `aud` and the proof's `htu`) instead of `HostConfig.resource`, so one host
+  serves its pages' resource and a surface's from the same config.
+
+## 0.36.1 — 2026-11-22
+
+- The on-demand capability's backstop Lambda (`ondemand-capability.cfn.yaml`) runs on the
+  `python3.13` runtime, matching the rest of canopy. Its inline handler is stdlib only; a
+  stack picks the new runtime up on its next update.
+
+## 0.36.0 — 2026-11-22
+
+**Stored agents are git repositories canopy hosts.**
+
+- `canopy_sdk.agent_definition`: `git_url(base_url, workspace, slug)` (the repository's address,
+  `<base>/git/<workspace>/<slug>.git`) and `is_git_url(url, base_url)` (whether a clone's origin is
+  one). Additive.
+
+## 0.35.0 — 2026-11-21
+
+**Stored agents: an agent whose definition canopy keeps, with no git repo.**
+
+- `canopy_sdk.agent_definition`: `manifest_root(files)` (the sha256 of the canonical manifest,
+  `[{"path","sha256","size","executable"}]` sorted by path, compact JSON with sorted keys),
+  `manifest_entry`, `manifest_root_of_files`, and the file policy `check_tree(files, slug=,
+  allow_generated=False) -> list[Problem]` (editable paths, server-generated paths, one executable,
+  caps of 200 files / 256 KB a file / 2 MB in all, UTF-8 only, secret-shaped strings refused),
+  `editable(path)`, `generated_paths(slug)`, `secret_kinds(text)`, `policy()`. Additive.
+
+## 0.34.0 — 2026-11-21
+
+**Reply push: canopy POSTs an agent's replies to a relay host.**
+
+- `canopy_sdk.host.replies`: `verify_reply(token, *, config, audience=None, client_keys=None,
+  replay_store=None) -> Reply` (`site`, `sub`, `session`, `turn`, `seq`, `text`, `ended`, `error`),
+  `ReplyRefused`, and canopy's half, `sign_reply` (`typ: canopy-reply+jwt`, signed with canopy's
+  client key, five minutes). The host treats `(turn, seq)` as its idempotency key.
+- `HostConfig.reply_url` (`CANOPY_HOST["REPLY_URL"]`): the `aud` a reply must carry. Additive.
+
+## 0.33.0 — 2026-11-21
+
+**Context a host attests on one message.**
+
+- `canopy_sdk.attested_context`: `sign_context(site_name, site_key, *, sub, session, format, body)`
+  (`typ: canopy-context+jwt`, 60 s, single-use `jti`, `format` `markdown` | `json`, `body` at most
+  16384 characters) and `verify_context`, canopy's check (`ContextError`; `mismatch` for another
+  person's or conversation's context).
+- `RelayClient.send(..., context={"format", "body"})` signs it and sends it as the send's `context`;
+  `RelayClient.sign_context`. Additive.
+
+## 0.32.0 — 2026-11-21
+
+**Relay channels: a host site carries a person's conversation server-to-server.**
+
+- `contract.CHANNEL_CLAIM` (`canopy_channel`, `^[a-z0-9_-]{1,32}$`), `contract.parse_channel_claim`
+  and `contract.RELAY_ORIGIN` (`site_message`). A visitor assertion carrying the claim is a relay
+  arrival: canopy records its turns as `relay:<site>:<channel>`, lets its sends name
+  `site_message`, and always serves it as a contact.
+- `sign_visitor_assertion(..., channel=, workspace=)` and `arrival_payload(..., channel=)`.
+- `canopy_sdk.host.relay.RelayClient(config)`: `token_for`, `open_session`, `send`, `turn`,
+  `messages`, over canopy's `/api/contact/` routes; `RelayError` carries canopy's refusal code
+  (`rate_limited` when a person sends past canopy's per-contact budget). Additive; nothing
+  existing changed.
+
+## 0.31.0 — 2026-11-21
+
+**Host tools bound to one subject: an agent asks you about ONE of your own people.**
+
+- `canopy_sdk.host.verify_subject(request, *, config, client_keys=None, replay_store=None,
+  method=None, rpc=None) -> Subject(site, sub, agent, turn, session, capability, claims)`:
+  canopy's `Authorization: CanopySubject <jws>` (`typ: canopy-subject+jwt`, signed by its
+  client key) with a DPoP proof carrying no `ath`, for a contact's turn on a
+  `contact_scoped` entry. Raises `SubjectRefused`. Django: `canopy_sdk.django.execution.verify_subject`.
+- canopy's half: `consumer.subject_statement`, `consumer.subject_authorization`;
+  `contract.SUBJECT_AUTH_SCHEME`, `SUBJECT_TYP`, `SUBJECT_MAX_LIFETIME`, `SUBJECT_REQUIRED_CLAIMS`.
+- `Execution.sub`: `Canopy-Execution` names the contact (`sub`) when the turn's initiator is
+  one of the host's own contacts. Additive; nothing existing changed.
+
+## 0.30.0 — 2026-11-21
+
+**A host site is the system of record for the people it brings.**
+
+- `canopy_sdk.contacts` (both halves) and `canopy_sdk.host.contacts`: `update_contacts(config,
+  contacts)` keeps canopy's copy of your people current — each `{sub, display_name?,
+  record_uri?, profile?, version}`, written only when `version` is newer — and
+  `erase_contacts(config, subs)` makes canopy forget them. Both POST a JWS signed by the
+  site key as the body (`application/jwt`) to `/api/sites/contacts[/erase]`.
+- `site.json`'s `site` block gains `person_scheme` (the scheme of your records of people;
+  `CANOPY_HOST["PERSON_SCHEME"]`) and `retention_days` (`RETENTION_DAYS`); `SiteFacts`
+  carries both. System check `canopy_host.E012` refuses a bad value at startup.
+- `canopy_sdk.fetch.post_bytes`. Additive; nothing existing changed.
+
 ## 0.29.2 — 2026-11-09
 
 Comment wording only in a bundled CloudFormation template; no behaviour change.

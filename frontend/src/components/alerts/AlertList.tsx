@@ -38,6 +38,12 @@ export const KIND_LABEL: Record<string, string> = {
   transfer_left_open: 'Transfers',
 }
 
+/** Kinds that are a request for the viewer's own yes or no, not a problem to
+ *  fix. Their row is drawn apart (accent bar, filled chip, filled Approve) so
+ *  it does not read as one more alert. */
+const DECISION_KINDS = new Set(['approval_request'])
+export const isDecision = (kind: string): boolean => DECISION_KINDS.has(kind)
+
 const SEVERITIES: { id: AlertSeverity; label: string; dot: string }[] = [
   { id: 'blocking', label: 'Blocking', dot: 'bg-destructive' },
   { id: 'action', label: 'Action', dot: 'bg-warning' },
@@ -225,11 +231,17 @@ function AlertRow({ alert, busy, onAct }: { alert: Alert; busy: boolean; onAct: 
   const [open, setOpen] = useState(false)
   const dismiss = alert.actions.find((a) => a.id === 'dismiss')
   const actions = alert.actions.filter((a) => a.id !== 'dismiss')
+  const decision = isDecision(alert.kind)
   const now = new Date()
   return (
-    <div className="border-t border-border first:border-t-0" data-testid="alert-row">
-      <div className="group flex flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-1 text-[13px] hover:bg-muted/50">
-        <Dot severity={alert.severity} />
+    <div
+      className={clsx('border-t border-border first:border-t-0', decision && 'border-l-2 border-l-primary bg-primary/5')}
+      data-testid="alert-row"
+      data-decision={decision || undefined}
+    >
+      <div className={clsx('group flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-[13px]',
+        decision ? 'pl-2 pr-2.5 hover:bg-primary/10' : 'px-2.5 hover:bg-muted/50')}>
+        {decision ? <DecisionMark /> : <Dot severity={alert.severity} />}
         <SourceChip kind={alert.kind} />
         <button
           type="button"
@@ -239,7 +251,7 @@ function AlertRow({ alert, busy, onAct }: { alert: Alert; busy: boolean; onAct: 
           className="flex min-w-40 flex-1 items-center gap-1.5 text-left"
         >
           <span aria-hidden className="w-2 shrink-0 text-[10px] text-muted-foreground">{open ? '▾' : '▸'}</span>
-          <span className="min-w-0 flex-1 truncate text-foreground">{alert.title}</span>
+          <span className={clsx('min-w-0 flex-1 truncate text-foreground', decision && 'font-medium')}>{alert.title}</span>
           <span
             className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
             title={`Last seen ${new Date(alert.last_seen_at).toLocaleString()}`}
@@ -251,7 +263,9 @@ function AlertRow({ alert, busy, onAct }: { alert: Alert; busy: boolean; onAct: 
         </button>
         <span className="flex shrink-0 items-center gap-1">
           {actions.map((a) => {
-            const inner = (
+            // On a decision the buttons are the answer itself, so they say only
+            // that; the "closes / stays open" hint is for fixes.
+            const inner = decision ? a.label : (
               <>
                 {a.label}
                 <span className={clsx('text-[10px]', a.closes ? 'text-success' : 'text-muted-foreground')}>
@@ -259,8 +273,12 @@ function AlertRow({ alert, busy, onAct }: { alert: Alert; busy: boolean; onAct: 
                 </span>
               </>
             )
-            const cls =
-              'inline-flex min-h-6 items-center gap-1 rounded border border-border px-1.5 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50'
+            const cls = clsx(
+              'inline-flex min-h-6 items-center gap-1 rounded border px-1.5 text-[12px] disabled:opacity-50',
+              decision && a.id === 'approve'
+                ? 'border-primary bg-primary font-medium text-primary-foreground hover:bg-primary/90'
+                : 'border-border text-foreground-secondary hover:bg-muted',
+            )
             if (a.href) {
               // Following a link is logged (fire-and-forget); navigation never waits on it.
               const follow = () => void actOnAlert(alert.id, a.id).catch(() => {})
@@ -380,10 +398,22 @@ function Dot({ severity }: { severity: AlertSeverity }): JSX.Element {
   return <span role="img" aria-label={severity} title={severity} className={clsx('inline-block h-2 w-2 shrink-0 rounded-full', DOT[severity])} />
 }
 
-function SourceChip({ kind }: { kind: string }): JSX.Element {
+/** In place of the severity dot on a decision: a filled check-mark disc. */
+function DecisionMark(): JSX.Element {
   return (
-    <span className="shrink-0 rounded bg-muted px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-      {KIND_LABEL[kind] ?? kind}
+    <span role="img" aria-label="your decision" title="Waiting on your decision"
+      className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-primary text-[9px] font-bold leading-none text-primary-foreground">
+      ✓
+    </span>
+  )
+}
+
+function SourceChip({ kind }: { kind: string }): JSX.Element {
+  const decision = isDecision(kind)
+  return (
+    <span className={clsx('shrink-0 rounded px-1.5 py-px text-[10px] font-medium uppercase tracking-wide',
+      decision ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
+      {decision ? 'Your decision' : (KIND_LABEL[kind] ?? kind)}
     </span>
   )
 }

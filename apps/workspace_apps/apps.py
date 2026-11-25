@@ -57,10 +57,16 @@ def _connection_share_target(ref):
 def _retention() -> None:
     from .services import retention_sweep  # noqa: PLC0415 — models: the app registry is not ready at module load
 
+    from .bundles import sweep_unused_blobs  # noqa: PLC0415 — as above
+
     try:
         retention_sweep()
     except Exception:  # noqa: BLE001 — a failed sweep must not stop the clock's other jobs
         logging.getLogger(__name__).exception("workspace apps: retention sweep failed")
+    try:
+        sweep_unused_blobs()
+    except Exception:  # noqa: BLE001 — likewise
+        logging.getLogger(__name__).exception("workspace apps: bundle blob sweep failed")
 
 
 def _scheduled_email() -> None:

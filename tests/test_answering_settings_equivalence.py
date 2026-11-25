@@ -238,6 +238,7 @@ def _outcomes(doc):
     return doc
 
 
+@pytest.mark.nightly
 @override_settings(CANOPY_PUBLIC_BASE_URL=BASE_URL)
 def test_the_real_code_answers_as_the_frozen_copy_does(world):
     wrong = []
@@ -247,6 +248,7 @@ def test_the_real_code_answers_as_the_frozen_copy_does(world):
     assert not wrong, "\n".join(wrong[:30])
 
 
+@pytest.mark.nightly
 @override_settings(CANOPY_PUBLIC_BASE_URL=BASE_URL)
 def test_the_frozen_copy_has_not_moved(world):
     everything = {agent.slug: answers(legacy_interface, world, agent, row) for agent, row in world.agents}

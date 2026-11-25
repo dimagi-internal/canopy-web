@@ -147,11 +147,11 @@ def test_a_zk_agent_without_this_devices_wrap_is_refused(monkeypatch, owner, ws,
     missing = []
     monkeypatch.setattr(cr.zk, "resolve_payload", lambda agent, key, wanted: ({"api-key": "zk1:x"}, None))
     monkeypatch.setattr(cr.zk, "needs_wrap", lambda values: True)
-    monkeypatch.setattr(cr.zk, "device_wrap_missing", lambda agent, request, key: missing.append(key))
+    monkeypatch.setattr(cr.zk, "device_wrap_missing",
+                        lambda agent, request, key: missing.append(key) or "what to do, for whoever can")
     out = cr.resolve(_request(owner), agent, None)
-    assert out == cr.Refusal(cr.ZK_WRAP_MISSING,
-                             "this device holds no vault-key wrap at kv 3; an admin must grant it",
-                             kv=3, device_key="k-1")
+    # The refusal says what `device_wrap_missing` worked out: who can end the wait, and how.
+    assert out == cr.Refusal(cr.ZK_WRAP_MISSING, "what to do, for whoever can", kv=3, device_key="k-1")
     assert missing == [key]
 
 

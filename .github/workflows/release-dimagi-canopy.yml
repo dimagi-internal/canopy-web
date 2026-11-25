@@ -76,7 +76,7 @@ jobs:
       - name: Test
         if: steps.v.outputs.release == 'true'
         run: |
-          uv python install 3.12
+          uv python install 3.13
           uv run --extra test pytest -q
 
       - name: Build sdist + wheel

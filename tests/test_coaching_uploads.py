@@ -14,9 +14,10 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.models import RunnerBinding, Session, SessionReviewGrant
+from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import ProjectOptIn, Runner, RunnerFlag
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.session_world import grant_coaching
 
 pytestmark = pytest.mark.django_db
 
@@ -52,9 +53,7 @@ def _streams(user, runner) -> dict:
 
 
 def _coach(w):
-    return SessionReviewGrant.objects.create(user=w["lili"], agent=w["trellis"])
-
-
+    return grant_coaching(w["lili"], w["trellis"])
 def test_uncoached_box_ships_active_sessions_only_and_flags_none(w):
     _session(w, w["laptop"], "live")
     _session(w, w["laptop"], "done", status=Session.ARCHIVED)

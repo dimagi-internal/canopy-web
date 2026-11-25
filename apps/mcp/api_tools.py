@@ -50,7 +50,7 @@ from fastmcp.utilities.openapi.director import RequestDirector
 from mcp.types import ToolAnnotations
 
 from .audit import write_audit
-from .rate_limit import RateLimitError, check_write_limit
+from .rate_limit import BRAIN_RUN_BUCKET, RateLimitError, check_write_limit
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,10 @@ _SEALED_FOR_A_MACHINE = "sealed credentials and an app secret for a machine, nev
 _BROWSER = "a browser tab's own plumbing (page state, live viewer, push subscription)"
 _HOST = "an embedding host's or a contact's surface — a different principal"
 _ANON = "anonymous public read; nothing to do as a signed-in person"
+_BRAIN = ("a person's own agreement to canopy learning: an agent or an MCP client with their token "
+          "must never be able to give or withdraw it (apps/brain)")
+_REPORTING = ("who manages whom decides who reads a person's learning outputs: a workspace owner's own act, "
+              "never an agent's or an MCP client's (apps/brain)")
 _BYTES = "returns raw bytes, which a tool result cannot carry"
 
 #: Path prefixes whose every route belongs to another principal.
@@ -80,6 +84,8 @@ EXCLUDED_PREFIXES: dict[str, str] = {
 #: operationId → why it is not a tool.
 EXCLUDED: dict[str, str] = {
     "_auth_smoke": "internal smoke route",
+    "get_agent_definition_archive": "a stored agent's revision as a gzip'd tar, for a runner or `canopy agent "
+                                    "materialize`; a tool reads one file with get_agent_definition_file",
     "health": "health check",
     "request_connection_call": "a screen's call, on a person's session; a token is refused, and an agent "
                                "uses its own connection in its turn",
@@ -96,6 +102,15 @@ EXCLUDED: dict[str, str] = {
     "hcp_listGrants": "grant management is the person's, not an MCP tool (HCP Appendix B)",
     "hcp_revokeGrant": "grant management is the person's, not an MCP tool (HCP Appendix B)",
     "hcp_export": "the person's own export — not accessible to agents (HCP 3.3.5)",
+    **{op: "HCP v2 is the HTTP binding; MCP clients use the hcp_* tools, which are an adapter over the "
+                                                 "same model (governance is the person's, HTTP only: HCP v2 1.6)" for op in (
+        "hcp_v2_queryContext", "hcp_v2_getEntry", "hcp_v2_createEntry", "hcp_v2_reviseEntry",
+        "hcp_v2_withdrawEntry", "hcp_v2_listGrants", "hcp_v2_revokeGrant", "hcp_v2_listAudit", "hcp_v2_export",
+        "hcp_v2_disclosures",
+        "hcp_v2_listRules", "hcp_v2_setRule", "hcp_v2_removeRule", "hcp_v2_listDirectives",
+        "hcp_v2_setDirective", "hcp_v2_removeDirective")},
+    "hcp_v2_confirmEntry": "HCP v2 governance is the person's, over HTTP only (HCP v2 1.6)",
+    "hcp_v2_restrictPurposes": "HCP v2 governance is the person's, over HTTP only (HCP v2 1.6)",
     "hcp_listClients": "the HCP service's client registry — superusers, by hand, never an agent",
     "hcp_registerClient": "registering an app that may ask people for their context is never an "
                           "agent's act",
@@ -108,6 +123,11 @@ EXCLUDED: dict[str, str] = {
                              "never be able to turn it, and an MCP client with their token is one",
     "grant_my_session_agent": "the person's own grant to an agent (HCP 4.1.6) — an agent granting "
                               "itself access would be authorization inferred from its own request",
+    "get_my_learning": _BRAIN, "set_my_learning": _BRAIN, "revoke_my_learning": _BRAIN,
+    "exclude_my_session": _BRAIN, "include_my_session": _BRAIN, "get_my_session_learning": _BRAIN,
+    "get_my_disclosure": _BRAIN, "list_my_removed_sessions": _BRAIN,
+    "declare_my_session_project": _BRAIN, "undeclare_my_session_project": _BRAIN,
+    "list_reporting": _REPORTING, "set_reporting": _REPORTING, "end_reporting": _REPORTING,
     "contact_token": _HOST,
     "public_stats": _ANON,
     "submit_beta_request": _ANON,
@@ -505,6 +525,25 @@ def _principal() -> dict:
     return {"user_id": int(user_id), "auth_method": method, "credential": credential}
 
 
+#: Tools whose writes are a machine run's own, budgeted per run turn rather than against the person it answers to.
+BRAIN_RUN_TOOLS = frozenset({"brain_emit"})
+
+
+def _write_bucket(tool: str, principal: dict) -> str:
+    """Which write budget a call spends: a brain run's emits spend that run turn's own (`rate_limit.BRAIN_RUN`),
+    never the canopy admin the run is accountable to; everything else the user's."""
+    if tool not in BRAIN_RUN_TOOLS:
+        return ""
+    cred = principal.get("credential") or {}
+    turn_id = cred.get("turn_id")
+    if not turn_id and cred.get("id"):
+        # A full-profile run turn reaches canopy with the per-turn agent login: its turn is the token's own.
+        from apps.harness.models import TurnAgentToken  # noqa: PLC0415 — only a brain run's emit pays for it
+
+        turn_id = TurnAgentToken.objects.filter(token_id=cred["id"]).values_list("turn_id", flat=True).first()
+    return f"{BRAIN_RUN_BUCKET}{turn_id}" if turn_id else ""
+
+
 def acting(principal: dict) -> dict:
     """The audit row's "<agent> as <person>" fields for a call (empty for anything but
     an act-as-you token)."""
@@ -553,7 +592,8 @@ class CanopyAPITool(OpenAPITool):
             summary = f"[{workspace}] {summary}"
         if method != "GET":
             try:
-                await sync_to_async(check_write_limit, thread_sensitive=True)(principal["user_id"])
+                bucket = await sync_to_async(_write_bucket, thread_sensitive=True)(self.name, principal)
+                await sync_to_async(check_write_limit, thread_sensitive=True)(principal["user_id"], bucket=bucket)
             except RateLimitError as exc:
                 await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
                                   args_summary=summary, ok=False, error=str(exc), **acting(principal))

@@ -9,8 +9,9 @@ from django.db.models import Q
 
 from apps.agents.holding import runner_may_hold_agent
 from apps.agents.models import Agent
+from apps.agents.standings import Standings
 from apps.canopy_sessions.models import RunnerBinding, SessionHandoff
-from apps.harness import actors, clis
+from apps.harness import actors, clis, stored_agents
 from apps.harness import runner_requirements as rr
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -79,15 +80,18 @@ class InheritedOrder:
 UNPREPARED = "unprepared"
 
 
-def cannot_serve(runner: Runner, slug: str) -> str:
-    """Why this box, by its OWN report, cannot run agent `slug` — "" when it has
-    not said so. Two reports, each written only by the box itself:
+def cannot_serve(runner: Runner, agent) -> str:
+    """Why this box, by its OWN report, cannot run `agent` (an `Agent`, or its slug)
+    — "" when it has not said so. Two reports, each written only by the box itself:
 
       - a laptop driving emdash names the emdash projects it has (`projects`), and
         an agent's project is its slug. A laptop whose report lacks the slug fails
         the turn at once (`_project_missing` on the runner), so handing it one is
         claiming a turn to fail it. A box
-        that has never reported `projects` is UNKNOWN, not "has none".
+        that has never reported `projects` is UNKNOWN, not "has none". A STORED
+        agent (`stored_agents`) has no repo and so no emdash project: the laptop
+        runs it from its own materialized copy, so this report never refuses one
+        (asked only when `agent` is the `Agent`; a bare slug is read as a repo agent).
       - any box names the agents it tried to set up and could not
         (`capabilities["unprepared"]`). A cloud box with no clone of the agent ran
         its turn in a bare scratch dir, with none of its plugin or credentials,
@@ -98,6 +102,7 @@ def cannot_serve(runner: Runner, slug: str) -> str:
     the same kind of self-restriction. Reads the runner row; its machine siblings
     come from `prime_machine_runners` when the caller loaded them (one query per
     call otherwise, and none for a box with no machine)."""
+    slug = agent if isinstance(agent, str) else (getattr(agent, "slug", "") or "")
     if not slug:
         return ""
     said = serves_refusal(runner, slug)
@@ -105,6 +110,7 @@ def cannot_serve(runner: Runner, slug: str) -> str:
         return said
     caps = runner.capabilities or {}
     if (runner.kind == Runner.EMDASH and runner.engine == Runner.ENGINE_EMDASH
+            and not stored_agents.is_stored(None if isinstance(agent, str) else agent)
             and "projects" in caps and slug not in runner.observed_projects()):
         return f"{runner.name} has no emdash project '{slug}'"
     if slug in (caps.get(UNPREPARED) or []):
@@ -135,6 +141,32 @@ def agents_following_runner(runner: Runner, among=None) -> set:
     candidates = set(agents.values_list("id", flat=True))
     return {aid for aid, inh in inherited_orders(candidates).items()
             if any(r.id == runner.id for r in inh.runners)}
+
+
+def agents_following_runners(runners) -> dict:
+    """{runner pk: `agents_following_runner(runner)`} for many boxes, from one read of
+    the orders listing them and ONE `inherited_orders` for every agent below them —
+    what a fleet listing asks, instead of rebuilding every inherited order per box."""
+    runners = [r for r in runners if not r.directed_only()]
+    out: dict = {r.pk: set() for r in runners}
+    listed: dict = {}
+    for rid, ws in (WorkspaceRunnerOrder.objects.filter(runner__in=runners, enabled=True)
+                    .values_list("runner_id", "workspace_id")):
+        listed.setdefault(rid, set()).add(ws)
+    if not listed:
+        return out
+    below = wsvc.descendant_map(set().union(*listed.values()))
+    scope = {rid: ws | set().union(*(below.get(w, set()) for w in ws)) for rid, ws in listed.items()}
+    by_ws: dict = {}
+    for aid, ws in Agent.objects.filter(workspace_id__in=set().union(*scope.values())).values_list(
+            "id", "workspace_id"):
+        by_ws.setdefault(ws, set()).add(aid)
+    inherited = inherited_orders(set().union(*by_ws.values()) if by_ws else ())
+    for rid, ws in scope.items():
+        candidates = set().union(*(by_ws.get(w, set()) for w in ws))
+        out[rid] = {aid for aid in candidates
+                    if aid in inherited and any(r.id == rid for r in inherited[aid].runners)}
+    return out
 
 
 def default_order_source(agent) -> str | None:
@@ -200,11 +232,15 @@ def inherited_orders(agent_ids) -> dict:
     chains = _ancestor_chains({a.workspace_id for a in agents if a.workspace_id})
     orders = load_workspace_orders({s for chain in chains.values() for s in chain})
     held: dict = {}  # (agent_id, owner_id) -> bool; owners are few
+    standings: list = []  # every listed owner's standing with every agent, read on first ask
 
     def may_hold(runner, agent) -> bool:
         key = (agent.id, runner.owner_id)
         if key not in held:
-            held[key] = runner_may_hold_agent(runner, agent)
+            if not standings:
+                owners = {r.owner for rs in orders.values() for r in rs if r.owner_id}
+                standings.append(Standings(owners, agents))
+            held[key] = runner_may_hold_agent(runner, agent, standings=standings[0])
         return held[key]
 
     out: dict = {}
@@ -216,7 +252,8 @@ def inherited_orders(agent_ids) -> dict:
         for r in orders[source]:
             if r.directed_only():
                 inh.directed.append(r)
-            elif r.kind == Runner.EMDASH and agent.slug not in r.observed_projects():
+            elif (r.kind == Runner.EMDASH and not stored_agents.is_stored(agent)
+                  and agent.slug not in r.observed_projects()):
                 inh.missing_repo.append(r)
             elif not may_hold(r, agent):
                 inh.cannot_hold.append(r)
@@ -230,7 +267,7 @@ def inherited_orders(agent_ids) -> dict:
 
 def assignment_rows_for(
     agent_id, origin: str, actor: str, defaults: dict, priorities: dict,
-    *, requires: frozenset = frozenset(), serves: str = "",
+    *, requires: frozenset = frozenset(), serves=None,
 ) -> list:
     """THE ordered runner list for one (agent, source, actor) triple — what the
     availability cascade then walks. Pure: no queries, no clock.
@@ -245,7 +282,7 @@ def assignment_rows_for(
     `requires` is the conversation's runner requirements (`runner_requirements`):
     a runner lacking any of them is dropped BEFORE ranks are renumbered.
 
-    `serves` is the agent's slug: a runner that reports it cannot run that agent
+    `serves` is the agent (or its slug): a runner that reports it cannot run that agent
     (`cannot_serve`) is dropped the same way, so it neither claims a turn only to
     fail it nor counts as a better-ranked blocker. Empty: not asked.
 
@@ -263,7 +300,7 @@ RUNG_PERSON, RUNG_SOURCE, RUNG_DEFAULT = "person", "source", "default"
 
 def labelled_assignment_rows(
     agent_id, origin: str, actor: str, defaults: dict, priorities: dict,
-    *, requires: frozenset = frozenset(), serves: str = "",
+    *, requires: frozenset = frozenset(), serves=None,
 ) -> list:
     """`assignment_rows_for` with each runner's rung — `RUNG_PERSON` (the actor
     rule), `RUNG_SOURCE` (the source rule) or `RUNG_DEFAULT` (the default order,
@@ -384,7 +421,7 @@ def assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
     """
     rows = assignment_rows_for(
         agent_id, turn.origin, actors.actor_of(turn), defaults, priorities,
-        requires=rr.requirements_of(turn), serves=routed_slug(turn, agent_id),
+        requires=rr.requirements_of(turn), serves=routed_agent(turn, agent_id),
     )
     mine = next((rank for rank, r in rows if r.id == runner.id), None)
     if mine is None:
@@ -392,6 +429,17 @@ def assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
     if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
         return True
     return not any(r.is_available for rank, r in rows if rank < mine)
+
+
+def routed_agent(turn: Turn, agent_id):
+    """The `Agent` `agent_id` — the agent whose list routes `turn` (its own, or its
+    chat's) — or None. Read off the rows the claim already select_related, no query;
+    `cannot_serve` reads whether it is a stored agent off it."""
+    if turn.agent_id and turn.agent_id == agent_id:
+        return turn.agent
+    if turn.chat_session_id and turn.chat_session.agent_id == agent_id:
+        return turn.chat_session.agent
+    return None
 
 
 def routed_slug(turn: Turn, agent_id) -> str:
@@ -427,7 +475,7 @@ def load_workspace_orders(ws_ids) -> dict:
         return out
     rows = (
         WorkspaceRunnerOrder.objects.filter(workspace_id__in=ws_ids, enabled=True)
-        .select_related("runner").prefetch_related("runner__declared_flags")
+        .select_related("runner", "runner__owner").prefetch_related("runner__declared_flags")
         .exclude(runner__status=Runner.RETIRED).order_by("rank")
     )
     rows = list(rows)

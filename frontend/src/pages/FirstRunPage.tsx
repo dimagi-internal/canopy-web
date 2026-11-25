@@ -10,7 +10,7 @@ import {
   type RequestableWorkspaceOut,
 } from '@/api/workspaces'
 import { addMySessionReviewer, listMySessionReviewers, type CoachOffer } from '@/api/people'
-import { CoachConsentDetails, coachLabel } from '@/components/settings/SessionReviewersPanel'
+import { CoachConsentDetails, coachLabel, includesCheckedCoach } from '@/components/settings/SessionReviewersPanel'
 import { scopedPath } from '@/lib/scopedLinks'
 import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
@@ -111,7 +111,7 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
         // their workspaces and the grant can be made — their own act, ticked here.
         if (wantsCoach && coach) {
           try {
-            await addMySessionReviewer(coach.agent)
+            await addMySessionReviewer()
           } catch {
             // They are in either way; Settings has the switch to try again.
           }
@@ -224,7 +224,7 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
                     <p className="mt-2 text-[12px] text-foreground-secondary">
                       Requested — an admin will review it. You&apos;ll get an email when they decide.
                       {coachLater && coach?.workspace === ws.slug
-                        ? ` Once you're in, turn on ${coach.name}'s coaching from Settings.`
+                        ? ` Once you're in, opt in to coaching from Settings.`
                         : ''}
                     </p>
                   ) : (
@@ -238,9 +238,9 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
                             checked={coachMe}
                             onChange={(e) => setCoachMe(e.target.checked)}
                           />
-                          <span>{coachLabel(coach)}</span>
+                          <span>{coachLabel([coach.name], includesCheckedCoach([coach.agent]))}</span>
                         </label>
-                        <CoachConsentDetails {...coach} />
+                        <CoachConsentDetails checked={includesCheckedCoach([coach.agent])} />
                       </div>
                     ) : null}
                     <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">

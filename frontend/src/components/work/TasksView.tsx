@@ -7,7 +7,7 @@
 // makes a filtered list a link and a saved view a stored set of parameters.
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plus, Search, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, ListFilter, Plus, Search, X } from 'lucide-react'
 import { cn } from 'canopy-ui/lib'
 import { Button, Segmented } from 'canopy-ui/ui'
 
@@ -27,7 +27,7 @@ import { usePageState } from '@/widget/usePageState'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 
 import { BulkBar } from './BulkBar'
-import { DEFAULT_CATEGORY_NAMES, PRIORITIES, STATUS_ORDER, displayAgent, type Category } from './meta'
+import { DEFAULT_CATEGORY_NAMES, PRIORITIES, STATUS_CATEGORY, STATUS_ORDER, displayAgent, type Category } from './meta'
 import { NewTaskDialog } from './NewTaskDialog'
 import { SavedViews } from './SavedViews'
 import { TaskBoard, movePatch } from './TaskBoard'
@@ -79,6 +79,24 @@ export interface TasksViewProps {
   nest?: boolean
   /** Offer New task (the button and the C key). A project page passes its `may_edit`. */
   canCreate?: boolean
+  /** Show the recurring templates in their own collapsible "Repeating" group under the
+   *  list (pin `recurring: 'false'` in `fixed` so the list itself is the work). */
+  repeating?: boolean
+}
+
+/** A task finished in this list, kept where it was until the list is reloaded or left. */
+interface Kept {
+  task: Task
+  /** The key of the row above it when it was finished (null: it was first). */
+  after: string | null
+  index: number
+  /** Its status before, for Undo. */
+  was: TaskStatus
+}
+
+const closed = (status: TaskStatus) => {
+  const c = STATUS_CATEGORY[status]
+  return c === 'completed' || c === 'canceled'
 }
 
 function readStored(key: string | undefined): string | null {
@@ -107,6 +125,7 @@ export function TasksView({
   onChanged,
   nest = false,
   canCreate = true,
+  repeating = false,
 }: TasksViewProps): JSX.Element {
   const [params, setParams] = useSearchParams()
   const tabList = useMemo<TabId[]>(() => (tabs === true ? ALL_TABS : Array.isArray(tabs) ? [...tabs] : []), [tabs])
@@ -162,10 +181,31 @@ export function TasksView({
     }
   }, [workspace])
 
+  // ---- done stays in place ----
+  // A task finished here (or canceled) would drop out of an open-work list on the next
+  // re-read, and a mis-tap could not be undone where it happened. It stays in its row,
+  // struck through, with Undo, until the list's own query changes or the page is left.
+  const [kept, setKept] = useState<Map<string, Kept>>(() => new Map())
+  useEffect(() => setKept(new Map()), [queryKey, workspace])
+
   // "Due: none" has no server filter; the rest is the server's answer as is.
-  const shown = useMemo(
+  const fetched = useMemo(
     () => (list.tasks && state.due === 'none' ? list.tasks.filter((t) => !t.due) : list.tasks),
     [list.tasks, state.due],
+  )
+  const shown = useMemo(() => {
+    if (!fetched || kept.size === 0) return fetched
+    const out = [...fetched]
+    for (const [key, k] of kept) {
+      if (out.some((t) => t.key === key)) continue
+      const above = k.after ? out.findIndex((t) => t.key === k.after) : -1
+      out.splice(above >= 0 ? above + 1 : Math.min(k.index, out.length), 0, k.task)
+    }
+    return out
+  }, [fetched, kept])
+  const keptKeys = useMemo(
+    () => new Set([...kept.values()].filter((k) => closed(k.task.status)).map((k) => k.task.key)),
+    [kept],
   )
 
   // My tasks is the default, but an empty one on a first visit is a dead end:
@@ -213,15 +253,51 @@ export function TasksView({
     onChanged?.()
   }, [onChanged])
 
+  const remember = useCallback(
+    (before: Task, after: Task) => {
+      const finishing = closed(after.status) && !closed(before.status)
+      setKept((cur) => {
+        const next = new Map(cur)
+        if (finishing) {
+          const rows = shown ?? []
+          const i = rows.findIndex((t) => t.key === before.key)
+          next.set(before.key, { task: after, after: i > 0 ? rows[i - 1].key : null, index: Math.max(i, 0), was: before.status })
+        } else if (next.has(before.key)) {
+          const k = next.get(before.key) as Kept
+          if (closed(after.status)) next.set(before.key, { ...k, task: after })
+          else next.delete(before.key)
+        }
+        return next
+      })
+    },
+    [shown],
+  )
+
   const patch = useCallback(
     (key: string, body: TaskPatch, optimistic?: Partial<Task>) => {
       setError(null)
+      const before = shown?.find((t) => t.key === key)
+      if (before && body.status) remember(before, { ...before, ...(optimistic ?? {}), status: body.status as TaskStatus })
       list
         .patch(key, body, optimistic)
         .then(changed)
-        .catch((e: unknown) => setError(`${key}: ${errorText(e, 'not changed')}`))
+        .catch((e: unknown) => {
+          if (before && body.status) remember({ ...before, status: body.status as TaskStatus }, before)
+          setError(`${key}: ${errorText(e, 'not changed')}`)
+        })
     },
-    [list, changed],
+    [list, changed, shown, remember],
+  )
+
+  const undo = useCallback(
+    (task: Task) => {
+      const k = kept.get(task.key)
+      if (!k) return
+      // Back in the list's own rows too: the server may have dropped it already.
+      list.setTasks((rows) => (rows.some((t) => t.key === task.key) ? rows : [...rows, task]))
+      patch(task.key, { status: k.was }, { status: k.was })
+    },
+    [kept, list, patch],
   )
 
   // ---- the order rows are shown in (J/K, Shift-select) ----
@@ -264,12 +340,16 @@ export function TasksView({
   const onBulk = useCallback(
     (results: BulkResult[]) => {
       const saved = new Map(results.filter((r) => r.ok && r.task).map((r) => [r.key, r.task as Task]))
+      for (const [key, task] of saved) {
+        const before = shown?.find((t) => t.key === key)
+        if (before && before.status !== task.status) remember(before, task)
+      }
       if (saved.size) {
         list.setTasks((rows) => rows.map((t) => saved.get(t.key) ?? t))
         changed()
       }
     },
-    [list, changed],
+    [list, changed, shown, remember],
   )
 
   // ---- the board's drop ----
@@ -388,6 +468,18 @@ export function TasksView({
     })
 
   const show = (key: keyof TaskQuery) => !(key in pinned)
+  // Below sm the dropdowns, search, grouping and layout fold into one Filter button.
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const activeFilters = [
+    show('assignee') && state.assignee,
+    show('project') && state.project,
+    show('label') && state.label,
+    show('priority') && state.priority,
+    show('kind') && state.kind,
+    state.due,
+    state.q,
+  ].filter(Boolean).length
+  const foldable = filtersOpen ? 'flex basis-full flex-wrap items-center gap-1.5 sm:contents' : 'hidden sm:contents'
 
   return (
     <div className="min-w-0" data-testid="tasks-view">
@@ -419,7 +511,11 @@ export function TasksView({
       )}
 
       <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[12px]" aria-label="Filters" role="group">
-        <div className="inline-flex flex-wrap items-center gap-0.5 rounded-md border border-border bg-card p-0.5" role="group" aria-label="Status">
+        <div
+          className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-card p-0.5 sm:flex-wrap"
+          role="group"
+          aria-label="Status"
+        >
           {CATEGORIES.map((c) => {
             const on = state.categories.includes(c)
             return (
@@ -429,13 +525,37 @@ export function TasksView({
                 aria-pressed={on}
                 data-testid={`category-${c}`}
                 onClick={() => toggleCategory(c)}
-                className={cn('rounded px-1.5 py-0.5', on ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground')}
+                className={cn(
+                  'shrink-0 whitespace-nowrap rounded px-1 py-0.5 sm:px-1.5',
+                  on ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground',
+                )}
               >
                 {names?.[c] || DEFAULT_CATEGORY_NAMES[c]}
               </button>
             )
           })}
         </div>
+        <button
+          type="button"
+          aria-expanded={filtersOpen}
+          data-testid="filters-toggle"
+          onClick={() => setFiltersOpen((on) => !on)}
+          className={cn(
+            'inline-flex h-7 items-center gap-1 rounded border px-2 sm:hidden',
+            activeFilters ? 'border-primary/40 bg-primary/10 text-primary' : 'border-input bg-input text-foreground',
+          )}
+        >
+          <ListFilter className="size-3.5" aria-hidden="true" />
+          Filter{activeFilters ? ` · ${activeFilters}` : ''}
+        </button>
+        {/* Last in the first row's order, so a phone has it beside Filter. */}
+        {canCreate && (
+          <Button size="xs" className="order-last ml-auto" onClick={startCreate} title="New task (C)">
+            <Plus aria-hidden="true" />
+            New task
+          </Button>
+        )}
+        <div className={foldable} data-testid="filters-more">
         {show('assignee') && (
           <select aria-label="Assignee" value={state.assignee} onChange={(e) => setParam('assignee', e.target.value)} className={SELECT}>
             <option value="">Anyone</option>
@@ -513,9 +633,11 @@ export function TasksView({
             Batch {state.batch} <X className="size-3" aria-hidden="true" />
           </button>
         )}
+        </div>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[12px]">
+      <div className={cn('mb-3 flex-wrap items-center gap-1.5 text-[12px]', filtersOpen ? 'flex' : 'hidden sm:flex')}>
+        <div className={foldable}>
         <select aria-label="Group by" value={state.group} onChange={(e) => setParam('group', e.target.value as GroupBy)} className={SELECT}>
           {GROUPS.map((g) => (
             <option key={g.value || 'none'} value={g.value}>
@@ -547,12 +669,7 @@ export function TasksView({
             onError={setError}
           />
         )}
-        {canCreate && (
-          <Button size="xs" className="ml-auto" onClick={startCreate} title="New task (C)">
-            <Plus aria-hidden="true" />
-            New task
-          </Button>
-        )}
+        </div>
       </div>
 
       {(error || list.error) && (
@@ -600,7 +717,21 @@ export function TasksView({
           onToggle={toggle}
           focused={focused}
           names={names}
-          empty="No tasks match these filters."
+          empty={repeating ? 'Nothing to do right now.' : 'No tasks match these filters.'}
+          kept={keptKeys}
+          onUndo={undo}
+        />
+      )}
+
+      {repeating && (
+        <RepeatingGroup
+          workspace={workspace}
+          query={{ ...pinned, recurring: 'true' }}
+          directory={directory}
+          names={names}
+          onOpen={onOpenTask}
+          onChanged={changed}
+          openByDefault={shown !== null && shown.length === 0}
         />
       )}
 
@@ -659,5 +790,64 @@ function SearchBox({ value, onChange }: { value: string; onChange: (q: string) =
         className="w-36 bg-transparent text-[12px] text-foreground placeholder:text-placeholder focus:outline-none"
       />
     </label>
+  )
+}
+
+/** A project's recurring templates — its chores, say — under the work list: each says how
+ *  often it repeats and when it was last done. Folded by default while there is work. */
+function RepeatingGroup({
+  workspace,
+  query,
+  directory,
+  names,
+  onOpen,
+  onChanged,
+  openByDefault,
+}: {
+  workspace: string
+  query: TaskQuery
+  directory: ReturnType<typeof useDirectory>
+  names: Record<string, string> | null
+  onOpen: (task: Task) => void
+  onChanged: () => void
+  openByDefault: boolean
+}): JSX.Element | null {
+  const queryKey = JSON.stringify(query)
+  const list = useTaskList(() => listTasks(query, workspace), [workspace, queryKey])
+  const [open, setOpen] = useState<boolean | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const isOpen = open ?? openByDefault
+  const tasks = list.tasks
+  if (!tasks || tasks.length === 0) return null
+  const Chevron = isOpen ? ChevronDown : ChevronRight
+  return (
+    <div className="mt-4" data-testid="repeating">
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        onClick={() => setOpen(!isOpen)}
+        className="mb-2 inline-flex items-center gap-1 text-[13px] font-semibold text-foreground hover:text-primary"
+      >
+        <Chevron className="size-4" aria-hidden="true" />
+        Repeating <span className="font-normal text-muted-foreground">{tasks.length}</span>
+      </button>
+      {error && <p role="alert" className="mb-2 text-[12px] text-destructive">{error}</p>}
+      {isOpen && (
+        <TaskTable
+          tasks={tasks}
+          directory={directory}
+          onPatch={(key, body, optimistic) => {
+            setError(null)
+            list
+              .patch(key, body, optimistic)
+              .then(onChanged)
+              .catch((e: unknown) => setError(`${key}: ${errorText(e, 'not changed')}`))
+          }}
+          onOpen={onOpen}
+          columns={TABLE_COLUMNS.filter((c) => c !== 'project' && c !== 'due')}
+          names={names}
+        />
+      )}
+    </div>
   )
 }

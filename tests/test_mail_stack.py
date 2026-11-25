@@ -71,7 +71,7 @@ def test_canopy_web_mail_is_off_by_default():
     web = STACK.parent / "canopy-web.cfn.yaml"
     params = yaml.load(web.read_text(), Loader=_L)["Parameters"]
     assert params["MailEnabled"]["Default"] == "false"
-    assert "Description" in params["DesiredCount"]
+    assert "Description" in params["MinTasks"]
 
 
 def test_inbound_bucket_outlives_the_stack():

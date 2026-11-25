@@ -418,10 +418,7 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
         version = 0
     else:
         narrative_slug = (request_json.get("narrative_slug") or narrative_slug_from_run_id(run_id)) or None
-        if is_narrative_gate:
-            version = ReviewRequest.next_version(narrative_slug)
-        else:
-            version = max(ReviewRequest.next_version(narrative_slug) - 1, 1)
+        version = None  # numbered below, within the workspace it is created in
 
     # Guard the free-string request_json values against their column limits before
     # the write. They come from an unbounded dict, so an over-length value is a
@@ -452,6 +449,11 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
             type_=TYPE_FORBIDDEN,
             detail=f"opening a review requires the editor role in {ws.slug!r}",
         )
+    if version is None:
+        # Numbered within this workspace: counting every tenant's reviews by the
+        # same (free-text) slug told the caller another workspace has it.
+        latest = ReviewRequest.next_version(narrative_slug, workspace=ws.slug)
+        version = latest if is_narrative_gate else max(latest - 1, 1)
 
     # What made it (T76) — see apps/harness/artifact_origin.py. Never refuses.
     origin = artifact_origin.resolve(

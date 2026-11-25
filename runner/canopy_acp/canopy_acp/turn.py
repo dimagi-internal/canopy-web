@@ -112,7 +112,8 @@ def stop_origin(stop: str, canopy_cancelled: bool, init) -> str:
 
     A "turn ended: cancelled" with no stop requested must say whether canopy sent
     the cancel or the adapter ended the turn on its own, and which
-    claude-agent-acp the box runs (cloud boxes install it unpinned). Both decide
+    claude-agent-acp the box runs (a box can still run another version than the
+    pin until its next install). Both decide
     where the fix goes."""
     info = (init or {}).get("agentInfo") if isinstance(init, dict) else None
     version = info.get("version") if isinstance(info, dict) else ""
@@ -134,8 +135,13 @@ class _Stream:
     again; `on_flushed(marker)` is told the last update a successful emit carried."""
 
     def __init__(self, reducer, emit, *, log, clock, position=None, on_flushed=None,
-                 live_from=None, emitted_through=None):
+                 live_from=None, emitted_through=None, on_text=None):
         self.reducer = reducer
+        # `on_text(index, text)`: the reply being written, whole so far, as each fragment
+        # lands — for a live view; `index` counts this turn's replies from 0. Never
+        # called for history or for what an adopted turn already emitted.
+        self._on_text = on_text
+        self.replies = 0
         self._emit = emit
         self._log = log
         self._clock = clock
@@ -155,8 +161,22 @@ class _Stream:
     def _close_message(self, quiet: bool = False):
         text = "".join(self.message)
         self.message.clear()
+        if text.strip():
+            self.replies += 1
         if text.strip() and not quiet:
             self.batch.append({"kind": "assistant", "payload": {"text": text}})
+
+    def _live(self, quiet: bool) -> None:
+        if self._on_text is None or quiet:
+            return
+        with self.lock:
+            index, text = self.replies, "".join(self.message)
+        if not text.strip():
+            return
+        try:
+            self._on_text(index, text)
+        except Exception as exc:  # noqa: BLE001 — a live view may never cost a turn
+            self._log(f"warn: could not send the live reply: {exc}")
 
     def on_update(self, _session_id, update):
         if self.replaying:
@@ -170,11 +190,13 @@ class _Stream:
         kind = self.reducer.apply(update)
         if kind is None:
             return
+        streamed = False
         with self.lock:
             if kind == "agent_message_chunk":
                 text = content_text(update)
                 if text:
                     self.message.append(text)
+                    streamed = True
             elif kind in ("tool_call", "tool_call_update"):
                 # A message that ended before the restart was emitted then.
                 self._close_message(quiet=quiet)
@@ -196,6 +218,8 @@ class _Stream:
                             "content": call.result_text}})
             if pos is not None:
                 self._last_pos = pos
+        if streamed:
+            self._live(quiet)
 
     def flush(self, final=False):
         with self.lock:
@@ -314,7 +338,7 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
                timeout: float | None = None, clock=time.time, log=logger.info,
                release_wait: float = RELEASE_WAIT_SECONDS,
                processes=session_processes, mode: str | None = None,
-               position=None, on_flushed=None) -> TurnResult:
+               position=None, on_flushed=None, on_text=None) -> TurnResult:
     """Run one prompt as one turn and close the adapter.
 
     `make_agent(cwd=, env=, on_update=)` builds the agent (canopy_acp.AcpAgent,
@@ -329,11 +353,12 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
     the Escape equivalent once. A resume whose `session/load` fails starts a
     fresh session — `on_session` then names the new id. `position`/`on_flushed`:
     see `_Stream` — how a runner records what it has emitted, so a turn it
-    adopts after a restart (`adopt_turn`) emits nothing twice.
+    adopts after a restart (`adopt_turn`) emits nothing twice. `on_text(index, text)`
+    hears each reply as it is written, whole so far (see `_Stream`).
 
     Raises TurnError when the turn could not run to an end."""
     stream = _Stream(reducer, emit, log=log, clock=clock, position=position,
-                     on_flushed=on_flushed)
+                     on_flushed=on_flushed, on_text=on_text)
     agent = None
     session_id = ""
     step = "starting the adapter"

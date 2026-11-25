@@ -21,7 +21,8 @@ const CARD = {
   id: 7, key: 'APR-7', kind: 'workspace.member.add', kind_label: 'Add someone to a workspace',
   needs: 'an admin or owner of the workspace', title: 'Add wouter@dimagi.com to Connect as editor',
   summary: 'wouter@dimagi.com would become editor of Connect (connect).', status: 'pending', workspace: 'connect',
-  url: '/w/connect/approvals/7', requested_by: 'Trellis', reason: 'He asked in #canopy-support',
+  url: '/w/connect/approvals/7', page_url: 'https://canopy.example/w/connect/approvals/7', step_up: false,
+  requested_by: 'Trellis', reason: 'He asked in #canopy-support',
   evidence: [{ quote: 'can you add me to connect?', who: 'Wouter', source_url: 'https://slack.example/p1' }],
   plan: ['wouter@dimagi.com becomes editor of Connect', 'If they already have an account they are added now'],
   if_declined: 'Nothing happens. The request is closed.', source_url: '', created_at: '2026-10-30T10:00:00Z',
@@ -65,6 +66,21 @@ describe('ApprovalPage', () => {
     expect(plan.textContent).toContain('https://evil.example/page')
     expect(screen.queryByRole('link', { name: 'https://evil.example/page' })).toBeNull()
     expect(screen.getByRole('link', { name: review }).getAttribute('href')).toBe(review)
+  })
+
+  it('says a passkey kind needs the passkey to approve and not to decline', async () => {
+    get.mockResolvedValue({ ...CARD, step_up: true })
+    open()
+    expect((await screen.findByTestId('approval-approve')).textContent).toBe('Approve with your passkey')
+    expect(screen.getByTestId('approval-passkey').textContent).toContain('needs your passkey')
+    expect(screen.getByTestId('approval-decline').textContent).toBe('Decline')
+  })
+
+  it('offers a plain Approve for a kind that needs no passkey', async () => {
+    get.mockResolvedValue(CARD)
+    open()
+    expect((await screen.findByTestId('approval-approve')).textContent).toBe('Approve')
+    expect(screen.queryByTestId('approval-passkey')).toBeNull()
   })
 
   it('approves with a note, then shows the outcome and the history', async () => {

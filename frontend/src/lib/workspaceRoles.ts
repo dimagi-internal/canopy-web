@@ -30,6 +30,7 @@ export type Capability =
   | 'retention.manage'
   | 'admission.manage'
   | 'projects.decide'
+  | 'brain.manage'
   | 'own'
   | 'control'
 
@@ -46,6 +47,7 @@ export const MINIMUM_ROLE: Record<Capability, WorkspaceRole> = {
   'retention.manage': 'admin',
   'admission.manage': 'admin',
   'projects.decide': 'admin',
+  'brain.manage': 'admin',
   own: 'owner',
   control: 'owner',
 }

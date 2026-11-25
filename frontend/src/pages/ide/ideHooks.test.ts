@@ -3,18 +3,18 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PREFS_KEY, RAIL_DEFAULT, RAIL_MAX, loadPrefs, useIdePrefs } from './useIdePrefs'
-import { DOORBELL_MIN_MS, UNCONFIRMED_DELETE, useIdeData } from './useIdeData'
+import { DOORBELL_MIN_MS, UNCONFIRMED_DELETE, frameChange, useIdeData, type FrameMemo } from './useIdeData'
 
 const chat = vi.hoisted(() => ({ listSessions: vi.fn() }))
 const harness = vi.hoisted(() => ({ listRunners: vi.fn() }))
 const agents = vi.hoisted(() => ({ listMyAgents: vi.fn() }))
-const socket = vi.hoisted(() => ({ ring: null as null | (() => void), connected: false }))
+const socket = vi.hoisted(() => ({ ring: null as null | ((frame?: unknown) => void), connected: false }))
 
 vi.mock('@/api/chat', async (orig) => ({ ...(await orig<object>()), ...chat }))
 vi.mock('@/api/harness', async (orig) => ({ ...(await orig<object>()), ...harness }))
 vi.mock('@/api/agents', async (orig) => ({ ...(await orig<object>()), ...agents }))
 vi.mock('@/hooks/useReconnectingSocket', () => ({
-  useReconnectingSocket: (_url: string, onFrame: () => void) => {
+  useReconnectingSocket: (_url: string, onFrame: (frame?: unknown) => void) => {
     socket.ring = onFrame
     return { connected: socket.connected }
   },
@@ -110,18 +110,56 @@ describe('useIdeData', () => {
     expect(result.current.runners).toHaveLength(1)
   })
 
+  const runnerFrame = (status: string) => ({ type: 'supervisor.runner', runner: { id: 'r1', status } })
+  const sessionsFrame = (ids: string[]) => ({ type: 'supervisor.sessions', sessions: ids.map((id) => ({ id })) })
+
   it('a doorbell ring refetches, at most once per window', async () => {
     const { result } = renderHook(() => useIdeData('active'))
     await waitFor(() => expect(result.current.loading).toBe(false))
     vi.useFakeTimers()
     const calls = chat.listSessions.mock.calls.length
     act(() => {
-      socket.ring?.()
-      socket.ring?.()
-      socket.ring?.()
+      socket.ring?.(sessionsFrame(['a']))
+      socket.ring?.(sessionsFrame(['a', 'b']))
+      socket.ring?.(sessionsFrame(['b']))
     })
     await act(async () => { await vi.advanceTimersByTimeAsync(DOORBELL_MIN_MS) })
     expect(chat.listSessions.mock.calls.length).toBe(calls + 1)
+  })
+
+  it('a heartbeat or an unchanged session push rings nothing; a changed session list skips the fleet read', async () => {
+    const { result } = renderHook(() => useIdeData('active'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    vi.useFakeTimers()
+    act(() => socket.ring?.(runnerFrame('online')))
+    await act(async () => { await vi.advanceTimersByTimeAsync(DOORBELL_MIN_MS) })
+    const sessions = chat.listSessions.mock.calls.length
+    const fleet = harness.listRunners.mock.calls.length
+    act(() => {
+      socket.ring?.(runnerFrame('online'))
+      socket.ring?.({ type: 'supervisor.waiting', agent: 'ada', waiting_count: 2 })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(DOORBELL_MIN_MS) })
+    expect(chat.listSessions.mock.calls.length).toBe(sessions)
+    act(() => socket.ring?.(sessionsFrame(['s1'])))
+    await act(async () => { await vi.advanceTimersByTimeAsync(DOORBELL_MIN_MS) })
+    expect(chat.listSessions.mock.calls.length).toBe(sessions + 1)
+    expect(harness.listRunners.mock.calls.length).toBe(fleet)
+    act(() => socket.ring?.(sessionsFrame(['s1'])))
+    await act(async () => { await vi.advanceTimersByTimeAsync(DOORBELL_MIN_MS) })
+    expect(chat.listSessions.mock.calls.length).toBe(sessions + 1)
+    act(() => socket.ring?.(runnerFrame('offline')))
+    await act(async () => { await vi.advanceTimersByTimeAsync(DOORBELL_MIN_MS) })
+    expect(harness.listRunners.mock.calls.length).toBe(fleet + 1)
+  })
+
+  it('frameChange: a status change or a reconnect re-reads everything', () => {
+    const seen: FrameMemo = { status: new Map(), sessions: null }
+    expect(frameChange(runnerFrame('online'), seen)).toBe('all')
+    expect(frameChange(runnerFrame('online'), seen)).toBe('none')
+    expect(frameChange({ type: 'supervisor.snapshot', runners: [{ id: 'r1', status: 'online' }] }, seen)).toBe('all')
+    expect(frameChange(runnerFrame('online'), seen)).toBe('none')
+    expect(frameChange({ type: 'something.new' }, seen)).toBe('all')
   })
 
   it('says a relayed delete went unconfirmed, then takes it back once it lands', async () => {

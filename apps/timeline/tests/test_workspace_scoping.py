@@ -123,3 +123,22 @@ def test_all_tenant_sources_scoped_to_members_workspace(db):
         assert a_ids, f"{sub}: A should see its own rows"
         assert b_ids, f"{sub}: B should see its own rows"
         assert a_ids.isdisjoint(b_ids), f"{sub}: tenants must not share events"
+
+
+def test_a_shared_session_in_another_workspace_is_not_in_the_feed(two_tenants):
+    """The sessions source lists link shares, and a link share's href carries its
+    token: B's must not reach a member of A only."""
+    from apps.session_sharing.models import Session as SharedSession
+    from apps.session_sharing.models import ShareToken
+
+    ua, ub = two_tenants
+    mine = SharedSession.objects.create(workspace_id="ws-a", owner=ua, slug="a-share", title="A's",
+                                        visibility=SharedSession.VISIBILITY_LINK)
+    theirs = SharedSession.objects.create(workspace_id="ws-b", owner=ub, slug="b-share", title="B's",
+                                          visibility=SharedSession.VISIBILITY_LINK)
+    ShareToken.objects.create(session=theirs, created_by=ub, token="b-secret-token")
+    body = _client(ua).get(BASE, {"subsystem": "sessions"})
+    ids = {e["id"] for e in body.json()["events"]}
+    assert f"session:{mine.slug}" in ids
+    assert f"session:{theirs.slug}" not in ids
+    assert b"b-secret-token" not in body.content

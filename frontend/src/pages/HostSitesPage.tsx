@@ -19,6 +19,7 @@ import {
   DefaultAgentPicker,
   HostGrantEditor,
   HostGrantFields,
+  ReplyPushEditor,
 } from '@/pages/hostSites/HostGrantEditor'
 import { ConnectionTester } from '@/pages/hostSites/ConnectionTester'
 import { SiteHealthTable } from '@/pages/hostSites/SiteHealthTable'
@@ -232,6 +233,17 @@ export function HostSitesPage(): JSX.Element | null {
                         host_issuer: issuer,
                         host_mcp_resource: resource,
                       }),
+                    )
+                  }
+                />
+              )}
+              {isOwner && !app.revoked && (
+                <ReplyPushEditor
+                  app={app}
+                  busy={busy}
+                  onSave={(url, mode) =>
+                    void run(() =>
+                      updateHostSite(slug, app.id, { reply_webhook_url: url, reply_mode: mode }),
                     )
                   }
                 />

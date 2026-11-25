@@ -43,7 +43,8 @@ class MintFailed(RuntimeError):
 def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", email: str = "",
                            email_verified: bool = False, extra: dict | None = None,
                            now: float | None = None, agent: str = "",
-                           runner_requirements=()) -> str:
+                           runner_requirements=(), channel: str = "",
+                           workspace: str | None = None) -> str:
     """A signed statement that ``subject`` is a real person on this host, now.
 
     ``email_verified=True`` is the host vouching for the address; canopy lets
@@ -55,6 +56,10 @@ def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", 
     page chose it, and canopy holds the token and its host grant to it.
     ``runner_requirements`` are the page's, added to the site-wide
     ``config.runner_requirements`` — a page can raise the floor, never lower it.
+    ``channel`` (``contract.CHANNEL_CLAIM``) marks a RELAY arrival: the host carries
+    this person's conversation over a channel of its own (``canopy_sdk.host.relay``).
+    ``workspace`` names the canopy tenant for this one assertion, in place of
+    ``config.workspace``.
     """
     if not config.assertions_enabled:
         raise HostNotConfigured("the canopy base URL and the host's app name are required")
@@ -90,10 +95,16 @@ def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", 
     # The tenant, named directly (``CANOPY_HOST["WORKSPACE"]``): canopy selects
     # the site's registration by it, so a deleted or moved agent cannot leave
     # the site unresolvable. Never from ``extra``.
-    if config.workspace:
-        claims[contract.WORKSPACE_CLAIM] = config.workspace
+    tenant = contract.parse_workspace_claim(workspace or None) if workspace else config.workspace
+    if tenant:
+        claims[contract.WORKSPACE_CLAIM] = tenant
     else:
         claims.pop(contract.WORKSPACE_CLAIM, None)
+    channel = contract.parse_channel_claim(channel or None)
+    if channel:
+        claims[contract.CHANNEL_CLAIM] = channel
+    else:
+        claims.pop(contract.CHANNEL_CLAIM, None)
     # `kid` so canopy can pick this key out of the JWKS the host publishes;
     # without it a rotation has nothing to select on.
     return sign(claims, config.signing_key, headers={"kid": config.kid})

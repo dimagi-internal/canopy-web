@@ -92,7 +92,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/home',
     flat: 'personal/global: what is waiting on you across every workspace you are in — read once per organisation and shown side by side',
     title: 'Home',
-    use: 'Your front page: what is waiting on you across every workspace.',
+    use: 'Your front page: your sessions and what is waiting on you, across every workspace.',
   },
   {
     path: '/supervisor',
@@ -206,15 +206,29 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/listen',
     group: 'Recording a meeting from your phone',
     flat: 'personal/global: your phone and your own laptop, in no workspace',
-    title: 'Canopy Listen on your phone',
-    use: 'When you want to record a meeting on your phone and have your own laptop transcribe it, end-to-end encrypted.',
+    title: 'Canopy Listen',
+    use: 'When you want to record a meeting on your phone or in a browser and have your own laptop transcribe it.',
   },
   {
     path: '/listen/voice',
     group: 'Recording a meeting from your phone',
     flat: 'personal/global: your phone and your own laptop; the agent named in the address says where the chat lands',
-    title: 'Voice session: a voice note to an agent',
+    title: 'Voice assistant: a voice note to an agent',
     use: 'When you want to start a chat with an agent by talking to your phone; your laptop reads it.',
+  },
+  {
+    path: '/ext/panel',
+    group: 'The browser extension',
+    flat: 'personal/global: the browser extension\'s side panel lists your apps for a tab across every workspace you are in',
+    title: 'Canopy side panel',
+    use: 'Opened by the Dimagi Canopy browser extension beside a tab, to use one of your apps on the page you are on.',
+  },
+  {
+    path: '/ext/signed-in',
+    group: 'The browser extension',
+    flat: 'personal/global: the end of the side panel\'s sign-in, in no workspace',
+    title: 'Signed in from the side panel',
+    use: 'Where signing in from the browser extension\'s side panel lands, before you go back to the panel.',
   },
   {
     path: '/act-as/:requestId',
@@ -228,7 +242,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     group: 'Letting an agent act as you',
     flat: 'personal/global: a permission to act as YOU, on a page of any site you use',
     title: 'Confirm a page’s act-as-you permission',
-    use: 'When a page panel sends you to the browser to confirm an the agent’s access.',
+    use: 'When a page panel sends you to the browser to confirm the agent’s access.',
   },
 
   // --- Tenant-scoped surfaces under /w/:workspace ---
@@ -281,7 +295,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   {
     path: '/w/:workspace/settings/host-sites',
     title: 'Host sites',
-    use: 'When you embed one of this workspace\'s agents in a website.',
+    use: 'When you connect a website to canopy, to put this workspace\'s agents on it.',
   },
   {
     path: '/w/:workspace/settings/connections',
@@ -335,10 +349,16 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'When you want to know how the workspace is used.',
   },
   {
+    path: '/w/:workspace/brain',
+    home: '/w/:workspace/health',
+    title: 'Canopy Brain',
+    use: 'When you want to know what canopy learning holds for this workspace and what its runs found.',
+  },
+  {
     path: '/w/:workspace/network',
     home: '/w/:workspace/health',
     title: 'Network',
-    use: 'When you want to see who works with whom.',
+    use: 'When you want to see who works with whom, and how people, agents, sessions and projects relate.',
   },
   {
     path: '/w/:workspace/settings/topology',
@@ -633,6 +653,12 @@ export const SURFACES: SurfaceDescriptor[] = [
     group: 'Agent workspace',
     title: 'Agent skill history',
     use: 'When you want to see how this agent\'s skills changed over time.',
+  },
+  {
+    path: '/w/:workspace/agents/:slug/definition',
+    group: 'Agent workspace',
+    title: 'Agent definition',
+    use: 'When you want to read, publish or roll back the files canopy keeps for a stored agent.',
   },
   {
     path: '/w/:workspace/agents/:slug/capabilities',

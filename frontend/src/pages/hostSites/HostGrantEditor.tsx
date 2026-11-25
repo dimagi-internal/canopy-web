@@ -164,3 +164,68 @@ export function HostGrantEditor({
     </div>
   )
 }
+
+/**
+ * Reply push: where canopy POSTs the agent's replies in the conversations this site relays over
+ * its own channel (a relay never polls). One webhook per site, whatever its surfaces: only relay
+ * conversations are pushed, and the site routes each reply by its conversation. It receives
+ * those conversations' words, so changing the URL asks for the person's passkey. A site may
+ * declare its own webhook in its signed `site.json` instead (shown under what the site asks); one
+ * set here wins over it.
+ */
+export function ReplyPushEditor({
+  app,
+  busy,
+  onSave,
+}: {
+  app: Pick<HostSite, 'reply_webhook_url' | 'reply_mode'> & Partial<Pick<HostSite, 'reply_webhook_set_by'>>
+  busy: boolean
+  onSave: (url: string, mode: 'final' | 'stream') => void
+}): JSX.Element {
+  const savedUrl = app.reply_webhook_url ?? ''
+  const savedMode = app.reply_mode === 'stream' ? 'stream' : 'final'
+  const [url, setUrl] = useState(savedUrl)
+  const [mode, setMode] = useState<'final' | 'stream'>(savedMode)
+  const dirty = url.trim() !== savedUrl || mode !== savedMode
+  return (
+    <div className="space-y-2 border-t border-border pt-2">
+      <p className="text-xs text-muted-foreground">
+        {savedUrl
+          ? `Set by ${app.reply_webhook_set_by || 'a person'}: canopy pushes the agent's replies in this site's relayed conversations to it, over any webhook the site declares.`
+          : "No webhook set here. canopy uses the one the site declares in its site.json, when it is on one of the site's origins; without one, a relay has to poll for replies."}
+      </p>
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+        <label className="block space-y-1">
+          <span className="text-xs text-foreground-secondary">Reply webhook URL (optional)</span>
+          <input
+            aria-label="Reply webhook URL"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://labs.connect.dimagi.com/messaging/canopy/replies/"
+            className="w-full rounded-md border border-input bg-input px-3 py-2 font-mono text-[11px] text-foreground"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs text-foreground-secondary">Reply mode</span>
+          <select
+            aria-label="Reply mode"
+            value={mode}
+            onChange={(e) => setMode(e.target.value === 'stream' ? 'stream' : 'final')}
+            className="rounded border border-input bg-input px-2 py-2 text-xs text-foreground"
+          >
+            <option value="final">final: one post when a turn ends</option>
+            <option value="stream">stream: each reply as it lands</option>
+          </select>
+        </label>
+      </div>
+      <span className="block text-xs text-muted-foreground">
+        Public https, the URL the site verifies replies against. Changing it asks for your passkey.
+      </span>
+      {dirty && (
+        <Button size="sm" disabled={busy} onClick={() => onSave(url.trim(), mode)}>
+          Save
+        </Button>
+      )}
+    </div>
+  )
+}

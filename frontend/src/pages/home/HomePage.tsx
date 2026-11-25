@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } f
 import { Link } from 'react-router-dom'
 
 import { type ProjectOut } from '@/api/agents'
-import { hide, loadAttention, unhide, type Attention, type AttentionRow, type AttentionState } from '@/api/attention'
+import { hide, loadAttention, unhide, type Attention, type AttentionRow } from '@/api/attention'
+import { listSessions, type ChatSession } from '@/api/chat'
 import { apiV2 } from '@/api/client.v2'
 import { listMyInvites, type MyInviteOut } from '@/api/workspaces'
 import { actOn } from '@/api/work'
@@ -11,21 +12,28 @@ import { NewChatMenu } from '@/components/chat/NewChatMenu'
 import { useAuth } from '@/auth/AuthProvider'
 import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
-import { StateDot, type DotTone } from '@/components/sessions/StateDot'
-import { folderKey, shortAge } from '@/pages/ide/ideTree'
+import { StateDot } from '@/components/sessions/StateDot'
+import { sessionDisplay } from '@/components/sessions/sessionDisplay'
+import { DEFAULT_FILTERS, folderKey, matches, sessionState, shortAge, type IdeFilters } from '@/pages/ide/ideTree'
+import { sessionLabel } from '@/pages/ide/SessionTree'
+import { LIST_LIMIT } from '@/pages/ide/useIdeData'
+import { scopedPath } from '@/lib/scopedLinks'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { PrivateMark } from '@/components/chat/privateConversation'
 import { displayAgent } from '@/components/work/meta'
 
-// HOME — what is waiting on you, across every workspace you are in.
+// HOME — your sessions, and what is waiting on you, across every workspace you are in.
 //
-// One list, read from `/api/me/attention/` (the same list MCP and any client
-// get: one user-level read across every organisation, each row labelled),
-// ranked by what just happened rather than as a queue: an oldest-first queue
-// floated whatever had gone stale to the top, where it stayed.
+// Two user-level reads, each one call across every organisation:
 //
-// Sessions lead: a chat whose agent is waiting on your next message is where
-// work actually moves. Tasks and requests follow, open: each task's title is
+// Sessions lead, and they are exactly /ide's "Started by me": the same list
+// (`/api/me/sessions/`) through the same filter (`ideTree.matches` with
+// `mineOnly`, i.e. the server's `started_by_you`), every state, idle included.
+// One rule for which sessions are yours; Home never keeps a second one.
+//
+// Then `/api/me/attention/` (the same list MCP and any client get), ranked by
+// what just happened rather than as a queue: an oldest-first queue floated
+// whatever had gone stale to the top, where it stayed. Tasks and requests, open: each task's title is
 // its page (`/w/<ws>/tasks/<KEY>`), and its buttons act on it by key through
 // the one task route (`actOn`) — Start now starts its agent at once. Anything
 // nobody has touched in a few days drops into "Gone quiet", folded, with one
@@ -70,14 +78,19 @@ const SHOWN = 15
 
 const KIND_LABEL: Record<string, string> = {
   task: 'Task',
-  session: 'Chat',
   access_request: 'Access',
 }
+
+/** /ide's "Started by me", with its other filters at their defaults. */
+const STARTED_BY_ME: IdeFilters = { ...DEFAULT_FILTERS, mineOnly: true }
+
+const activity = (s: ChatSession) => Date.parse(s.last_activity_at) || 0
 
 export function HomePage(): JSX.Element {
   const auth = useAuth()
   const { workspaces, loading: wsLoading } = useWorkspace()
   const [data, setData] = useState<Attention | null>(null)
+  const [sessionList, setSessionList] = useState<ChatSession[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [newChatError, setNewChatError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('')
@@ -89,12 +102,11 @@ export function HomePage(): JSX.Element {
 
   const refresh = useCallback(async () => {
     if (!workspaces.length) return
-    try {
-      setData(await loadAttention())
-      setError(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load')
-    }
+    const [a, s] = await Promise.allSettled([loadAttention(), listSessions('active', { limit: LIST_LIMIT })])
+    if (a.status === 'fulfilled') setData(a.value)
+    if (s.status === 'fulfilled') setSessionList(s.value)
+    const failed = [a, s].find((r): r is PromiseRejectedResult => r.status === 'rejected')
+    setError(failed ? (failed.reason instanceof Error ? failed.reason.message : 'Could not load') : null)
   }, [workspaces])
 
   usePolled(refresh, { ms: 30_000, deps: [refresh] })
@@ -105,12 +117,11 @@ export function HomePage(): JSX.Element {
   const now = (data?.now ?? []).filter(inFilter)
   const quiet = (data?.quiet ?? []).filter(inFilter)
   const hidden = (data?.hidden ?? []).filter(inFilter)
-  const sessions = now.filter((i) => i.kind === 'session')
-  const running = (data?.running ?? []).filter(inFilter)
-  // Waiting and running together, newest first — the list /ide's tree would show.
-  const live = [...sessions, ...running].sort(
-    (a, b) => Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at),
+  const mine = useMemo(
+    () => (sessionList ?? []).filter((s) => matches(s, STARTED_BY_ME)).sort((a, b) => activity(b) - activity(a)),
+    [sessionList],
   )
+  const live = mine.filter((s) => !filter || s.workspace === filter)
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed)
   function toggleGroup(key: string) {
     setCollapsed((prev) => {
@@ -121,12 +132,11 @@ export function HomePage(): JSX.Element {
       return next
     })
   }
-  const others = now.filter((i) => i.kind !== 'session')
   const counts = useMemo(() => {
     const c = new Map<string, number>()
-    for (const i of data?.now ?? []) c.set(i.workspace, (c.get(i.workspace) ?? 0) + 1)
+    for (const w of [...(data?.now ?? []), ...mine].map((i) => i.workspace)) c.set(w, (c.get(w) ?? 0) + 1)
     return c
-  }, [data])
+  }, [data, mine])
 
   // Optimistic: the row leaves at once; a failure puts it back on the next read.
   function drop(keys: string[]) {
@@ -135,7 +145,6 @@ export function HomePage(): JSX.Element {
         now: d.now.filter((i) => !keys.includes(i.key)),
         quiet: d.quiet.filter((i) => !keys.includes(i.key)),
         hidden: d.hidden,
-        running: d.running,
       },
     )
   }
@@ -180,12 +189,10 @@ export function HomePage(): JSX.Element {
           <h1 className="text-xl font-semibold text-foreground">Home</h1>
           <p className="mt-1 text-[13px] text-muted-foreground">
             {data == null
-              ? 'What is waiting on you, across every workspace you are in.'
+              ? 'Your sessions, and what is waiting on you, across every workspace you are in.'
               : now.length === 0
                 ? `Nothing new needs you${firstName ? `, ${firstName}` : ''}.`
-                : `${plural(sessions.length, 'session')} waiting on you${running.length ? `, ${running.length} running` : ''}${
-                    others.length ? `, and ${plural(others.length, 'task or request', 'tasks or requests')}` : ''
-                  }. Newest first.`}
+                : `${plural(now.length, 'task or request', 'tasks or requests')} waiting on you. Newest first.`}
           </p>
         </div>
 
@@ -228,14 +235,14 @@ export function HomePage(): JSX.Element {
 
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
         {newChatError && <p className="mb-3 text-sm text-destructive">{newChatError}</p>}
-        {wsLoading || (data == null && !error && workspaces.length > 0) ? (
+        {wsLoading || ((data == null || sessionList == null) && !error && workspaces.length > 0) ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : null}
 
         <Section
           title="Sessions"
           count={live.length}
-          hint="Waiting on your next message, and running now."
+          hint="Every open session you started — the IDE's “Started by me”."
           action={
             <div className="flex shrink-0 items-center gap-3">
               <Link to="/ide" className="hidden text-[12px] text-muted-foreground hover:text-primary md:inline">
@@ -245,8 +252,8 @@ export function HomePage(): JSX.Element {
             </div>
           }
         >
-          {data && live.length === 0 && (
-            <p className="px-3 py-4 text-[13px] text-muted-foreground">No session is waiting on you or running.</p>
+          {sessionList && live.length === 0 && (
+            <p className="px-3 py-4 text-[13px] text-muted-foreground">You have no open sessions.</p>
           )}
           {groupSessions(shown).map((g) => {
             const open = !collapsed.has(g.key)
@@ -277,9 +284,9 @@ export function HomePage(): JSX.Element {
                   <span>{g.rows.length}</span>
                 </span>
               </button>
-              {open && g.rows.map((item) => (
-                <SessionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
-                  showAgent={!g.isAgent} onHide={onHide} />
+              {open && g.rows.map((s) => (
+                <SessionRow key={s.id} s={s} workspaceName={multi ? names.get(s.workspace) : undefined}
+                  showAgent={!g.isAgent} />
               ))}
             </div>
             )
@@ -292,15 +299,15 @@ export function HomePage(): JSX.Element {
           )}
         </Section>
 
-        {others.length > 0 && (
+        {now.length > 0 && (
           <Section
             title="Tasks and requests"
-            count={others.length}
+            count={now.length}
             hint="Approvals, questions and tasks parked on you."
             open={showTasks}
             onToggle={() => setShowTasks((v) => !v)}
           >
-            {others.map((item) => (
+            {now.map((item) => (
               <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
                 onAct={onAct} onHide={onHide} />
             ))}
@@ -322,15 +329,10 @@ export function HomePage(): JSX.Element {
               </button>
             }
           >
-            {quiet.map((item) =>
-              item.kind === 'session' ? (
-                <SessionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
-                  onHide={onHide} />
-              ) : (
-                <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
-                  onAct={onAct} onHide={onHide} />
-              ),
-            )}
+            {quiet.map((item) => (
+              <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
+                onAct={onAct} onHide={onHide} />
+            ))}
           </Section>
         )}
 
@@ -422,12 +424,6 @@ function useDesktop(): boolean {
   return desktop
 }
 
-const isRunning = (r: AttentionRow) => r.state === 'running' || r.state === 'running_auto'
-
-const TONE: Record<AttentionState, DotTone> = {
-  asking: 'asking', your_move: 'idle', parked: 'held', running: 'running', running_auto: 'running',
-}
-
 // Which session groups are folded — a per-browser convenience, so storage that
 // throws (private window) just means everything starts open.
 const COLLAPSED_KEY = 'canopy.home.collapsed.v1'
@@ -449,69 +445,55 @@ function writeCollapsed(keys: Set<string>) {
 /** Sessions folded the way /ide folds them — one group per emdash project (a
  *  repo, or an agent's own) — but ordered by each group's newest session, since
  *  Home is about what just happened. Rows keep their newest-first order. */
-function groupSessions(rows: AttentionRow[]) {
-  const groups = new Map<string, { key: string; isAgent: boolean; asking: number; running: number; rows: AttentionRow[] }>()
-  for (const r of rows) {
-    const key = folderKey(r)
+function groupSessions(rows: ChatSession[]) {
+  const groups = new Map<string, { key: string; isAgent: boolean; asking: number; running: number; rows: ChatSession[] }>()
+  for (const s of rows) {
+    const key = folderKey(s)
     const g = groups.get(key) ?? { key, isAgent: false, asking: 0, running: 0, rows: [] }
-    g.rows.push(r)
-    g.isAgent ||= r.agent_slug === key
-    if (r.state === 'asking') g.asking += 1
-    if (isRunning(r)) g.running += 1
+    g.rows.push(s)
+    g.isAgent ||= s.agent_slug === key
+    const state = sessionState(s)
+    if (state === 'input') g.asking += 1
+    if (state === 'running') g.running += 1
     groups.set(key, g)
   }
   return [...groups.values()]
 }
 
-/** One session on one line, the way /ide lists them: a state dot (amber when a
- *  dialog is waiting on you), the title, its agent and workspace, and its age.
- *  The agent's last words are the row's tooltip, not a second line. */
-function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
-  item: AttentionRow
+/** One session on one line, the way /ide lists it: its state dot (amber when a
+ *  dialog is waiting on you), the title, its agent and workspace, and its age. */
+function SessionRow({ s, workspaceName, showAgent = true }: {
+  s: ChatSession
   workspaceName?: string
   /** Off inside an agent's own group, where its name is the heading. */
   showAgent?: boolean
-  onHide: (items: AttentionRow[], days?: number) => Promise<void>
 }): JSX.Element {
   const desktop = useDesktop()
-  const asking = item.state === 'asking'
-  const runningNow = isRunning(item)
-  const to = desktop && item.target.session ? `/ide/${item.target.session}` : item.url
+  const state = sessionState(s)
+  const label = sessionLabel(s)
+  const to = desktop ? `/ide/${s.id}` : scopedPath(s.workspace, `/sessions/${s.id}`)
   return (
     <div
-      className="group grid grid-cols-[8px_minmax(0,1fr)_auto_auto] items-center gap-2 border-t border-border py-1.5 pl-5 pr-3 text-[13px] hover:bg-muted sm:grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem_auto]"
-      data-testid="attention-row"
+      className="grid grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-2 border-t border-border py-1.5 pl-5 pr-3 text-[13px] hover:bg-muted sm:grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem]"
+      data-testid="session-row"
     >
-      <StateDot tone={TONE[item.state]} />
-      <Link
-        to={to}
-        title={[item.title, item.reason, item.body].filter(Boolean).join('\n\n')}
-        className="truncate text-foreground hover:text-primary"
-      >
-        {item.private && <PrivateMark className="mr-1" />}
-        {item.title}
-        {asking && <span className="ml-2 text-[11px] text-warning">needs an answer</span>}
-        {item.state === 'running_auto' && <span className="ml-2 text-[11px] text-muted-foreground">auto</span>}
-        {item.state === 'parked' && <span className="ml-2 text-[11px] text-muted-foreground">{item.reason}</span>}
+      <StateDot tone={state === 'input' ? 'asking' : state} />
+      <Link to={to} title={label} className="truncate text-foreground hover:text-primary">
+        {s.sensitive && <PrivateMark className="mr-1" />}
+        {label}
+        {state === 'input' && <span className="ml-2 text-[11px] text-warning">needs an answer</span>}
+        {state === 'held' && <span className="ml-2 text-[11px] text-muted-foreground">{sessionDisplay(s).label}</span>}
       </Link>
       <span className="hidden max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground empty:border-0 sm:inline">
-        {showAgent ? item.agent_slug : ''}
+        {showAgent ? (s.agent_slug ?? '') : ''}
       </span>
       <span className="hidden max-w-[120px] truncate text-[11px] text-muted-foreground sm:inline">{workspaceName ?? ''}</span>
       <span
-        className={`text-right text-[11px] tabular-nums ${runningNow ? 'text-success' : 'text-muted-foreground'}`}
-        title={new Date(item.last_activity_at).toLocaleString()}
+        className={`text-right text-[11px] tabular-nums ${state === 'running' ? 'text-success' : 'text-muted-foreground'}`}
+        title={new Date(s.last_activity_at).toLocaleString()}
       >
-        {runningNow ? 'live' : shortAge(item.last_activity_at, new Date())}
+        {state === 'running' ? 'live' : shortAge(s.last_activity_at, new Date())}
       </span>
-      <button
-        type="button"
-        onClick={() => void onHide([item])}
-        title="Off your Home only. Nothing is closed and nobody is told. It comes back when something new happens on it."
-        className="rounded px-1.5 text-[12px] text-muted-foreground hover:bg-background hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
-      >
-        Hide
-      </button>
     </div>
   )
 }

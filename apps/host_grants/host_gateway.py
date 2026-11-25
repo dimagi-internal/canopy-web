@@ -21,6 +21,16 @@ what those tools do:
    fresh proof per request (`htm`, `htu`, `ath`, `iat`, `jti`), and
    `Canopy-Actor: <agent slug>` for the host's audit.
 
+**The subject mode** (`_subject_context`) is the one call made with no grant: a turn of
+one of the site's own CONTACTS, on an entry its owner marked `contact_scoped`. It carries a
+canopy-signed subject statement naming that contact (`Authorization: CanopySubject`,
+`sub` = their `external_id`, from the turn's initiator) beside a DPoP proof with no `ath`,
+and the HOST authorizes every call against that one person
+(docs/architecture/host-systems-of-record.md). It goes to the MCP resource of the surface the
+conversation is held on (`surfaces.subject_resource`), the site's own only on a site with no
+surfaces. A non-contact turn, an entry without `contact_scoped` and a site with no MCP resource
+never reach it.
+
 **There is no fallback.** An expired or missing grant is a refusal that asks for
 the visitor to be back on the page. It is never a call made with the agent's own
 credential, which would hand the visitor whatever the agent can reach — the same
@@ -50,13 +60,16 @@ host's tool names twice over.
 """
 from __future__ import annotations
 
+import asyncio
 import fnmatch
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from asgiref.sync import sync_to_async
 from canopy_sdk import consumer, contract
 from canopy_sdk import resources as resource_links
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
@@ -97,9 +110,9 @@ def page_grant_unconfirmed(agent_name: str) -> str:
 #: agent, which can wait and retry: the person may be confirming right now.
 def page_grant_asked(agent_name: str) -> str:
     return (f"I have asked the person to confirm with their passkey, in the panel, that "
-            f"{agent_name} may act as them on this page. Wait about 20 seconds and try this "
-            "call again; if it is still not confirmed after a few tries, tell them what you "
-            "need it for and carry on without it.")
+            f"{agent_name} may act as them on this page, and they have not yet. Call this "
+            "again now to keep waiting for them; if they do not approve in time, the call "
+            "says so.")
 
 
 def no_grant_message(site: str, reason: str, agent_name: str = "the agent") -> str:
@@ -118,10 +131,13 @@ def no_grant_message(site: str, reason: str, agent_name: str = "the agent") -> s
 class GatewayRefusal(Exception):
     """Why this call will not go through. The message is safe to show the agent."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, waiting: bool = False):
         super().__init__(message)
         self.code = code
         self.message = message
+        # The page's permission is there and waits for the person's passkey, and the
+        # panel has asked them: the call can wait for it (`resolve_waiting`).
+        self.waiting = waiting
 
 
 @dataclass
@@ -150,6 +166,14 @@ class SiteContext:
     #: every request of a View's `resources/read`, bound to the URI it reads. None for
     #: anything else; never set beside `execution` (`resolve` never sets it).
     view: dict | None = field(repr=False, default=None)
+    #: The SUBJECT MODE (`_subject_context`): a contact's turn on a `contact_scoped` entry,
+    #: with no grant and no token. What the subject statement states — `{sub, site, agent,
+    #: turn, session, capability}`, `sub` the contact's `external_id` — signed afresh as
+    #: `Authorization: CanopySubject` on every request. None for every other context.
+    subject: dict | None = field(repr=False, default=None)
+    #: The surface of the site a subject-mode call goes to (`surfaces`), "" for the site
+    #: itself. A surface's tools are kept out of the site's MCP Apps index, which is its pages'.
+    surface: str = ""
 
     def allows(self, tool: str) -> bool:
         return tool_allowed(tool, ceiling=self.ceiling)
@@ -193,12 +217,13 @@ def tool_allowed(tool: str, *, ceiling: list[str]) -> bool:
 # --- resolution ----------------------------------------------------------------
 
 
-def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
+def resolve(turn_id: str, *, reason: str = "", ask_person: bool = True) -> SiteContext:
     """The site, grant and effective tools for this turn — or a refusal.
 
     `reason` is what the agent says it needs the person's permission for; when the
     page's permission still waits for their passkey it is put in front of them in the
-    panel's prompt (`host_grants.ask`, pushed by `_push_ask`)."""
+    panel's prompt (`host_grants.ask`, pushed by `_push_ask`). `ask_person=False` is a
+    waiter checking again (`resolve_waiting`): the panel has asked already."""
     from apps.harness.models import Turn
 
     from apps.tokens.models import AppCredential
@@ -232,11 +257,18 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
     # anyone outside canopy supplied.
     app = AppCredential.objects.filter(name=site, workspace_id=agent.workspace_id,
                                        revoked_at__isnull=True).first()
+    from apps.agents import published_profiles# noqa: PLC0415 — as the model reads above: loads with a call
+
+    if turn.initiator_contact_id and turn.initiator_kind == "contact" and turn.capability:
+        # One of the site's own CONTACTS (no passkey, so never a grant): only an entry its
+        # owner marked `contact_scoped` reaches the site, bound to that one contact.
+        cap = ((agent.interface or {}).get("capabilities") or {}).get(turn.capability)
+        if published_profiles.names_site(cap, site) and (cap or {}).get("contact_scoped") is True:
+            return _subject_context(turn, agent, session, site, app, cap, reqs)
+
     if app is None or not app.issues_host_grants():
         raise GatewayRefusal("site_not_configured",
                              f"{site} does not let me act for you there")
-
-    from apps.agents import published_profiles# noqa: PLC0415 — as the model reads above: loads with a call
 
     if turn.capability:
         # A confined turn: its own profile must name the site.
@@ -269,9 +301,11 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
     if grant is None and found.waiting is not None:
         # The page holds a permission the person has not confirmed: the panel asks
         # for their passkey only now, when this turn actually needs it.
-        ask(found.waiting, reason)
-        _push_ask(session, found.waiting)
-        raise GatewayRefusal("unconfirmed", page_grant_asked(agent.name or agent.slug))
+        if ask_person:
+            ask(found.waiting, reason)
+            _push_ask(session, found.waiting)
+        raise GatewayRefusal("unconfirmed", page_grant_asked(agent.name or agent.slug),
+                             waiting=True)
     if grant is None:
         code = {EXPIRED: "expired", REVOKED: "revoked",
                 UNCONFIRMED: "unconfirmed"}.get(found.reason, "no_grant")
@@ -302,9 +336,62 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
             "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
     ctx = context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
                             ceiling=ceiling,
-                            execution=execution.facts_for(turn, agent, session, effective))
+                            execution=execution.facts_for(turn, agent, session, effective, app=app))
     ctx.session_id = str(session.pk)
     return ctx
+
+
+def _subject_context(turn, agent, session, site: str, app, cap: dict, reqs) -> SiteContext:
+    """The SUBJECT MODE: a contact's turn, on an entry its owner marked `contact_scoped`,
+    reaches the site's tools with no grant, under a canopy-signed subject statement naming
+    that one contact (`client_identity.subject_statement`; the host verifies it with
+    `canopy_sdk.host.verify_subject` and authorizes every call against its `sub`).
+
+    Reached only from `resolve`, only for a turn whose initiator is a contact and whose own
+    profile (`Turn.capability`) names this site with `contact_scoped: true`. Refused unless
+    the site is live and names its MCP resource, the contact is the SITE's own (keyed by it,
+    with the site's id for them) and not blocked, and the runner meets the conversation's
+    requirements. `sub` is the contact's `external_id`, read here from the turn's
+    initiator — never an argument the agent sent."""
+    from apps.contacts.models import Contact  # noqa: PLC0415 — as `resolve`'s model reads: loads with a call
+    from apps.harness import runner_requirements as rr  # noqa: PLC0415 — as above
+
+    from . import client_identity  # noqa: PLC0415 — as `context_for_grant`
+
+    if app is None or not app.host_mcp_resource:
+        raise GatewayRefusal("site_not_configured", f"{site} does not let me reach its tools for you")
+    from . import surfaces  # noqa: PLC0415 — as `client_identity`
+
+    # The surface the conversation is held on decides where the call goes: its own resource,
+    # never the site's pages' (`surfaces.subject_resource`).
+    try:
+        resource = surfaces.subject_resource(app, cap, session)
+    except surfaces.SurfaceRefused as exc:
+        raise GatewayRefusal(exc.code, f"{site} does not let me reach its tools for you here "
+                                       f"({exc.message})") from None
+    contact = turn.initiator_contact
+    if (contact is None or contact.app_id != app.pk or contact.source != Contact.SOURCE_EMBED
+            or not contact.external_id or contact.is_blocked):
+        raise GatewayRefusal("not_the_sites_contact",
+                             f"{site} does not know you as one of its own, so I cannot ask it about you")
+    if rr.SENSITIVE_DATA in reqs and not sensitive_data.handles_sensitive(agent, turn.capability):
+        raise GatewayRefusal(
+            "undeclared",
+            f"{site} gives its sensitive data only to a host site that handles sensitive data "
+            "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
+    try:
+        client_identity.dpop_jkt()
+    except client_identity.ClientIdentityError:
+        raise GatewayRefusal("no_client_key", "canopy cannot reach sites on anyone's behalf "
+                             "right now") from None
+    return SiteContext(
+        turn_id=str(turn.pk), agent_slug=agent.slug, site=app.name, resource=resource,
+        scope="", expires_at=None, ceiling=list(cap.get("ceiling") or []), app_id=app.pk,
+        execution=execution.facts_for(turn, agent, session, reqs, app=app), session_id=str(session.pk),
+        subject={"sub": contact.external_id, "site": app.name, "agent": agent.slug, "turn": str(turn.pk),
+                 "session": str(session.pk), "capability": turn.capability or ""},
+        surface=str((cap or {}).get("surface") or ""),
+    )
 
 
 def _push_ask(session, grant) -> None:
@@ -316,6 +403,102 @@ def _push_ask(session, grant) -> None:
 
     publish(session_group(session.id),
             {"type": "host_grant.requested", "grant_id": grant.pk, "user_id": grant.user_id})
+
+
+#: How long a turn waits, in all, for the person to confirm a page's permission that
+#: waits for their passkey (the panel has asked them) before it carries on without it.
+#: One clock per turn (`grant_wait_left`), however many calls wait on it: the runner's
+#: hold before a lean turn's model starts and a tool call's own wait share it.
+GRANT_WAIT_SECONDS = 120
+#: How often a waiter looks again.
+GRANT_POLL_SECONDS = 2
+#: The longest ONE tool call holds its request open waiting (under the load balancer's
+#: idle timeout); past it the call says to call again, and the turn's clock goes on.
+CALL_WAIT_SECONDS = 45
+#: The panel's note while a turn waits (a `chat.live_text` of its own, past any reply
+#: the agent writes; dropped once the turn settles).
+WAIT_NOTE_MESSAGE = 9_999
+WAIT_NOTE = "Waiting for your approval… confirm with your passkey in the panel."
+WAIT_NOTE_CONFIRMED = "Approved — working on it…"
+WAIT_NOTE_NOT_GIVEN = "Approval wasn't given."
+
+
+def page_grant_not_given() -> str:
+    return ("The person did not confirm with their passkey in time, so their approval "
+            "was not given and I cannot act as them on this page. Tell them so plainly, "
+            "and ask them to approve in the panel and then ask again.")
+
+
+def _wait_key(turn_id: str) -> str:
+    return f"host_grant_wait:{turn_id}"
+
+
+def grant_wait_left(turn_id: str) -> float:
+    """Seconds this turn may still wait for the person's passkey. The first call starts
+    the turn's clock and puts the waiting note in the panel."""
+    now = time.time()
+    if cache.add(_wait_key(turn_id), now, GRANT_WAIT_SECONDS + 600):
+        say_wait(turn_id, WAIT_NOTE)
+    started = float(cache.get(_wait_key(turn_id)) or now)
+    return max(0.0, started + GRANT_WAIT_SECONDS - now)
+
+
+def waited(turn_id: str) -> bool:
+    return cache.get(_wait_key(turn_id)) is not None
+
+
+def say_wait(turn_id: str, text: str) -> None:
+    """The waiting note, in the panel of the turn's conversation. It carries no words of
+    the conversation, only canopy's own."""
+    from apps.harness.models import Turn  # noqa: PLC0415 — harness imports this module
+    from apps.realtime.groups import publish, session_group  # noqa: PLC0415 — as _push_ask: loads with a call
+
+    session_id = (Turn.objects.filter(pk=turn_id).values_list("chat_session_id", flat=True)
+                  .first())
+    if session_id:
+        publish(session_group(session_id), {"type": "chat.live_text", "turn_id": str(turn_id),
+                                            "message": WAIT_NOTE_MESSAGE, "text": text})
+
+
+def waited_out(turn_id: str) -> GatewayRefusal:
+    """The refusal once the turn's wait is over, the note in the panel saying so."""
+    say_wait(turn_id, WAIT_NOTE_NOT_GIVEN)
+    return GatewayRefusal("unconfirmed", page_grant_not_given())
+
+
+async def resolve_waiting(turn_id: str, *, reason: str = "", sleep=None,
+                          call_wait: float | None = None) -> SiteContext:
+    """`resolve`, but when the page's permission waits for the person's passkey (the panel
+    has just asked them), wait for them — up to the turn's `GRANT_WAIT_SECONDS` — and go on
+    the moment they confirm. Any other refusal, and the end of the wait, refuse as before;
+    a refused, expired or stopped permission never waits."""
+    sleep = sleep or asyncio.sleep
+    call_wait = CALL_WAIT_SECONDS if call_wait is None else call_wait
+    call = sync_to_async(resolve, thread_sensitive=True)
+    try:
+        return await call(turn_id, reason=reason)
+    except GatewayRefusal as exc:
+        if not exc.waiting:
+            raise
+        asked = exc
+    held = 0.0
+    while True:
+        left = await sync_to_async(grant_wait_left, thread_sensitive=True)(turn_id)
+        if left <= 0:
+            raise await sync_to_async(waited_out, thread_sensitive=True)(turn_id)
+        if held >= call_wait:
+            raise asked  # "I have asked the person…: call this again now"
+        step = min(GRANT_POLL_SECONDS, left)
+        await sleep(step)
+        held += step
+        try:
+            ctx = await call(turn_id, reason=reason, ask_person=False)
+        except GatewayRefusal as exc:
+            if not exc.waiting:
+                raise
+            continue
+        await sync_to_async(say_wait, thread_sensitive=True)(turn_id, WAIT_NOTE_CONFIRMED)
+        return ctx
 
 
 def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str],
@@ -460,6 +643,10 @@ def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = "", view_tool: V
 
     if mode not in PROOF_MODES:
         raise ValueError(f"unknown proof mode {mode!r}")
+    if ctx.subject is not None:
+        if mode != "dpop":
+            raise ValueError("the subject mode has no token to present any other way")
+        return _SubjectAuth(ctx)
     token = ctx._token
     stranger = None
     if mode == "stranger_key":
@@ -519,6 +706,50 @@ def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = "", view_tool: V
                 ctx.resource, uri=view_tool.uri, access_token=token, rpc=rpc, **ctx.view)
 
     return _DPoP()
+
+
+def _subject_auth_class():
+    import httpx2  # noqa: PLC0415 — as _auth: the HTTP client loads with a call
+
+    from . import client_identity  # noqa: PLC0415 — as _auth
+
+    class SubjectAuth(httpx2.Auth):
+        """The SUBJECT MODE's credentials, fresh on EVERY request of the MCP session: a
+        subject statement naming the contact (`Authorization: CanopySubject`), a DPoP proof
+        by canopy's key with no `ath` (there is no token), and this turn's
+        `Canopy-Execution` (with `sub`). Each statement is bound to THIS JSON-RPC request
+        (`rpc`) and to the proof's key (`cnf.jkt`). Retries once on a `use_dpop_nonce`."""
+
+        def __init__(self, ctx: SiteContext):
+            self.ctx = ctx
+
+        def _sign(self, request, nonce=None):
+            htu = str(request.url.copy_with(query=None, fragment=None))
+            try:
+                body = request.content if request.method == "POST" else b""
+            except Exception:  # noqa: BLE001 - a streamed body: bound to nothing
+                body = b""
+            rpc = contract.rpc_digest_of_body(body)
+            request.headers["Authorization"] = consumer.subject_authorization(
+                client_identity.subject_statement(self.ctx.resource, self.ctx.subject, rpc=rpc))
+            request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(request.method, htu, nonce=nonce)
+            if self.ctx.execution is not None:
+                request.headers[contract.EXECUTION_HEADER] = client_identity.execution_statement(
+                    self.ctx.resource, self.ctx.execution, rpc=rpc)
+
+        def auth_flow(self, request):
+            self._sign(request)
+            response = yield request
+            nonce = response.headers.get(contract.DPOP_NONCE_HEADER)
+            if response.status_code == 401 and nonce:
+                self._sign(request, nonce=nonce)   # a fresh statement and proof: the first were spent
+                yield request
+
+    return SubjectAuth
+
+
+def _SubjectAuth(ctx: SiteContext):
+    return _subject_auth_class()(ctx)
 
 
 class ViewTool:
@@ -605,7 +836,7 @@ async def _listing(ctx: SiteContext, client) -> list:
     from apps.mcp_apps_host import mcp_apps
 
     tools = await client.list_tools()
-    if ctx.app_id is not None:
+    if ctx.app_id is not None and not ctx.surface:
         try:
             await sync_to_async(mcp_apps.record_tools, thread_sensitive=True)(
                 ctx.app_id, [(t.name, getattr(t, "meta", None) or {}) for t in tools])
@@ -657,7 +888,7 @@ async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
     from apps.tokens.models import AppCredential
 
     app = (await sync_to_async(AppCredential.objects.filter(pk=ctx.app_id).first,
-                               thread_sensitive=True)()) if ctx.app_id else None
+                               thread_sensitive=True)()) if ctx.app_id and not ctx.surface else None
     age = mcp_apps.index_age(app) if app is not None else None
     if age is not None and age < INDEX_FRESH:
         entry = mcp_apps.indexed_tool(app, name)

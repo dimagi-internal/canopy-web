@@ -25,6 +25,38 @@ What runs is `overlay.compose(template manifest, overlay)`, validated again by
 what: `access.py` (manage = `integrations`, maintain = managers or a member granted the
 app's `maintainer` role, grant = `members.manage`).
 
+## Maintainers: who publishes new versions (`access.py`)
+
+An admin (`integrations`) names who may publish new versions of ONE installed app without
+an admin each time: a person, or an agent's own login, either way a member of the workspace
+(`…/maintainers`; the grant is the `maintainer` `AppRoleGrant`, with a `level`). The level
+is the admin's decision, made ahead of time:
+
+- **`content`** publishes only versions that change nothing about who can see or do what.
+- **`permissions`** may also publish ones that do: `connections`, `browser`, roles, who
+  reads a collection or field, public and link surfaces, emails' recipients, retention,
+  `tasks`. The admin pre-approved widening this one app.
+
+The one judge of "changes who can see or do what" is `template_diff.changes(live manifest,
+the manifest going live)` (with `overlay.is_risky` for a draft's own ops), on every way a
+version goes live: a draft, a new version, a rollback (going back is judged like going
+forward). A finding without `access.may_widen` is a 403 naming each one in plain words.
+Every published version records what it changed (`AppVersion.reach_changes`), who published
+it and under which right (`published_under`: `admin`, `maintainer:content`,
+`maintainer:permissions`); grants, level changes and revocations are settings, audited as
+`SettingChange` rows. Revoking ends the right at once; versions already live stay.
+
+**A new version from a repo** (`POST …/versions`, `services.release`): for an app whose
+template the workspace owns (installed from its own manifest), a maintainer or admin sends
+the whole manifest, pages included, in the shape install takes. It is validated exactly as
+an install is (`manifest.validate`, so `browser.py` and the connection declarations too),
+the workspace's live overlay is carried onto it (refused if any op no longer fits), its
+scenarios must pass, and it goes live as a new `AppTemplateVersion` plus a new `AppVersion`
+(`origin` `release`), so rollback reaches every earlier one. This is how an app's
+`connections` and `browser` change after install: overlays never reach them. Refused while a
+draft is open, for a version string already used, and for canopy's own templates (theirs
+arrive as updates). Nothing is kept when it is refused.
+
 ## The manifest (`manifest.py`)
 
 Its module docstring lists what an app can declare: `roles` (each a **workspace
@@ -38,8 +70,124 @@ links). Record-level access is `scope.py`. An optional top-level `connections` d
 pages call Salesforce through canopy-web; public pages never do. A shared agent connection
 is approved per app on the agent's Accounts tab ([`vault-connections.md`](vault-connections.md) § Calls from screens).
 
+An optional top-level `ai` declaration (`{"purpose": …}`) lets member pages ask canopy's model with
+`canopy.ai.complete`, as the viewer, logged and rate-limited ([`app-ai.md`](app-ai.md)).
+
+An optional top-level `browser` declaration says which member pages the browser extension's
+side panel shows beside which tabs, and what each may ask of the tab's adapter
+([`browser-extension.md`](browser-extension.md)).
+
 Do not let a workspace declare what acts beyond the caller: overlay `add_action` refuses
 `then` and link actions (`overlay.py`, `add_action` branch); only a template declares them.
+
+## Bundle pages (`apps/workspace_apps/bundles.py`)
+
+A member page may be an existing web UI instead of JSX: `{"slug": "kanban", "kind": "bundle",
+"entry": "kanban/kanban.html"}`, drawn from static files (HTML, JS, CSS, JSON, images, fonts)
+uploaded with the version. The module docstring holds the rules; the ones to keep:
+
+- **Upload is a plain list, `[{path, content_base64 | text | sha256}]`**, given as `files` with the
+  manifest (`install_workspace_app`, and `publish_workspace_app_version`, where sending none keeps the
+  live version's files). Every route that releases a template version passes it through
+  `bundles.attach`, which drops any `bundle` the author wrote and stores the server's own index
+  (`{id, size, files}`); `manifest.py::_bundle_page` checks each `entry` is one of those files. A
+  bundle over one request body goes first to `upload_workspace_app_bundle_blobs` in batches and is then
+  named by `sha256`; a blob no bundle names is swept after a day (`bundles.sweep_unused_blobs`, on the
+  retention tick). Limits are `bundles.MAX_*` and the type table `bundles.TYPES`.
+- **Template-only.** A bundle page has no code, slots or sources; overlay `fork_page` and `fill_slot`
+  refuse one and `add_page` cannot make one (`overlay.py::_not_bundle`). `set_page` (title, menu) works.
+- **Content-addressed and immutable.** `AppBundleBlob` holds bytes once by sha256; `AppBundle` is the
+  {path: sha256} mapping, its id the hash of it. Files are served at `/app-bundles/<id>/<path>` with a
+  year's `immutable` caching (HTML excepted: each carries a fresh nonce).
+- **The same sandbox, one step wider.** `bundles.BundleMiddleware` answers before sessions, like the
+  dynamic-view frame, so no cookie is read or set; every file carries `bundles.csp`: `sandbox
+  allow-scripts allow-forms` (opaque origin; `allow-forms` only so a form's submit event fires, while
+  `form-action 'none'` keeps anything from being submitted), scripts only from the bundle's own path
+  and canopy's client (no inline script but canopy's nonce'd config, no `eval`), `connect-src` only the
+  bundle's own files (it may fetch its JSON or templates; data still goes only through `canopy.*`),
+  images, fonts and media from the bundle or `data:`/`blob:`, no workers, frames or plugins, and the
+  same `frame-ancestors` as the frame (canopy's origins plus the browser extension's), so a bundle page
+  also renders in `/ext/panel/`. The host frames it with the same two flags
+  (`DynamicViewFrame.tsx::BUNDLE_SANDBOX`), never `allow-same-origin`.
+- **canopy's client is injected into every HTML file**, first in `<head>`: `bundle_client.js`, a classic
+  script, so `window.canopy` exists before the page's own scripts run. It speaks the dynamic-view
+  protocol (`frontend/src/dynamicViews/protocol.ts`), so the canopy page answers a bundle page exactly
+  as it answers a JSX one: `canopy.app` (query, act, bulk, link, history, upload, tasks),
+  `canopy.connection`, `canopy.browser`, `canopy.page`, `canopy.read`, `canopy.navigate`. Because its
+  code runs before canopy has spoken, it adds `canopy.ready` (a promise of `{app, scope, browser}`).
+- **Moving between pages** is `canopy.open(page, params, {newTab})`, by slug or by a bundle path
+  (`"kanban/kanban.html?id=5"` opens the page whose `entry` that is, with `id` as a param); a click on a
+  link to another file of the bundle does the same, any other link leaves through `canopy.navigate`.
+  It is a full canopy page each time; the frame never navigates itself (a frame that loads a second
+  document is no longer answered, as for any view). Page params also ride in the file's query string,
+  for code that reads `location.search`. A new tab needs a click on the page. An https link (or
+  `window.open` of one) opens in a new tab (§ What a page can do outside its frame).
+- **What a bundle cannot do**, so a port plans its shim: no `localStorage`, `sessionStorage`,
+  IndexedDB or cookies (an opaque origin has none: keep state in a collection through `app.act`); no
+  network but its own files (outside calls go through `canopy.connection`); no remote scripts, fonts
+  or images (vendor them, or turn a fetched image into a `blob:` URL); no `alert`/`confirm`/`prompt`
+  (no `allow-modals`: they return without asking); no popups, downloads or clipboard of its own
+  (`window.open` is routed to `canopy.open`; the rest are the calls in § What a page can do outside its
+  frame); no workers; no inline `<script>` or `on*=` attributes; and no
+  assignment to `location` (use `canopy.open`).
+
+## What a page can do outside its frame (`frontend/src/dynamicViews/frameOut.ts`)
+
+A page (JSX or bundle) never gets `allow-popups`, `allow-downloads`, clipboard access or
+`allow-same-origin`: popups escaping the sandbox would open anything, with an opener, from no click. Each
+of these is instead a message the canopy page checks and carries out (`DynamicViewFrame.tsx`), the same
+for a JSX page's `canopy` prop and a bundle's `window.canopy`:
+
+| Call | What canopy checks |
+|---|---|
+| `canopy.open(url)` (also `canopy.openExternal(url)`) → Promise | `frameOut.ts::externalUrl` (https, no credentials); a live click on the frame; opened `noopener,noreferrer` (in the extension's panel, through `canopy.browser`'s gate) |
+| `canopy.open(page, params, {newTab})`, `app.go(page, params, {newTab})` | the page is the app's; a new tab only from a live click, else this tab |
+| `canopy.page.setParams(params)` → Promise | `frameOut.ts::cleanParams` (≤ `MAX_PARAMS`, never `draft`); the host rewrites its own address (`WorkspaceAppPage.tsx`, `history.replaceState` keeping the router's state), so nothing reloads and the frame stays; `app.params` follows. The panel has no address bar |
+| `canopy.clipboard.write(text)` → Promise | a live click (or a believed gesture, below); ≤ `MAX_CLIPBOARD_CHARS` |
+| `canopy.download(name, mime, data)` → Promise | `frameOut.ts::checkDownload`: a plain file name, a type that never renders as a document (HTML, SVG, XML and script are saved as bytes, since the blob has canopy's origin), ≤ `MAX_DOWNLOAD_BYTES`; a click or a believed gesture |
+
+**Gestures** (`frontend/src/dynamicViews/gestures.ts`). A click's activation lasts seconds and a drag's
+`drop` is not one, so a kanban drop or a write after an awaited dialog would be refused. The frame
+reports every pointerdown and keydown (`gesture`, no claim in it); the page believes one only when it
+sees a live click on that same frame as it arrives, and remembers it for `GESTURE_WINDOW_MS`. A
+connection write with neither a live lease nor a live click may open ONE lease on it
+(`ConnectionCalls`' `recentGesture`, spent), and a download or copy may use it. That grants nothing one
+click did not already (`canopy.connection.begin()` from a click holds a lease for ten minutes); the
+server's lease, write budget and audit are unchanged.
+
+**Full-bleed pages.** A member page may declare `"layout": "full"` (`manifest.py::_layout`, the default
+`page` is never stored). On canopy (`WorkspaceAppPage.tsx`) the frame alone is fixed to the whole
+viewport above the shell, with no header, tabs or connection note; canopy's dialogs and its AI bubble
+stay above it. The frame scrolls itself and ignores its content height (`DynamicViewFrame`'s `fill`), so
+`position: fixed` inside it is the viewport's. In the extension's panel it fills the panel below the
+picker, unpadded. A draft's test copy and a switched-off app keep the normal page.
+
+## Personal collections (a per-person store)
+
+A collection marked `"personal": true` holds each person's own records: settings, layouts and
+caches a page keeps as it goes, the way a browser extension keeps its own storage. Rules
+(`manifest.py::_validate_personal`, `services.py::_own`):
+
+- **Its writer's alone.** Every member read and write — query, history, update, delete, a file it
+  holds, an agent acting for the person — is narrowed in the database to `created_by` the caller. No
+  role reads past it: not an admin, not the collection's `read` role, not `read_also`. Only the app
+  itself (scenarios, retention) and a subject export (by the writer's address) see all of them.
+- **Nothing reaches it another way.** It has no public projection and no `scope`; no ref field points
+  at it, no link opens it, no `then` step writes it; its actions are a member's own, with no email and
+  no `then`. Fixtures in a draft's test copy are written by nobody, so nobody sees them there.
+- **One record per key.** It may name a `key` (a required text field): a `create` whose key the writer
+  already has updates that record (`services.act`), and if two tabs created it at once, the next write
+  keeps the newest and removes the others.
+- **A `json` field** holds any JSON value up to `max_kb` serialized (default `DEFAULT_JSON_KB`, at most
+  `MAX_JSON_KB`, in `manifest.py`); any collection may have one. It is never matched (`where` anywhere),
+  ordered, public, `set` by an action or mailed, and its history records only that it was set, updated
+  or removed (`services.py::_masked`), so saving a store often does not copy it into the log.
+- **Saves need no click.** An app action is the viewer's own write, unlike a connection write; a page
+  saves its store without a gesture.
+- Turning `personal` off in a template update is a finding for an admin (`template_diff.changes`).
+
+A page loads its store once (`app.query("person_store", {limit: 2000})`) and saves a key with
+`app.act("store_put", {input: {key, value}})`; deleting is a `delete` action on the record's id.
 
 ## Acting on one project's tasks (`apps/workspace_apps/tasks.py`)
 
@@ -56,7 +204,8 @@ allowlist (`TASK_FIELDS`: title, notes, due, priority, labels; a create also rec
   consent: a holder of the action's role runs it AS THEMSELVES through the task writers, recorded
   under their name. Everything outside the bound project or the declared actions is a 404; reads are
   `task_read_q` AND the project, so a personal project stays its lead's.
-- **Never a turn.** Done and comment go through `task_actions.act`; reopen and patch are field
+- **Never a turn.** Done and reopen go through `task_actions.finish_or_reopen` (shared with a
+  dynamic view's task actions), comment through `task_actions.act`; reopen and patch are field
   writes; create files with no agent assignee (a person assignee must hold the `read` role); spawn
   copies a template. Status moves only through done and reopen.
 - **Live work only.** A draft's test copy has no tasks: the routes refuse `?draft` (409), the page
@@ -66,7 +215,10 @@ allowlist (`TASK_FIELDS`: title, notes, due, priority, labels; a create also rec
   the asker.
 
 Pages call `app.tasks.query(filters)` and `app.tasks.act(name, {key, input})`; `app.tasks.declared`
-says what exists (the data model's `_tasks`).
+says what exists (the data model's `_tasks`). A row is `tasks.task_out`; a query's rows also carry
+`done_by` (who last moved a done task to done, a person named over the agent acting for them) and
+`comments` (the newest `ROW_COMMENTS`, oldest first), read for the whole page in two queries
+(`tasks.annotate_activity`). An action's response leaves them null / empty.
 
 ## The overlay (`overlay.py`)
 
@@ -95,7 +247,7 @@ Template pages draw what the workspace adds without knowing it (`FieldInputs` /
    the workspace's own changes judged op by op (`overlay.is_risky`), a template UPDATE by
    comparing the two template versions (`template_diff.changes`).
 5. **Restore** (`services.rollback`): an earlier version becomes live again as a new
-   version; overlays only add, so it reads today's records.
+   version; overlays only add, so it reads today's records. Judged like a publish.
 
 A template update is taken as a draft (`upgrade=true`), then the same steps.
 
@@ -104,7 +256,16 @@ A template update is taken as a draft (`upgrade=true`), then the same steps.
 - **Access**: every route declares `@gate`.
 - **Pages**: the dynamic-view sandbox (`apps/dynamic_views/frame.py`: opaque origin,
   `connect-src 'none'`, no `allow-forms`), compiler, kit and protocol. An app page gets an
-  `app` prop; a plain view still refuses writes.
+  `app` prop; a plain view still refuses writes. A bundle page is the same protocol from
+  its own files (§ Bundle pages).
+- **Seeing a page as an agent**: an agent QAs an app page it builds by opening
+  `/w/<ws>/apps/<key>/<page>` in a headless browser that sends `Authorization: Bearer
+  <its own PAT>` on every request (Playwright `extraHTTPHeaders`, gstack `browse` headers);
+  never a token in the URL, which signs nobody in. It sees exactly what its login reads
+  through the REST routes (its app roles, guest scope and gates). The sandbox frame's
+  scripts are then preflighted cross-origin requests (opaque origin plus the header);
+  `config/static_middleware.py::asset_preflight` answers that preflight for `/assets/`
+  only, which are public files, so it grants nothing.
 - **Public pages**: scoped path `/w/<ws>/app/<key>/`, `auth=None` routes that 404 alike
   when the app is off or not public, a honeypot (`api.py`), a DB-counted per-address
   limit (`services._rate_limit`). Files use the chat-attachment bucket.

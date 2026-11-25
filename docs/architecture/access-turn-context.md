@@ -55,8 +55,8 @@ code does not make obvious:
   (`_app_by_line`). So a person whose only line is `use:<key>` for an app entry gets it on every channel and never
   read mode; a `read` holder gets the app entry inside that app's own conversations and read mode elsewhere. A stamp
   selects, never grants ([host-sites.md](host-sites.md) § App entries).
-* **The two narrowing rules only narrow.** A review chat gets `session_review`, `confined`, loses `auto` and pinning,
-  owner included. Sensitive data confines a `full` base to the sensitive profile (`basis: sensitive:<name>`), keeping
+* **The narrowing rules only narrow.** A review chat gets `session_review`, `confined`, loses `auto` and pinning,
+  owner included; so does a Google Docs comment that tags the agent, with `doc_comment`. Sensitive data confines a `full` base to the sensitive profile (`basis: sensitive:<name>`), keeping
   role, mode and pin rights; a turn in a sensitive conversation that ends anywhere but its sensitive profile is
   `refused`, a review chat included. A `read` holder in a non-sensitive conversation on a sensitive site keeps what
   the base gave them.
@@ -153,9 +153,21 @@ which role.
   in that profile; anything else is refused (`sensitive_not_open`). A runner in sensitive-data mode refuses any
   unconfined envelope (`runner/ec2/cloud_runner.py`, `sensitive_data_unconfined`). Saving the switch is audited like any
   setting change (`settings-audit.md`).
+* **A brain run's chat** is no narrowing rule: its turn is the operator's whole profile, set up by the learning
+  system, read by no other turn, kept on no box, and everything it makes is recorded against what it read →
+  [brain.md](brain.md) § A run.
 * **A one-session review's chat** runs in `session_review` for everyone not refused, owner included
   (`turn_context._review_rule`): no login, no Bash, no tool but `read_asked_session` → [access-sessions-and-people.md](access-sessions-and-people.md)
   § Asking a coach to review one session.
+* **A Google Docs comment that tags the agent** runs in `doc_comment` for everyone not refused
+  (`turn_context._doc_comment_rule`). Google sends every comment from one address and vouches for nobody's identity
+  in it (the commenter's email is in no header or body), and anyone can make a Doc and tag an agent, so a comment
+  never runs as the person it names. What the DMARC-aligned notification proves is the one file: the profile is
+  built per turn (`published_profiles.doc_comment_profile`) with that file id and the agent's own mailbox written
+  into its Bash rules, so it reads that Doc and its comments and replies on its threads, and nothing else: no mail,
+  no other file. The runner archives every Docs notification that does not tag the agent and reads the file id off
+  Google's own footer link (`inbox_rules.doc_comment_of`); `apps/agents/doc_comment.py::of_turn` decides whether a
+  turn's ids are honoured.
 * **Row 2** may steer the whole agent. With `manual_only` on every line that gives them `write`, every turn they start
   runs `manual` and they may not set `auto` anywhere: not on a dispatch, a routing rule or actor route, or the agent's
   own switch. Granting a whole workspace `read_write` or `editor` through a default is the workspace owner's call

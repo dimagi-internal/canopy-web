@@ -15,7 +15,8 @@ work asks for them:
    servers and plugins it shares with how to add them.
 3. **Use** — the knowledge-base tools (`kb_search`, `kb_read`, … `kb_table`), each
    taking the `project` it reads; `project_skill(project, skill)` for a skill's
-   instructions.
+   instructions; `project_file(project, path)` for one of the project's published files
+   (`apps/agents/project_files.py`), a skill's script or template.
 
 Nothing is remembered between calls: under MCP 2026-07-28 (what Claude Code speaks)
 a connection has no session for a server to keep state in, so every call names its
@@ -56,7 +57,7 @@ INSTRUCTIONS = (
     "work belongs to a project (a task's 'Project:' line names it), call open_project with its "
     "address first for its card; call projects to find one. The kb_ tools read a project's "
     "knowledge base and take its address as `project`; project_skill reads a skill when the "
-    "work needs it.")
+    "work needs it, and project_file reads one of the project's files (a skill's script).")
 
 
 # ---- which projects, and what they carry -----------------------------------------
@@ -72,7 +73,9 @@ def _openable(user, query: str = "") -> list:
         return []
     slugs = wsvc.user_workspace_slugs(user)
     qs = (AgentProject.objects.filter(Q(workspace_id__in=slugs) | Q(agent__workspace_id__in=slugs) | services.shared_with_q(slugs))
-          .filter(services.project_read_q(user), served__isnull=False).exclude(status=AgentProject.ARCHIVED).distinct()
+          .filter(services.project_read_q(user))
+          .filter(Q(served__isnull=False) | Q(file_revisions__status="published"))
+          .exclude(status=AgentProject.ARCHIVED).distinct()
           .select_related("agent", "workspace").prefetch_related("served").order_by("workspace_id", "handle"))
     words = [w for w in (query or "").lower().split() if w]
     out = []
@@ -108,10 +111,17 @@ def _summary(user, project) -> str:
         if s.kind == "kb" and not _kb_readable(user, project):
             continue
         counts[s.kind] = counts.get(s.kind, 0) + 1
+    from apps.agents import project_files  # noqa: PLC0415 — models: imported before apps load
+
+    live = project_files.live(project)
+    if live is not None:
+        counts["skill"] = counts.get("skill", 0) + len(project_files.skills(live))
+        counts["files"] = len(live.tree or {})
     words = {"kb": ("knowledge base", "knowledge bases"), "skill": ("skill", "skills"),
+             "files": ("file", "files"),
              "mcp": ("shared MCP server", "shared MCP servers"), "plugin": ("plugin", "plugins")}
     parts = []
-    for kind in ("kb", "skill", "mcp", "plugin"):
+    for kind in ("kb", "skill", "files", "mcp", "plugin"):
         n = counts.get(kind)
         if n:
             one, many = words[kind]
@@ -189,10 +199,20 @@ def _card(user, project) -> str:
                      f"Start with kb_search; kb_table reads a table by name.\n{info}")
     elif kb:
         lines.append("\nIts knowledge base is not published yet, or not one you may read.")
+    from apps.agents import project_files  # noqa: PLC0415 — models: imported before apps load
+
+    live = project_files.live(project)
+    stored = project_files.skills(live)
     skills = [r for r in rows if r["kind"] == "skill"]
+    listed = {r["name"] for r in skills}
+    skills += [{"name": n, "description": e["description"]} for n, e in sorted(stored.items()) if n not in listed]
     if skills:
         lines.append("\nSkills (read one with project_skill when the work needs it):")
         lines += [f"- {r['name']}" + (f" — {r['description']}" if r["description"] else "") for r in skills]
+    if live is not None:
+        lines.append(f"\nFiles (revision {live.number}; read one with project_file, project="
+                     f'"{project.address}"; a script runs through its interpreter, e.g. python3):')
+        lines += [f"- {path} ({entry.get('size', 0)} bytes)" for path, entry in sorted((live.tree or {}).items())]
     servers = [r for r in rows if r["kind"] == "mcp"]
     if servers:
         lines.append("\nShared MCP servers (canopy does not load these; add one if the work needs it):")
@@ -234,14 +254,40 @@ def _open(ref: str) -> str:
 def _skill(project_ref: str, skill: str) -> str:
     user = _need_user()
     project = _resolve(user, project_ref)
-    svc = project.served.filter(kind="skill", name=(skill or "").strip().lower()).first()
+    from apps.agents import project_files  # noqa: PLC0415 — models: imported before apps load
+
+    name = (skill or "").strip().lower()
+    svc = project.served.filter(kind="skill", name=name).first()
     if svc is None:
-        names = ", ".join(project.served.filter(kind="skill").values_list("name", flat=True)) or "none"
+        live = project_files.live(project)
+        stored = project_files.skills(live)
+        if name in stored:
+            text = (project_files.read(live, f"skills/{name}/SKILL.md") or b"").decode("utf-8", errors="replace")
+            files = stored[name]["files"]
+            tail = ("\n\n---\nThis skill's files (read each with project_file; write them to a scratch "
+                    "folder and run a script through its interpreter):\n" + "\n".join(f"- {f}" for f in files)
+                    if files else "")
+            return f"# {name} ({project.address}, files revision {live.number})\n\n{text}{tail}"
+        names = ", ".join(sorted(set(project.served.filter(kind="skill").values_list("name", flat=True))
+                                 | set(stored))) or "none"
         raise ToolError(f"{project.address} has no skill {skill!r} (its skills: {names})")
     if svc.instructions:
         return f"# {svc.name} ({project.address})\n\n{svc.instructions}"
     return (f"{svc.name} ({project.address}) has no instructions in canopy yet; they live at {svc.url}. "
             f"Read them there if you can, or ask the project's lead to publish them on the project.")
+
+
+def _file(project_ref: str, path: str) -> str:
+    from apps.agents import project_files  # noqa: PLC0415 — models: imported before apps load
+
+    user = _need_user()
+    project = _resolve(user, project_ref)
+    live = project_files.live(project)
+    data = project_files.read(live, (path or "").strip().lstrip("/")) if live is not None else None
+    if data is None:
+        listing = ", ".join(sorted((live.tree or {}) if live is not None else {})) or "none"
+        raise ToolError(f"{project.address} has no file {path!r} (its files: {listing})")
+    return data.decode("utf-8", errors="replace")
 
 
 def _build() -> FastMCP:
@@ -271,6 +317,13 @@ def _build() -> FastMCP:
         project's card lists its skills."""
         return await sync_to_async(_skill, thread_sensitive=True)(project, skill)
 
+    @server.tool
+    async def project_file(project: str, path: str) -> str:
+        """One of a project's files, as published (its card lists them): a skill's script,
+        template or doc. Write a script to a scratch folder and run it through its
+        interpreter; a project's files are never executable."""
+        return await sync_to_async(_file, thread_sensitive=True)(project, path)
+
     server.add_provider(KbToolsProvider())
     return server
 
@@ -279,4 +332,4 @@ gateway_mcp = _build()
 
 
 def build_http_app():
-    return gateway_mcp.http_app(path="/", transport="streamable-http")
+    return gateway_mcp.http_app(path="/", transport="streamable-http", stateless_http=True)

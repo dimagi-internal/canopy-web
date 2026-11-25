@@ -4,7 +4,8 @@ the call in front of it, then decide whether to release sensitive data.
 canopy's gateway adds ``Canopy-Execution: <JWT>`` to every request it makes to a
 host's MCP server on an agent's turn. It says which agent is calling, in which capability and whether its
 interface marks it as handling sensitive data (`data: sensitive`, and who set that), on which runner (its flags in force, and who declared them), and in
-which conversation with which requirements. ``Canopy-Actor`` only NAMES the agent
+which conversation with which requirements — and, when the turn is with one of the host's
+own contacts, ``sub``: the host's id for that person. ``Canopy-Actor`` only NAMES the agent
 and must never be trusted; this is signed by canopy's published client key.
 
     from canopy_sdk.host import ExecutionRefused, verify_execution
@@ -82,6 +83,10 @@ class Execution:
     turn: str
     session: str
     claims: dict = field(repr=False, default_factory=dict)
+    #: The host's own id for the person whose turn this is, when they are one of the host's
+    #: contacts (canopy's ``Contact.external_id``, from the turn's initiator); "" otherwise.
+    #: Authorize against it as against ``Subject.sub``.
+    sub: str = ""
     #: No longer stated: canopy runs the agent's current code, no pinned commit.
     #: Kept, always "" from a current canopy, so a host that logs it still reads.
     agent_sha: str = ""
@@ -206,4 +211,4 @@ def verify_execution(request, *, config, client_keys, replay_store, jkt: str | N
         declaration=dict(decl) if decl is not None else None, runner=dict(runner),
         runner_posture=dict(posture), requirements=tuple(str(r) for r in reqs),
         turn=str(claims.get("turn") or ""), session=str(claims.get("session") or ""),
-        claims=dict(claims))
+        sub=str(claims.get("sub") or ""), claims=dict(claims))

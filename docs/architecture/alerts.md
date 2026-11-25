@@ -107,3 +107,10 @@ with no separate can't-run list), the agent page (`agent:<slug>`), the runner
 detail (`runner:<pk>`) and the Supervisor Runners tab (every open alert you can
 act on; its count is the menu badge). Home has no personal hide: dismiss is
 shared ("Dismiss for everyone").
+
+A request for the viewer's own yes or no (`approval_request`) is not a problem to
+fix, so it must not read like one: `AlertList.tsx::isDecision` draws its row
+apart (accent bar, a "Your decision" chip, a filled Approve), and its push is sent
+with `kind="decision"` (`apps/approvals/channel_push.py::send`), which
+`frontend/public/sw-push.js` keeps on screen with a "Review & decide" button. A new
+kind that asks the viewer for a decision joins `DECISION_KINDS` and passes that kind.

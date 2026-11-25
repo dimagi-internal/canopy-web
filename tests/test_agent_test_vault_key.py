@@ -1,7 +1,8 @@
 """An agent login's TEST vault key (`apps/agents/credentials/login_test_key.py`).
 
-Off by default. An agent admin turns it on from a browser behind a passkey step-up;
-the agent's own login then makes ONE passphrase-sealed vault key, which receives only
+Off by default. An agent admin turns it on from a browser behind a passkey step-up, or
+the agent's own login turns it on itself (`tests/test_agent_test_key_self_managed.py`);
+the login then makes a passphrase-sealed vault key, which receives only
 copies of the keys of sensitive conversations that login is itself in — never a vault
 key, an endorsement, a device approval or a passkey. Turning it off deletes the key
 and every conversation-key copy wrapped to it.
@@ -26,14 +27,12 @@ from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership
+from tests.fixtures.agent_test_key import passphrase_keyset as _passphrase_keyset
 from tests.fixtures.sensitive import SENSITIVE, rewrap_for, unwrap, world
 from tests.fixtures.vault_zk import ref
 from tests.token_helpers import bearer_headers
 
 pytestmark = pytest.mark.django_db
-
-PASSPHRASE = "a test passphrase for a harness"
-
 
 @pytest.fixture()
 def w():
@@ -56,19 +55,6 @@ def _turn_on(w):
     r = w["c"].put(_url(w), {"enabled": True}, content_type="application/json")
     assert r.status_code == 200, r.content
     return r.json()
-
-
-def _passphrase_keyset(user, *, prf=False):
-    """What a harness's browser (or the CLI) makes: a key pair, its private scalar sealed
-    with a passphrase + Secret Key (2SKD). Returns (body, private key)."""
-    priv = ec.generate_private_key(ec.SECP256R1())
-    scalar = priv.private_numbers().private_value.to_bytes(32, "big")
-    seals = [ref.seal_user_key_2skd(scalar, str(user.pk), PASSPHRASE, os.urandom(16), os.urandom(16),
-                                    os.urandom(12))]
-    if prf:
-        seals.append(ref.seal_user_key(scalar, str(user.pk), ref.b64u(b"cred"), os.urandom(32),
-                                       os.urandom(16), os.urandom(12)))
-    return {"public_jwk": ref.jwk(priv.public_key()), "seals": seals}, priv
 
 
 def _make_key(w, **kw):
@@ -148,14 +134,17 @@ def test_a_test_key_is_never_sealed_with_a_passkey(w):
     assert r.status_code == 422 and r.json()["error"] == "test_key_passphrase_only"
 
 
-def test_a_test_key_is_made_once_and_never_replaced(w):
+def test_a_second_test_key_must_be_a_replace(w):
     _turn_on(w)
     assert _make_key(w)[0].status_code == 200
     body, _ = _passphrase_keyset(w["login"])
-    for replace in (False, True):
-        r = Client().put("/api/vault/keyset", {**body, "replace": replace}, content_type="application/json",
-                         **bearer_headers(w["login_pat"]))
-        assert r.status_code == 409 and r.json()["error"] == "test_key_exists"
+    r = Client().put("/api/vault/keyset", {**body, "replace": False}, content_type="application/json",
+                     **bearer_headers(w["login_pat"]))
+    assert r.status_code == 409 and r.json()["error"] == "test_key_exists"
+    r = Client().put("/api/vault/keyset", {**body, "replace": True}, content_type="application/json",
+                     **bearer_headers(w["login_pat"]))
+    assert r.status_code == 200, r.content
+    assert UserVaultKeyset.objects.get(user=w["login"]).public_jwk == body["public_jwk"]
 
 
 def test_the_setup_screen_is_never_asked_of_an_agent_login(w):

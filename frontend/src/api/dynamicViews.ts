@@ -56,6 +56,7 @@ export async function createDynamicView(body: {
   sources: DynamicViewSource[];
   agent_tasks?: { agent: string; name: string }[];
   connections?: DynamicViewConnection[];
+  task_actions?: string[];
 }): Promise<DynamicView> {
   const res = await apiV2.POST("/api/dynamic-views/", {
     body: {
@@ -70,7 +71,8 @@ export async function updateDynamicView(
   id: number,
   patch: {
     title?: string; description?: string; code?: string; sources?: DynamicViewSource[];
-    agent_tasks?: { agent: string; name: string }[]; connections?: DynamicViewConnection[]; note?: string;
+    agent_tasks?: { agent: string; name: string }[]; connections?: DynamicViewConnection[];
+    task_actions?: string[]; note?: string;
   },
 ): Promise<DynamicView> {
   const res = await apiV2.PATCH("/api/dynamic-views/{view_id}", {
@@ -96,4 +98,13 @@ export async function rollbackDynamicView(id: number, version: number): Promise<
     body: { version },
   });
   return unwrap(res, "Failed to restore that version") as unknown as DynamicView;
+}
+
+/** A status move a project view declares (`task_actions`), on one of its project's tasks, as the viewer. */
+export async function actOnDynamicViewTask(id: number, key: string, action: string): Promise<unknown> {
+  const res = await apiV2.POST("/api/dynamic-views/{view_id}/task-actions", {
+    params: { path: { view_id: id } },
+    body: { key, action },
+  });
+  return unwrap(res, "Failed to change the task");
 }

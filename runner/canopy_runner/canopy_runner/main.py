@@ -3,7 +3,7 @@
 One iteration (run_once):
   1. preflight emdash's CDP health — unhealthy => degraded heartbeat, skip the
      claim (queued turns wait rather than being claimed-then-burned), still poll
-     the inbox + fire schedules so inbound work keeps enqueuing
+     the inbox so inbound work keeps enqueuing
   2. heartbeat (with the macOS host, for session-reuse ownership)
   3. report the open emdash sessions the phone can continue (throttled)
   4. claim at most one queued turn and route it to an emdash session (reuse or
@@ -57,6 +57,110 @@ logger = logging.getLogger("canopy_runner")
 CDP_DOWN_SIGNAL_TICKS = 3
 _cdp_down_ticks = 0
 _cdp_down_signalled = False
+
+
+#: The last heartbeat this loop sent: when, what it said that matters (its key),
+#: the reply, when the last REST beat went (`rest_at`) and how many socket acks were
+#: folded into the reply (`acks`). `run_once` beats on its cadence (`_beat_every`),
+#: or at once when that state changes, and reuses the reply in between.
+_beat: dict = {"at": None, "key": None, "reply": {}, "rest_at": None, "acks": 0}
+
+#: The control socket (wake.WakeListener) once `main` starts it; None in a one-shot run.
+_control = None
+
+#: With `/sync` and no socket, the REST heartbeat carries `v`, so it beats this often.
+REST_ALONE_HEARTBEAT_SECONDS = 15.0
+#: While the socket carries the beat, a REST beat this often still refreshes the
+#: reply fields the socket's ack does not hold (status, remedy, engine, private…).
+REST_REFRESH_SECONDS = 300.0
+#: The socket's `heartbeat.ack` fields folded into the reused reply.
+ACK_FIELDS = ("paused", "paused_note", "refresh_pending", "cancel_turn_ids")
+#: While `/sync` and the socket are up, the claim runs on a `wake` frame, after a
+#: tick that ran a turn, and at least this often: the safety claim.
+SAFETY_CLAIM_SECONDS = 60.0
+_claim: dict = {"at": None, "wakes": 0, "last": ""}
+
+
+def _frozen(value):
+    """A hashable, order-stable form of a heartbeat field, for a beat's key."""
+    if value is None:
+        return None
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _reset_heartbeat_state() -> None:
+    """Forget the last heartbeat and claim, so the next tick does both (and between tests)."""
+    _beat.update(at=None, key=None, reply={}, rest_at=None, acks=0)
+    _claim.update(at=None, wakes=0, last="")
+
+
+def _syncing(client) -> bool:
+    box = getattr(client, "sync_box", None)
+    return box is not None and box.active
+
+
+def _socket_up() -> bool:
+    return _control is not None and bool(getattr(_control, "connected", False))
+
+
+def _beat_every(cfg: Config, client) -> float:
+    """The heartbeat cadence: `heartbeat_seconds` (30) while the socket is up or the
+    server has no `/sync`; REST_ALONE_HEARTBEAT_SECONDS (15) when the REST beat is
+    the only thing carrying `v`. The server reads a box as online for
+    HEARTBEAT_ONLINE_WINDOW (90s) after a beat, so both stay well inside it."""
+    every = float(cfg.heartbeat_seconds or 0)
+    if _syncing(client) and not _socket_up():
+        every = min(every, REST_ALONE_HEARTBEAT_SECONDS) if every > 0 else every
+    return every
+
+
+def _send_beat(cfg: Config, client, key, now: float, active: list[str], **fields) -> tuple[dict, bool]:
+    """Send a heartbeat if one is due — over the control socket while it is up and the
+    server reads `/sync`, else over REST — and return (the reply to act on, whether
+    it is fresh). Due when none was sent yet, the cadence passed, or what it reports
+    changed (health, readiness, the turns it renews, the repos and mailboxes it
+    offers). Between beats the reply is reused; a socket ack that arrived since is
+    folded into it, and counts as fresh."""
+    fresh = False
+    acks = int(getattr(_control, "acks", 0) or 0) if _control is not None else 0
+    if acks != _beat["acks"]:
+        _beat["acks"] = acks
+        ack = getattr(_control, "last_ack", None) or {}
+        _beat["reply"].update({f: ack[f] for f in ACK_FIELDS if f in ack})
+        fresh = True
+    every = _beat_every(cfg, client)
+    if not (_beat["at"] is None or key != _beat["key"] or every <= 0 or now - _beat["at"] >= every):
+        return _beat["reply"], fresh
+    if (_syncing(client) and _socket_up() and _beat["rest_at"] is not None
+            and now - _beat["rest_at"] < REST_REFRESH_SECONDS):
+        if _control.send_json({"action": "heartbeat", **client.heartbeat_body(active, **fields)}):
+            _beat.update(at=now, key=key)
+            return _beat["reply"], fresh
+    reply = client.heartbeat(cfg.runner_id, active, **fields)
+    reply = reply if isinstance(reply, dict) else {}
+    _beat.update(at=now, key=key, reply=reply, rest_at=now)
+    return reply, True
+
+
+def _claim_due(client, now: float) -> bool:
+    """Claim this tick? Always, unless the server reads `/sync` and the socket is up:
+    then on a `wake` frame, after a tick that ran a turn (more may be queued), and
+    every SAFETY_CLAIM_SECONDS, which catches a wake the socket dropped."""
+    if not (_syncing(client) and _socket_up()):
+        return True
+    wakes = int(getattr(_control, "wakes", 0) or 0)
+    return (_claim["at"] is None or wakes != _claim["wakes"] or _claim["last"] != "idle"
+            or now - _claim["at"] >= SAFETY_CLAIM_SECONDS)
+
+
+def _sync_now(cfg: Config, client) -> None:
+    """Read `/sync` when it moved (runner_sync.py); the stops it names are honoured
+    at once, and the drains read the rest."""
+    box = getattr(client, "sync_box", None)
+    if box is None:
+        return
+    if box.refresh(client, cfg.runner_id):
+        honour_stops({"cancel_turn_ids": box.take("cancel_turn_ids")})
 
 
 def _reset_cdp_health_state() -> None:
@@ -505,31 +609,6 @@ def _clear_watch_failures(cfg: Config, client: Client) -> None:
     _save_watch_state(state_path, state, failures)
 
 
-def _fire_due_schedules(cfg: Config, client: Client, paused: set[str] | None = None) -> None:
-    """Scheduled-turn trigger: sync the schedules this runner may fire, evaluate each
-    cron locally, and report any due slot so the server materializes the turn.
-
-    Unthrottled on purpose — unlike the inbox (a subprocess per mailbox), this is one
-    HTTP GET, the same cost class as the claim it rides alongside, and the poll IS the
-    tick: throttling it would just add latency to every slot. Best-effort — a failing
-    sync (server down, token expired) logs and is skipped, never crashes the loop.
-
-    Only reached when NOT globally paused: main()'s pause sentinel `continue`s before
-    run_once, so a paused runner never fires (which would queue turns that all execute
-    the instant it resumes). Per-agent pause is honored inside check_schedules.
-    """
-    now = dt.datetime.now(dt.UTC)
-    try:
-        # Import INSIDE the guard, not above it: canopy_cron is scheduling's ONLY
-        # dependency, and a missing/broken one (an un-synced laptop env, a bad
-        # install) must disable scheduling alone — not crash claiming and the inbox
-        # with it. The import is the most likely failure, so it has to be caught too.
-        from . import schedules as schedules_mod
-        schedules_mod.check_schedules(client, cfg.runner_id, now=now, paused=frozenset(paused or ()))
-    except Exception as exc:  # noqa: BLE001 — scheduling never kills claiming or the inbox
-        logger.warning("scheduling unavailable this tick (claiming + inbox continue): %s", exc)
-
-
 def _mark_in_flight(cfg: Config, *, extra: int = 0) -> None:
     """Publish how much work this runner is carrying, for the auto-updater.
 
@@ -619,12 +698,13 @@ def run_once(cfg: Config, client: Client) -> str:
     emdash (or one launched without --remote-debugging-port) can't run work. If we claimed
     anyway, execute would hit the CDP-connect failure and fail the turn — and a failed turn
     is NOT auto-re-claimed, so one outage would burn a turn per hit agent. So we PREFLIGHT: an unhealthy CDP skips the claim for this tick,
-    leaving queued turns queued to auto-drain when emdash returns. Inbox + schedule polling
-    still run (inbound work keeps ENQUEUING); only the claim is gated."""
+    leaving queued turns queued to auto-drain when emdash returns. Inbox polling
+    still runs (inbound work keeps ENQUEUING); only the claim is gated."""
     from . import readiness
     from .cdp_control import cdp_healthy, host_id
 
     global _cdp_down_ticks, _cdp_down_signalled
+    now = time.monotonic()
     # A claude-cli box runs Claude itself: emdash being down costs it nothing.
     healthy = not desktop.needs_emdash() or cdp_healthy(port=cfg.cdp_port)
     host = host_id()
@@ -640,23 +720,30 @@ def run_once(cfg: Config, client: Client) -> str:
         # ("what can this runner do right now"), same tick. The degraded and paused
         # heartbeats below deliberately omit it: omission is a no-op server-side,
         # and a runner that isn't claiming has no use for a refreshed list.
-        me = client.heartbeat(cfg.runner_id, _active_turn_ids(), host=host,
-                              ready=_ready, ready_note=_rnote,
-                              projects=sessions.reported_projects(cfg),
-                              mailboxes_readable=mailbox_probe.readable(),
-                              health=_laptop_health(cfg))
+        active, projects = _active_turn_ids(), sessions.reported_projects(cfg)
+        readable, health = mailbox_probe.readable(), _laptop_health(cfg)
+        key = ("healthy", _ready, _rnote, tuple(sorted(active)), _frozen(projects),
+               _frozen(readable),
+               # `checked_at` moves every tick; what was checked is the change.
+               _frozen({k: v for k, v in health.items() if k != "checked_at"}
+                       if isinstance(health, dict) else health))
+        me, fresh = _send_beat(cfg, client, key, now, active, host=host, ready=_ready,
+                               ready_note=_rnote, projects=projects,
+                               mailboxes_readable=readable, health=health)
     else:
         _cdp_down_ticks += 1
-        # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
-        # control plane + menu-bar app read ("alive but can't execute"). It's a status field,
-        # overwritten each tick, so it is not spam.
-        me = client.heartbeat(cfg.runner_id, _active_turn_ids(), degraded=True,
-                              note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
-                              host=host, ready=False,
-                              ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
-                              # The inbox still runs with CDP down, so what this box
-                              # can read is still what the doorbell should know.
-                              mailboxes_readable=mailbox_probe.readable())
+        # A degraded heartbeat — the machine-readable surface signal the control plane +
+        # menu-bar app read ("alive but can't execute") — at once on the transition and
+        # then on the heartbeat cadence, like a healthy one.
+        active, readable = _active_turn_ids(), mailbox_probe.readable()
+        key = ("degraded", tuple(sorted(active)), _frozen(readable))
+        me, fresh = _send_beat(cfg, client, key, now, active, degraded=True,
+                               note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
+                               host=host, ready=False,
+                               ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
+                               # The inbox still runs with CDP down, so what this box
+                               # can read is still what the doorbell should know.
+                               mailboxes_readable=readable)
         # ...and ONE loud WARNING after sustained downtime (not per tick), for the human log.
         if _cdp_down_ticks >= CDP_DOWN_SIGNAL_TICKS and not _cdp_down_signalled:
             logger.warning(
@@ -669,7 +756,9 @@ def run_once(cfg: Config, client: Client) -> str:
     # The stops this box owes ride the heartbeat reply too — the durable copy of
     # the `cancel` frame, which a socket that was reconnecting never delivered.
     # Same set the frame feeds, so the executor/bridge acts on it the same way.
-    honour_stops(me)
+    # Only from a fresh reply: a reused one's stops were taken when it arrived.
+    if fresh:
+        honour_stops(me)
 
     # The session runtime canopy-web wants (Supervisor → this runner → Session
     # runtime) rides the heartbeat response; adopting it here is the whole flip.
@@ -739,6 +828,9 @@ def _report_sweep(cfg: Config, client: Client) -> None:
     # filed as a session of its own.
     _step("deferred records", execute.retry_unrecorded, cfg, client)
     _step("session report", sessions.maybe_report_sessions, cfg, client)
+    # The drains below read the newest `/sync` answer when canopy-web serves it
+    # (Client.sync_*), and their own routes when it does not.
+    _step("sync", _sync_now, cfg, client)
     _step("stream sync", streams.sync_session_streams, cfg, client)
     _step("menu answers", streams.drain_menu_answers, cfg, client)
     _step("closes", streams.drain_closes, cfg, client)
@@ -759,17 +851,22 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
     # with the server's `paused` (read off the heartbeat response we just got), and
     # obey whatever is in force.
     #
-    # Gating HERE, above the inbox and schedule triggers, is the point. The server
-    # already refuses to hand a paused runner any turn, so routing is safe without
-    # us — but both of those triggers ENQUEUE turns rather than executing them, so
-    # a runner that kept polling while parked would build a backlog it cannot touch
-    # and then stampede the instant it resumes. That is the same hazard the
-    # per-agent pause names in `check_schedules`.
+    # Gating HERE, above the inbox trigger, is the point. The server already
+    # refuses to hand a paused runner any turn, so routing is safe without us —
+    # but the inbox ENQUEUES turns rather than executing them, so a runner that
+    # kept polling while parked would build a backlog it cannot touch and then
+    # stampede the instant it resumes.
     #
     # A pause stops STARTING work, it never abandons work already running: the chat
     # pump runs above it, and `_report_sweep` runs in `run_once`'s `finally`, so both
     # keep going while parked.
-    if reconcile_pause(cfg, client, bool((me or {}).get("paused"))):
+    in_force = reconcile_pause(cfg, client, bool((me or {}).get("paused")))
+    if me is _beat["reply"]:
+        # The reply is reused until the next beat: carry a pause this tick pushed
+        # up, or the next tick would read the old `paused` as the server's word
+        # and undo it.
+        me["paused"] = in_force
+    if in_force:
         # Parked on purpose is not broken. The re-arm below never runs while
         # paused, so no NEW watch failure can be raised; retract any this box
         # raised before it was parked so canopy-web shows a quiet runner rather
@@ -793,7 +890,8 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
     # an Item dispatches its work server-side (in the decide transaction), so there
     # is no resolved review for the runner to poll. DDD findings reviews are applied
     # by the DDD orchestrator, never here.
-    _step("schedules", _fire_due_schedules, cfg, client, paused=paused)
+    # Schedules are canopy-web's: its own clock fires every due slot
+    # (apps/harness/schedule_clock.py) and the turn arrives through the claim.
     if not healthy:
         return "cdp_down"  # nothing claimed -> nothing burned; queued turns stay queued
     from . import readiness
@@ -803,14 +901,19 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
         # logged in" back. The server refuses this box too (`Runner.signed_out`),
         # but only once a heartbeat has carried the mark; this closes the gap.
         return "signed_out"
-    return _claim_and_execute(cfg, client, paused)
+    now = time.monotonic()
+    if not _claim_due(client, now):
+        return "idle"
+    _claim.update(at=now, wakes=int(getattr(_control, "wakes", 0) or 0))
+    result = _claim_and_execute(cfg, client, paused)
+    _claim["last"] = result
+    return result
 
 
 def drain_one(cfg: Config, client: Client) -> str:
     """Take exactly ONE queued turn, then exit — the "take a single turn" primitive.
 
-    Unlike --once (a full loop iteration), this does NOT poll the inbox or fire
-    schedules, so it can only run a turn that is ALREADY queued (dispatch one from the
+    Unlike --once (a full loop iteration), this does NOT poll the inbox, so it can only run a turn that is ALREADY queued (dispatch one from the
     composer/API first); it never enqueues or spawns work you didn't ask for. It also
     runs while the daemon is paused — the global PAUSED sentinel gates main()'s loop, not
     this — so you can take one turn with the fleet otherwise off. Per-agent pauses ARE
@@ -934,8 +1037,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="path to runner.json")
     parser.add_argument("--once", action="store_true", help="single iteration (for cron/tests)")
     parser.add_argument("--drain-one", action="store_true",
-                        help="claim + run exactly ONE queued turn, then exit (no inbox poll, "
-                             "no schedules; runs even while paused)")
+                        help="claim + run exactly ONE queued turn, then exit (no inbox poll; "
+                             "runs even while paused)")
     parser.add_argument("--log-file", default="", help=argparse.SUPPRESS)
 
     subparsers = parser.add_subparsers(dest="command")
@@ -1141,9 +1244,17 @@ def runtime_cmd(args) -> int:
         print(f"{row.get('name', cfg.runner_id)}: new sessions now open in "
               f"{row.get('engine', args.engine)} (live sessions stay where they are)")
         return 0
-    row = next((r for r in client.list_runners() if r.get("id") == cfg.runner_id), {})
-    print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
+    # The app's gate is read from this Mac alone, so it prints first: a slow or
+    # failing canopy-web must not hide it.
     print(desktop.describe_app_features(desktop.app_features()))
+    try:
+        runners = client.list_runners()
+    except ClientError as exc:
+        print(f"{cfg.runner_id}: runtime unknown, canopy-web did not answer ({exc})",
+              file=sys.stderr)
+        return 1
+    row = next((r for r in runners if r.get("id") == cfg.runner_id), {})
+    print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
     return 0
 
 
@@ -1619,7 +1730,15 @@ def main() -> None:
 
     waker = WakeListener(cfg.base_url, credential, cfg.runner_id)
     waker.on_control = make_control_handler(cfg, waker, client)
+    # The runner's work through `/sync` (runner_sync.py): the client's drains read
+    # its answer, and the socket tells it every `v` and doorbell.
+    from .runner_sync import SyncBox
+
+    client.sync_box = waker.sync_box = SyncBox()
+    global _control
     wake_on = waker.start()
+    if wake_on:
+        _control = waker
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")
     hooks.start_hook_listener(cfg, client)
@@ -1682,7 +1801,7 @@ def main() -> None:
         # runner is indistinguishable from a dead one in the log otherwise, and
         # "nobody remembered to unpause it" is the way this feature hurts you.
         if result == "paused" and not paused:
-            logger.warning("PAUSED — skipping all work (no claim, no inbox, no schedules, "
+            logger.warning("PAUSED — skipping all work (no claim, no inbox, "
                            "no tokens). Resume via the menu-bar app, `canopy runner unpause`, "
                            "or by removing %s.", pause_file)
             paused = True

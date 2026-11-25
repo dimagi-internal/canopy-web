@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.29.2#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.40.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.29.2/dimagi_canopy-0.29.2-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.40.0/dimagi_canopy-0.40.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -42,14 +42,15 @@ library, address-pinned.
 | Module | For | Key names |
 |---|---|---|
 | `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `AGENT_CLAIM`, `WORKSPACE_CLAIM`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
-| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`sensitive_clearance`), `verify_view` → `View`, `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
+| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`sensitive_clearance`, `sub`), `verify_view` → `View`, `verify_subject` → `Subject`, `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `view_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `site_settings_url`, `SiteAgent` + `problem_links` of `AgentProblem`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError` (`code`, `status`), `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
-| `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds` (`site`: `SiteFacts`), `site_document_url`, `WELL_KNOWN_PATH` |
+| `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds` (`site`: `SiteFacts`; `surfaces`: `SiteSurface`), `site_document_url`, `WELL_KNOWN_PATH` |
 | `canopy_sdk.resources` | both sides | links to results a host keeps: `resource_link`, `validate_link(s)`, `check_scheme`, `check_id_length`, `id_of`, `RESERVED_SCHEMES`, `MIME_TYPES`; "it changed": `notify_updated`, `updated_notification`, canopy's `verify_updated_notification`, `UPDATED_PATH`; see [Host-held results](#host-held-results-return-facts--a-link) |
+| `canopy_sdk.contacts` | both sides | a host as the system of record for its people: `update_token`, `erase_token`, `check_item`, `check_record_uri`, `check_profile`, canopy's `verify_update` / `verify_erase`, `UPDATE_PATH`, `ERASE_PATH`; the host's client is `canopy_sdk.host.contacts` (`update_contacts`, `erase_contacts`); see [Your people: you are the system of record](#your-people-you-are-the-system-of-record) |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `get_text` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
-| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, the DPoP ASGI gate, `execution.verify_execution(request)`, `execution.verify_view(request, uri=, subject=)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
+| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, the DPoP ASGI gate, `execution.verify_execution(request)`, `execution.verify_view(request, uri=, subject=)`, `execution.verify_subject(request, rpc=)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
 | `canopy_sdk.agent_tasks` | anything that calls an agent | `AgentTasks` (`create`, `get(id, wait_s=)`, `wait`, `cancel`, `run` → the result), `AgentTaskError` (`status`, `detail`, `errors`), `AgentTaskFailed`, `AgentTaskTimeout`; see [Agent tasks](#agent-tasks-call-an-agent-get-a-structured-result) |
 | `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
@@ -703,6 +704,97 @@ made for a visitor, `DelegatedPrincipal.subject` (the ID-JAG's `sub`) from the
 data — `verify_execution` + `sensitive_clearance` for an agent's turn, `verify_view` for
 the person's own View — asked again on every read, because a result is a second door to
 the same rows. Expire results on your own schedule.
+
+## Your people: you are the system of record
+
+The people your site brings to canopy stay YOURS. canopy keeps, per person, an anchor keyed
+by your own id (the visitor assertion's `sub`), a pointer to your record of them, and a
+small profile you own — never the authority for anything you hold.
+
+```python
+# settings.py
+CANOPY_HOST = {..., "PERSON_SCHEME": "labs-worker",   # site.json: site.person_scheme
+               "RETENTION_DAYS": 90}                  # optional: site.retention_days
+
+from canopy_sdk.django import conf
+from canopy_sdk.host.contacts import erase_contacts, update_contacts
+
+update_contacts(conf.get_host_config(), [
+    {"sub": "personalid:ana", "display_name": "Ana", "record_uri": "labs-worker://ana",
+     "profile": {"stage": "deliver", "language": "fr"}, "version": 17}])
+# -> {"results": [{"sub": "personalid:ana", "contact_id": 812, "status": "updated"}]}
+erase_contacts(conf.get_host_config(), ["personalid:ana"])
+# -> {"results": [{"sub": "personalid:ana", "status": "erased"}]}
+```
+
+- Each request is a compact JWS signed by your site key, POSTed as the body
+  (`application/jwt`) to `/api/sites/contacts` or `/api/sites/contacts/erase`: `iss` your
+  host-site name, `aud` that URL, at most 60 s, single-use `jti`, at most 100 people.
+- canopy creates a missing person (`created`), and overwrites `display_name`,
+  `record_uri` and `profile` only when `version` is newer than the one it holds
+  (`updated`; else `stale`, nothing changed). It never touches what the workspace wrote
+  itself (notes, attributes).
+- `record_uri` must be `<PERSON_SCHEME>://<id>` with a url-safe id (letters, digits, `-`,
+  `_`), at most 256 characters; `profile` a JSON object of at most 40 keys and 4096 bytes:
+  labels an agent may see on every turn (stage, language, programme, consent), never history.
+- Erasure deletes the person's contact sessions and their content, tokens, act-as-you
+  permissions and the facts canopy recorded about them in that workspace, and
+  answers `not_found` on a second call.
+
+### Answering an agent about ONE of your people: the subject statement
+
+A contact (one of your own people, with no canopy account and so no passkey or act-as-you
+grant) can still have its agent ask your MCP about THEM, if the agent's owner marked its
+host-site entry for your site `contact_scoped`. canopy's gateway then sends, on every
+request:
+
+```
+Authorization: CanopySubject <jws>   # typ canopy-subject+jwt, canopy's client key, aud = your RESOURCE
+DPoP: <proof>                        # htm, htu, iat, jti — no ath: there is no token
+Canopy-Execution: <jws>              # as always, now with sub
+```
+
+```python
+from canopy_sdk.django.execution import verify_subject   # or canopy_sdk.host.verify_subject
+
+subject = verify_subject(request, rpc=(method, params))   # SubjectRefused if anything is off
+if subject.sub != f"personalid:{worker.username}":       # YOU authorize every call against sub
+    raise PermissionDenied
+```
+
+`Subject` is `(site, sub, agent, turn, session, capability, claims)`; `sub` is your own id for
+the person (the visitor assertion's `sub`), which canopy takes from the turn's initiator, never
+from the agent. Checked: `typ`, the key canopy's client metadata names, `aud`, `iss`, 60 s, the
+DPoP proof's binding to `cnf.jkt` and its `htm`/`htu`, `rpc`, and both `jti`s spent once (pass
+a shared `replay_store` in a multi-worker host; the Django wrapper does). The `DPoPGate`
+passes a `CanopySubject` request through untouched; pass `jkt=subject.jkt` to
+`verify_execution`. Your MCP framework sees `Authorization: CanopySubject`, not `Bearer`:
+route it to `verify_subject` before your bearer-token verifier.
+
+### One site, several surfaces
+
+A site whose people differ by part (staff on its pages, its own people over a relay) stays ONE
+host site, signed with one key, and declares each part as a **surface** in `site.json`:
+
+```python
+CANOPY_HOST = {..., "SURFACES": {"workers": {
+    "title": "Connect Worker messaging",
+    "sensitive": False,                                  # required: never assumed
+    "mcp_resource": "https://labs.example.org/messaging/canopy/mcp/",
+    "person_scheme": "labs-worker"}}}
+```
+
+- An agent's host-site entry for your site names the surface it serves (`surface: workers`,
+  beside `contact_scoped: true`). With no surfaces your site is one surface, as before.
+- canopy lets one of your contacts hold a conversation only on a surface you declare
+  `sensitive: false`; that conversation is not sensitive, so the arrival that starts it must
+  carry no `sensitive_data` runner requirement (sign a relay's assertions with a `HostConfig`
+  whose `runner_requirements` is empty). Your pages keep whatever your visitor assertions require.
+- A contact's subject-bound calls go to the surface's `mcp_resource`, never your site's
+  `RESOURCE`, so verify them with a `HostConfig` whose `resource` is that URL: it is the
+  statement's `aud`. canopy refuses a surface resource on another origin than your registered
+  MCP server's.
+- A `record_uri` may be under your site's `PERSON_SCHEME` or any surface's `person_scheme`.
 
 ## The live probe (optional, recommended)
 

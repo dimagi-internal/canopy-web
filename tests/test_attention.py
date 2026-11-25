@@ -1,8 +1,7 @@
 """`/api/me/attention/` — what is waiting on you, in one list, and hiding things from it.
 
-Each source keeps its owner's rule (the board's waiting-on-you filter, the
-session feed's `feed.status`, `members.manage`), so these tests pin that the
-list agrees with those routes — and that hiding something hides it only until
+Each source keeps its owner's rule (the board's waiting-on-you filter,
+`members.manage`), so these tests pin that the list agrees with those routes — and that hiding something hides it only until
 something new happens on it.
 """
 from __future__ import annotations
@@ -16,13 +15,10 @@ from django.utils import timezone
 
 from apps.agents.models import Agent, AgentTask
 from apps.attention import services
-from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness.models import Runner
+from apps.canopy_sessions.models import Session
 from apps.workspaces.models import Workspace, WorkspaceAccessRequest, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
-
-MENU = {"question": "Proceed?", "options": [{"number": 1, "label": "Yes"}], "source": "transcript"}
 
 
 @pytest.fixture()
@@ -56,53 +52,6 @@ def test_tasks_waiting_on_you_with_their_actions(jj):
     assert items["task:eva:T2"]["state"] == "your_move"
 
 
-def test_a_chat_blocked_on_you_is_listed(jj):
-    runner = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=jj["user"],
-                                   workspace=jj["ws"], status=Runner.ONLINE, last_heartbeat_at=timezone.now())
-    s = Session.objects.create(workspace=jj["ws"], agent=jj["agent"], title="spark", origin=Session.ORIGIN_RUNNER)
-    RunnerBinding.objects.create(session=s, runner=runner, session_key="spark",
-                                 live_seen_at=timezone.now(), pending_question=MENU)
-    item = next(i for i in jj["client"].get("/api/me/attention/").json()["now"] if i["kind"] == "session")
-    assert item["key"] == f"session:{s.id}" and item["url"] == f"/w/connect/sessions/{s.id}"
-    assert item["reason"] == "Needs an answer" and item["state"] == "asking"
-    assert item["organisation"] == "connect"
-
-
-def test_a_chat_held_behind_a_paused_runner_is_listed_as_parked(jj):
-    runner = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=jj["user"],
-                                   workspace=jj["ws"], status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
-                                   paused=True)
-    s = Session.objects.create(workspace=jj["ws"], agent=jj["agent"], title="spark", origin=Session.ORIGIN_RUNNER)
-    RunnerBinding.objects.create(session=s, runner=runner, session_key="spark",
-                                 live_seen_at=timezone.now(), pending_question=MENU)
-    item = next(i for i in jj["client"].get("/api/me/attention/").json()["now"] if i["kind"] == "session")
-    assert item["state"] == "parked"
-    assert item["reason"] == "Waiting — jj-mbp is paused"
-
-
-def _working_session(jj, *, owner, title="busy"):
-    runner = Runner.objects.create(name=f"{owner.username}-mbp", kind=Runner.EMDASH, host="mac", owner=owner,
-                                   workspace=jj["ws"], status=Runner.ONLINE, last_heartbeat_at=timezone.now())
-    s = Session.objects.create(workspace=jj["ws"], agent=jj["agent"], title=title, origin=Session.ORIGIN_RUNNER)
-    RunnerBinding.objects.create(session=s, runner=runner, session_key=title, live_seen_at=timezone.now(),
-                                 agent_status="working")
-    return s
-
-
-def test_your_running_session_is_listed_apart_not_as_an_ask(jj):
-    s = _working_session(jj, owner=jj["user"])
-    body = jj["client"].get("/api/me/attention/").json()
-    assert [i["key"] for i in body["running"]] == [f"session:{s.id}"]
-    assert body["running"][0]["reason"] == "Running" and body["running"][0]["state"] == "running"
-    assert all(i["kind"] != "session" for i in body["now"] + body["quiet"])
-
-
-def test_a_colleagues_running_session_is_not_yours(jj):
-    peer = User.objects.create_user("pe", "pe@dimagi.com", "pw")
-    _working_session(jj, owner=peer)
-    assert jj["client"].get("/api/me/attention/").json()["running"] == []
-
-
 def test_access_requests_reach_only_those_who_manage_members(jj):
     asker = User.objects.create_user("ann", "ann@dimagi.com", "pw")
     req = WorkspaceAccessRequest.objects.create(workspace=jj["ws"], user=asker, note="hi")
@@ -119,7 +68,7 @@ def test_never_another_workspaces_items(jj):
     ws2 = Workspace.objects.create(slug="other", display_name="Other", created_by=other)
     zed = Agent.objects.create(slug="zed", name="Zed", workspace=ws2, owner=other)
     AgentTask.objects.create(agent=zed, ext_id="T1", title="secret?", ask_kind="review")
-    assert jj["client"].get("/api/me/attention/").json() == {"now": [], "quiet": [], "hidden": [], "running": []}
+    assert jj["client"].get("/api/me/attention/").json() == {"now": [], "quiet": [], "hidden": []}
     assert jj["client"].get("/api/w/other/me/attention/").status_code == 404
 
 
@@ -233,3 +182,4 @@ def test_user_level_views_read_every_organisation_where_flat_lists_refuse(two_or
     assert [a["slug"] for a in agents["items"]] == ["eva", "nan"]
     # Pinned, a user-level view is that one organisation.
     assert [s["title"] for s in c.get("/api/w/family/me/sessions/").json()] == ["h"]
+

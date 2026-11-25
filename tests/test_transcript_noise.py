@@ -284,3 +284,26 @@ def test_the_runner_and_the_server_cannot_disagree_about_the_rule():
     assert transcript_noise.SYSTEM_NOISE_PREFIXES is SYSTEM_NOISE_PREFIXES
     assert runner_transcript._SYSTEM_NOISE_PREFIXES is SYSTEM_NOISE_PREFIXES
     assert runner_transcript._is_system_noise is transcript_noise.is_system_noise
+
+
+def test_a_reader_who_may_not_write_purges_nothing():
+    """Reading a session is not leave to delete its rows: a viewer's purge, even
+    with apply, covers only the sessions they may write."""
+    from apps.canopy_sessions import access, maintenance
+    from apps.canopy_sessions.models import SessionParticipant
+
+    session = _session()
+    viewer = User.objects.create_user("viewer", "viewer@dimagi.com")
+    from apps.workspaces import services as wsvc
+    from apps.workspaces.models import WorkspaceMembership
+
+    wsvc.ensure_member(session.workspace, viewer, WorkspaceMembership.VIEWER)
+    SessionParticipant.objects.create(session=session, user=viewer, role=SessionParticipant.VIEWER)
+    Message.objects.create(session=session, turn_index=0, role=Message.USER,
+                           plaintext="<task-notification>\nnoise", content={})
+    assert access.can_read(viewer, session) and not access.can_write(viewer, session)
+
+    result = maintenance.purge_noise(workspace_slugs={session.workspace_id}, apply=True, user=viewer)
+
+    assert result["deleted"] == 0
+    assert Message.objects.filter(session=session).count() == 1

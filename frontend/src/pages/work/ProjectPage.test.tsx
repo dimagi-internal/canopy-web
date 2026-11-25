@@ -40,11 +40,23 @@ vi.mock('@/components/projects/ProposalCard', () => ({
   ProposalCard: ({ proposal }: { proposal?: { name?: string } }) => <div data-testid="proposal-card">{proposal?.name ?? 'task'}</div>,
 }))
 vi.mock('@/pages/agents/ProjectOverview', () => ({
-  ProjectOverview: ({ agent, projectRef }: { agent: string; projectRef: string }) => (
-    <section id="team-ideas" data-testid="project-overview">
-      ideas of {agent}/{projectRef}
-    </section>
-  ),
+  // Its sections go through the page's `wrap`, which hides one with nothing in it.
+  ProjectOverview: ({
+    agent,
+    projectRef,
+    wrap,
+  }: {
+    agent: string
+    projectRef: string
+    wrap?: (part: string, has: boolean, node: React.ReactNode) => React.ReactNode
+  }) => {
+    const node = (
+      <section id="team-ideas" data-testid="project-overview">
+        ideas of {agent}/{projectRef}
+      </section>
+    )
+    return <>{wrap ? wrap('ideas', false, node) : node}</>
+  },
 }))
 vi.mock('@/pages/agents/ProjectCheckins', () => ({
   CheckinsPanel: () => <div data-testid="checkins-panel" />,
@@ -100,6 +112,13 @@ function detail(over: Record<string, unknown> = {}) {
   }
 }
 
+/** The sections a reader sees: those not in a hidden slot. */
+function shownIds(): string[] {
+  return Array.from(document.querySelectorAll('[data-testid="project-page"] section[id]'))
+    .filter((s) => !s.closest('[data-slot]')?.classList.contains('hidden'))
+    .map((s) => s.id)
+}
+
 function show() {
   return render(
     <MemoryRouter initialEntries={['/w/dimagi/projects/idm-talk']}>
@@ -111,14 +130,15 @@ function show() {
 }
 
 describe('ProjectPage', () => {
-  it('shows its sections in one order', async () => {
+  it('shows its sections in one order, the empty ones hidden', async () => {
     api.getProjectByAddress.mockResolvedValue(detail({ proposal: { name: 'IDM talk' } }))
     api.listTasks.mockResolvedValue([task()])
     show()
     await screen.findByTestId('project-header')
     expect(api.getProjectByAddress).toHaveBeenCalledWith('dimagi', 'idm-talk')
-    const ids = Array.from(document.querySelectorAll('[data-testid="project-page"] section[id]')).map((s) => s.id)
-    expect(ids).toEqual([
+    const all = Array.from(document.querySelectorAll('[data-testid="project-page"] section[id]'))
+    expect(all.map((s) => s.id)).toEqual([
+      'project-proposal',
       'project-update',
       'project-milestones',
       'project-scope',
@@ -126,15 +146,84 @@ describe('ProjectPage', () => {
       'project-meetings',
       'project-services',
       'project-shares',
-      'project-proposal',
       'team-ideas',
       'project-checkins',
       'project-timeline',
       'project-activity',
     ])
+    // What has something in it shows; the rest waits in Add….
+    expect(shownIds()).toEqual([
+      'project-proposal', 'project-update', 'project-milestones', 'project-scope', 'project-tasks', 'project-activity',
+    ])
     // The ideas and check-ins are read through the lead agent's alias for it.
     expect(screen.getByTestId('project-overview').textContent).toContain('eva/P3')
     expect(screen.getByText('← Projects').getAttribute('href')).toBe('/w/dimagi/projects')
+  })
+
+  it('a project that is mostly tasks shows them first, and Add… opens an empty section', async () => {
+    api.getProjectByAddress.mockResolvedValue(
+      detail({ latest_update: null, draft_updates: [], milestones: [], recent_turns: [], progress: { total: 0, done: 0, started: 0, scope_history: [] } }),
+    )
+    api.listTasks.mockResolvedValue([task()])
+    show()
+    await screen.findByTestId('project-header')
+    expect(shownIds()).toEqual(['project-tasks'])
+    fireEvent.click(screen.getByTestId('project-add'))
+    const menu = screen.getByRole('menu', { name: 'Add to this project' })
+    expect(within(menu).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(
+      expect.arrayContaining(['Update', 'Milestone', 'Meeting', 'Check-in', 'Toolbox item', 'Person', 'Share']),
+    )
+    fireEvent.click(within(menu).getByTestId('add-update'))
+    expect(shownIds()).toEqual(['project-tasks', 'project-update'])
+    // Opened, it is no longer offered.
+    fireEvent.click(screen.getByTestId('project-add'))
+    expect(screen.queryByTestId('add-update')).toBeNull()
+  })
+
+  it('a reader is offered only an idea', async () => {
+    api.getProjectByAddress.mockResolvedValue(detail({ may_edit: false, latest_update: null, draft_updates: [], milestones: [] }))
+    show()
+    fireEvent.click(await screen.findByTestId('project-add'))
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Idea'])
+  })
+
+  it("its main screen is the page's main button", async () => {
+    api.getProjectByAddress.mockResolvedValue(
+      detail({ links: [{ label: 'Home', url: '/w/dimagi/apps/home/week', kind: 'primary', waiting_on: '' }] }),
+    )
+    show()
+    const button = await screen.findByTestId('project-primary')
+    expect(button.textContent).toContain('Open Home')
+    expect(button.getAttribute('href')).toBe('/w/dimagi/apps/home/week')
+    // Not repeated among the plain links.
+    expect(within(screen.getByTestId('project-where')).queryByText('Home')).toBeNull()
+  })
+
+  it('an editor sets the main screen to a page of the workspace', async () => {
+    api.getProjectByAddress.mockResolvedValue(detail())
+    show()
+    await screen.findByTestId('project-header')
+    fireEvent.click(screen.getByRole('button', { name: 'Set' }))
+    const form = screen.getByTestId('primary-screen-form')
+    fireEvent.change(within(form).getByLabelText('Main screen name'), { target: { value: 'Home' } })
+    fireEvent.change(within(form).getByLabelText('Main screen page'), { target: { value: '/w/dimagi/apps/home/week' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(api.updateProject).toHaveBeenCalledWith('dimagi', 'idm-talk', {
+        links: [{ label: 'Home', url: '/w/dimagi/apps/home/week', kind: 'primary', waiting_on: '' }],
+      }),
+    )
+  })
+
+  it('asks for the work and the repeating tasks apart', async () => {
+    api.getProjectByAddress.mockResolvedValue(detail())
+    api.listTasks.mockResolvedValue([task()])
+    show()
+    await screen.findByText('Draft the slides')
+    await waitFor(() => {
+      expect(api.listTasks).toHaveBeenCalledWith(expect.objectContaining({ project: 'dimagi/idm-talk', recurring: 'false' }), 'dimagi')
+      expect(api.listTasks).toHaveBeenCalledWith(expect.objectContaining({ project: 'dimagi/idm-talk', recurring: 'true' }), 'dimagi')
+    })
   })
 
   it("lists its tasks with the workspace Tasks list, pinned to the project", async () => {

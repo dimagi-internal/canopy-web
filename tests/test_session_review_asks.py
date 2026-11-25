@@ -18,17 +18,16 @@ from django.utils import timezone
 from fastmcp.exceptions import ToolError
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
-from apps.agents import turn_context
-from apps.agents import published_profiles
+from apps.agents import published_profiles, turn_context
 from apps.agents.credentials import delegations
 from apps.agents.models import Agent, AgentGrant
 from apps.canopy_sessions import access, audience, coaching, placement
 from apps.canopy_sessions.models import (
+    CoachingOptIn,
     Message,
     RunnerBinding,
     Session,
     SessionReviewAsk,
-    SessionReviewGrant,
 )
 from apps.contacts import session_review_asks, session_reviewers
 from apps.events.models import Event
@@ -40,6 +39,7 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
+from tests.fixtures.session_world import grant_coaching
 
 pytestmark = pytest.mark.django_db
 G = AgentGrant
@@ -261,7 +261,7 @@ def test_a_hostile_transcript_reaches_the_turn_and_canopy_refuses_what_it_asks_f
 
     # And nothing happened.
     assert not Turn.objects.exclude(pk=turn.pk).exists()
-    assert not SessionReviewGrant.objects.exists()
+    assert not CoachingOptIn.objects.exists()
 
 
 # -- the read ----------------------------------------------------------------------------------
@@ -375,7 +375,7 @@ def test_a_person_and_a_repo_chats_token_are_not_held_to_it(w):
 
 
 def test_a_review_grant_on_the_agents_login_is_untouched(w):
-    SessionReviewGrant.objects.create(user=w["lili"], agent=w["trellis"])
+    grant_coaching(w["lili"], w["trellis"])
     turn, _ = services.enqueue_turn(agent=w["trellis"], origin=Turn.ORIGIN_API, prompt="coach me",
                                     idempotency_key=uuid.uuid4().hex,
                                     initiator=initiator.for_user(w["lili"], via="chat", assurance="session"))
@@ -394,7 +394,7 @@ def test_it_touches_nothing_a_grant_reads(w):
     assert _press(w, session=laptop).status_code == 200
     _pressed(w)
 
-    assert not SessionReviewGrant.objects.exists()
+    assert not CoachingOptIn.objects.exists()
     assert coaching.is_coached(w["lili"].pk) is False
     assert coaching.full_upload_session_ids(box) == set()
     assert list(session_reviewers.live(w["lili"])) == []

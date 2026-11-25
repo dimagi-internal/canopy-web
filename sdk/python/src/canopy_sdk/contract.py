@@ -98,6 +98,12 @@ CLIENT_METADATA_MAX_CACHE_SECONDS = 3600
 #: A compact JWS in this contract is a handful of claims; anything this large is
 #: not one, and is refused before a signature check spends CPU on it.
 MAX_JWT_BYTES = 8 * 1024
+#: canopy's signed site agents response is the one JWS that is a DOCUMENT, not a
+#: handful of claims: one entry per agent allowed on the site, each with its
+#: description, URLs, runner flags and problems. Six agents already outgrow
+#: ``MAX_JWT_BYTES``, so it has its own cap, equal to the body ``canopy_sdk.fetch``
+#: will read at all. Every other token keeps ``MAX_JWT_BYTES``.
+MAX_SITE_AGENTS_BYTES = 64 * 1024
 #: A ``jti`` is an opaque unique string (usually a UUID). Bounded so a hostile
 #: one cannot be arbitrarily large.
 MAX_JTI_LENGTH = 256
@@ -150,6 +156,34 @@ def parse_agent_claim(value) -> str:
     if not isinstance(value, str) or len(value) > MAX_AGENT_SLUG_LENGTH:
         raise ValueError(f"{AGENT_CLAIM} must be an agent slug")
     return value.strip()
+
+
+#: The RELAY CHANNEL an arrival is for: the host carries this person's
+#: conversation server-to-server over a channel of its own (``personalid``,
+#: ``whatsapp``, ``sms``), and the person never opens canopy. canopy records turns
+#: sent with the token as ``relay:<site>:<channel>`` rather than ``widget:<site>``,
+#: lets them name the ``RELAY_ORIGIN`` source, and always serves the arrival as a
+#: CONTACT (never as a canopy account the person may also hold). Absent = a widget.
+CHANNEL_CLAIM = "canopy_channel"
+#: A channel name: lower-case letters, digits, ``_`` and ``-``; at most 32.
+CHANNEL_PATTERN = r"^[a-z0-9_-]{1,32}$"
+#: The turn source a relayed message is (``Turn.origin``): a message a host site
+#: carried for the person, who is present on the host's channel.
+RELAY_ORIGIN = "site_message"
+
+
+def parse_channel_claim(value) -> str:
+    """The claim's value. ``None`` / ``""`` -> ``""`` (no channel: a widget).
+
+    Raises ``ValueError`` for anything not matching ``CHANNEL_PATTERN``: canopy
+    refuses the arrival rather than record a channel it cannot name."""
+    import re
+
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str) or not re.fullmatch(CHANNEL_PATTERN, value):
+        raise ValueError(f"{CHANNEL_CLAIM} must match {CHANNEL_PATTERN}")
+    return value
 
 
 #: The canopy WORKSPACE (tenant) a host's signed request or assertion is for —
@@ -210,6 +244,18 @@ VIEW_ACTOR = "view"
 VIEW_MAX_LIFETIME = 60
 VIEW_REQUIRED_CLAIMS: tuple[str, ...] = (
     "iss", "aud", "iat", "exp", "jti", "cnf", "ath", "actor", "sub", "uri", "session")
+
+#: canopy's signed word that a request is an agent's turn with ONE of the host's own
+#: contacts — a person the host vouches for and canopy knows only as the host's id for
+#: them (``sub``) — and nothing else: no grant, no token. Sent as ``Authorization:
+#: CanopySubject <jws>`` beside a DPoP proof (no ``ath``: there is no access token) by
+#: canopy's gateway, only for a host-site entry its owner marked ``contact_scoped``. The
+#: host authorizes EVERY call against ``sub``: ``canopy_sdk.host.verify_subject``.
+SUBJECT_AUTH_SCHEME = "CanopySubject"
+SUBJECT_TYP = "canopy-subject+jwt"
+SUBJECT_MAX_LIFETIME = 60
+SUBJECT_REQUIRED_CLAIMS: tuple[str, ...] = (
+    "iss", "aud", "iat", "exp", "jti", "cnf", "sub", "site", "agent", "turn", "session")
 
 #: Where a canopy deployment serves its Client ID Metadata Document (its
 #: ``client_id`` IS this URL) and its client-auth JWKS, relative to its base URL.
