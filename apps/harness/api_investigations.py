@@ -81,7 +81,7 @@ def get_failure_investigation(request: HttpRequest, investigation_id: int):
     failed turns, the agents and runners it hit, and its debug turn.
 
     `failed_turns` says, per recent failed turn, which agent, channel, kind of
-    caller, stamp, mode and runner it was: metadata, never content. Those turns'
+    caller, profile, mode and runner it was: metadata, never content. Those turns'
     own routes stay behind the chat ACL (a private chat is its people's), so this
     is how the people who debug a failure can still tell one kind of turn from
     another."""
@@ -113,7 +113,7 @@ def _failed_turns(inv: FailureInvestigation) -> list[dict]:
             "id": str(t.pk), "agent": agent.slug if agent else "", "origin": t.origin,
             "chat": sess is not None, "private_chat": sess is not None and not own_thread,
             "initiator_kind": t.initiator_kind, "initiator_via": t.initiator_via,
-            "initiator_assurance": t.initiator_assurance, "capability": t.capability,
+            "initiator_assurance": t.initiator_assurance, "profile": t.capability,
             "turn_mode": t.turn_mode, "runner": t.claimed_by.name if t.claimed_by else "",
             "cli": t.cli, "status": t.status, "created_at": t.created_at,
             "finished_at": t.finished_at,

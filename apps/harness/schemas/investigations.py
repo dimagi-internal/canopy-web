@@ -69,8 +69,8 @@ class FailedTurnOut(Schema):
     initiator_kind: str = ""
     initiator_via: str = ""
     initiator_assurance: str = ""
-    #: The stamp the claim ran it under (`Turn.capability`) and its turn mode.
-    capability: str = ""
+    #: The profile the claim ran it under (`Turn.capability`) and its turn mode.
+    profile: str = ""
     turn_mode: str = ""
     runner: str = ""
     cli: str = ""

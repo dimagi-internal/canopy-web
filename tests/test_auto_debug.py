@@ -783,7 +783,7 @@ def test_the_debugger_sees_a_private_chats_failed_turn_as_metadata_not_content(
     [row] = r.json()["failed_turns"]
     assert row["id"] == str(turn.pk) and row["agent"] == "budgy"
     assert row["chat"] is True and row["private_chat"] is True
-    assert (row["initiator_kind"], row["capability"], row["turn_mode"]) == ("user", "confined", "manual")
+    assert (row["initiator_kind"], row["profile"], row["turn_mode"]) == ("user", "confined", "manual")
     assert row["runner"] == runner.name and row["status"] == Turn.FAILED
     body = r.content.decode()
     assert "SECRET" not in body and asker.email not in body

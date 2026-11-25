@@ -16566,7 +16566,7 @@ export interface paths {
          *     failed turns, the agents and runners it hit, and its debug turn.
          *
          *     `failed_turns` says, per recent failed turn, which agent, channel, kind of
-         *     caller, stamp, mode and runner it was: metadata, never content. Those turns'
+         *     caller, profile, mode and runner it was: metadata, never content. Those turns'
          *     own routes stay behind the chat ACL (a private chat is its people's), so this
          *     is how the people who debug a failure can still tell one kind of turn from
          *     another.
@@ -48520,10 +48520,10 @@ export interface components {
              */
             readonly initiator_assurance: string;
             /**
-             * Capability
+             * Profile
              * @default
              */
-            readonly capability: string;
+            readonly profile: string;
             /**
              * Turn Mode
              * @default

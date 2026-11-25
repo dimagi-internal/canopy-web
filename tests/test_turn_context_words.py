@@ -85,7 +85,7 @@ EXISTING_FIELDS = frozenset({
     "AdmissionRuleOut.capability", "AdmissionRuleIn.capability", "AdmissionRulePatch.capability",
     # `ask` meaning a request (a task filter, a meeting's or an investigation's request, a review request)
     "DecisionOut.review_ask", "DecisionIn.review_ask", "MeetingIn.ask", "MeetingFollowUpIn.ask",
-    "FailureInvestigationOut.ask", "HandOffInvestigationIn.ask", "SessionReviewOfferOut.ask",
+    "FailureInvestigationOut.ask", "FailureInvestigationDetailOut.ask", "HandOffInvestigationIn.ask", "SessionReviewOfferOut.ask",
     "AgentTaskDetailOut.ask_body", "AgentTaskDetailOut.ask_closed_at", "AgentTaskDetailOut.ask_kind",
     "AgentTaskDetailOut.ask_open", "AgentTaskIn.ask_body", "AgentTaskIn.ask_kind", "AgentTaskOut.ask_body",
     "AgentTaskOut.ask_closed_at", "AgentTaskOut.ask_kind", "AgentTaskOut.ask_open", "TaskCreateIn.ask_body",
