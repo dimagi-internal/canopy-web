@@ -414,7 +414,12 @@ EXCLUDED_UNDER_WRITE = [
     ("POST", "/api/runner-device-keys/1/approve"),
     ("POST", "/api/harness/runners/00000000-0000-4000-8000-000000000001/mint"),
     ("POST", "/api/w/{ws}/tokens/"),  # the tenant URL is the same route
-    ("GET", "/api/workspaces/{ws}/vaults"),
+    ("GET", "/api/vaults/00000000-0000-4000-8000-000000000001/zk"),
+    ("PUT", "/api/vaults/00000000-0000-4000-8000-000000000001/zk/values"),
+    ("POST", "/api/vaults/00000000-0000-4000-8000-000000000001/zk/wraps"),
+    ("POST", "/api/vaults/00000000-0000-4000-8000-000000000001/members"),
+    ("DELETE", "/api/vaults/00000000-0000-4000-8000-000000000001/secrets/X"),
+    ("GET", "/api/vaults/00000000-0000-4000-8000-000000000001/log"),
     ("PATCH", "/api/workspaces/{ws}/host-sites/1"),
 ]
 
@@ -427,6 +432,52 @@ def test_a_write_grant_never_reaches_the_excluded_routes(w, method, path):
     assert r.status_code in (401, 403), (method, path, r.status_code)
     if r.status_code == 403:
         assert "act-as-you permission" in r.json()["detail"]
+
+
+def test_a_write_grant_sets_up_a_project_vault_but_never_its_values_or_a_runner(w):
+    """A vault's STRUCTURE is the one vault family act-as reaches (`act_as.VAULT_STRUCTURE`):
+    an agent makes a project's vault and attaches it as its person. Values, keys, members
+    and a runner attachment stay theirs alone."""
+    from apps.agents.models import AgentProject, Vault  # noqa: PLC0415
+
+    project = AgentProject.objects.create(agent=w["eva"], ext_id="P1", name="Sales", workspace=w["ws"],
+                                          handle="sales")
+    token, _, _ = _live_token(w, "write")
+    c, h, ws = Client(), bearer_headers(token), w["ws"].slug
+
+    made = c.post(f"/api/workspaces/{ws}/vaults", json.dumps({"name": "Sales publishing"}),
+                  content_type="application/json", **h)
+    assert made.status_code == 200, made.content
+    vid = made.json()["vault_id"]
+    assert Vault.objects.get(pk=vid).workspace == w["ws"]
+    assert c.get(f"/api/workspaces/{ws}/vaults", **h).status_code == 200
+    assert c.get(f"/api/vaults/{vid}", **h).status_code == 200
+
+    attached = c.post(f"/api/vaults/{vid}/attachments", json.dumps({"project": f"{ws}/{project.handle}"}),
+                      content_type="application/json", **h)
+    assert attached.status_code == 200, attached.content
+    assert [a["project"] for a in attached.json()["attachments"]] == [f"{ws}/sales"]
+
+    runner = c.post(f"/api/vaults/{vid}/attachments", json.dumps({"runner": str(w["box"].pk)}),
+                    content_type="application/json", **h)
+    assert runner.status_code == 403 and "never attaches a runner" in runner.json()["detail"]
+
+    for method, path in (("PUT", f"/api/vaults/{vid}/zk/values"), ("POST", f"/api/vaults/{vid}/zk/enable"),
+                         ("POST", f"/api/vaults/{vid}/members"), ("GET", f"/api/vaults/{vid}/log")):
+        r = c.generic(method, path, "{}", content_type="application/json", **h)
+        assert r.status_code == 403 and "act-as-you permission" in r.json()["detail"], (method, path)
+
+    aid = attached.json()["attachments"][0]["id"]
+    assert c.delete(f"/api/vaults/{vid}/attachments/{aid}", **h).status_code == 200
+
+
+def test_a_read_grant_lists_vaults_but_makes_none(w):
+    token, _, _ = _live_token(w, "read")
+    h, ws = bearer_headers(token), w["ws"].slug
+    assert Client().get(f"/api/workspaces/{ws}/vaults", **h).status_code == 200
+    r = Client().post(f"/api/workspaces/{ws}/vaults", json.dumps({"name": "x"}),
+                      content_type="application/json", **h)
+    assert r.status_code == 403 and "read-only" in r.json()["detail"]
 
 
 def test_every_exclusion_names_a_real_route_family():

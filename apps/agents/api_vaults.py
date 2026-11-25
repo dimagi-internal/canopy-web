@@ -221,6 +221,10 @@ def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: V
     the vault already serves (422 `vault_crosses_isolation`). Attaching makes the box
     eligible for a copy of the key; a holder still has to grant it one."""
     v = _vault(request, vault_id, manage=True)
+    if payload.runner and getattr(request, "act_as_grant", None) is not None:
+        # An agent acting as its person sets up a vault's structure (`act_as.VAULT_STRUCTURE`),
+        # never which runner's Claude credentials it holds.
+        raise HttpError(403, "an act-as-you permission never attaches a runner to a vault")
     agent = Agent.objects.filter(slug=payload.agent).first() if payload.agent else None
     ws = Workspace.objects.filter(slug=payload.workspace).first() if payload.workspace else None
     runner = _administered_runner(request, payload.runner) if payload.runner else None
