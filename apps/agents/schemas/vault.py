@@ -171,6 +171,18 @@ class VaultLogEntryOut(StrictModel):
     turn_id: str = ""
 
 
+class VaultSecretRowOut(StrictModel):
+    """One secret of a workspace vault as the Secrets table shows it. Never a value."""
+
+    name: str
+    updated_at: datetime | None = None
+    #: The email of who last stored it, "" when unknown.
+    updated_by: str = ""
+    #: The newest read by an agent's turn or a runner (the same records as the vault's Log).
+    last_read_at: datetime | None = None
+    read_count: int = 0
+
+
 class WorkspaceVaultOut(StrictModel):
     vault_id: str
     workspace: str
@@ -179,6 +191,8 @@ class WorkspaceVaultOut(StrictModel):
     kv: int
     #: Names only — never a value.
     secrets: list[str]
+    #: The same secrets with when each changed and was last read.
+    secret_rows: list[VaultSecretRowOut] = []
     attachments: list[VaultAttachmentOut]
     members: list[VaultMemberOut]
     you: str | None

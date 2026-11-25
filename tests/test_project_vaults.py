@@ -468,3 +468,32 @@ def test_a_vaults_log_shows_who_changed_it_and_who_read_what_never_a_value(w):
     member = _user("member")
     _member(w.connect, member, WorkspaceMembership.EDITOR)
     assert _client(member).get(f"/api/vaults/{w.vault.pk}/log").status_code == 403
+
+
+def test_the_secrets_table_says_when_each_changed_and_to_its_managers_who_read_it(w):
+    from apps.agents.models import AgentCredentialRead
+    from apps.harness.models import RunnerCredentialRead
+
+    VaultSecret.objects.create(vault=w.vault, name="salesforce", value_zk="zk1:CIPHER", kv=1, updated_by=w.jj)
+    VaultSecret.objects.create(vault=w.vault, name="unread", value_zk="zk1:CIPHER", kv=1)
+    box = Runner.objects.create(name="cloud-ec2-live", owner=w.jj, workspace=w.dimagi)
+    AgentCredentialRead.objects.create(agent=w.hal, name="Shared/salesforce", user=w.jj, via="runner")
+    AgentCredentialRead.objects.create(agent=w.hal, name="Other/salesforce", user=w.jj, via="runner")
+    newest = RunnerCredentialRead.objects.create(runner=box, vault=w.vault, name="salesforce")
+
+    r = _client(w.jj).get(f"/api/vaults/{w.vault.pk}")
+    assert r.status_code == 200, r.content
+    assert "CIPHER" not in r.content.decode()
+    rows = {s["name"]: s for s in r.json()["secret_rows"]}
+    assert rows["salesforce"]["updated_by"] == "jj@dimagi.com" and rows["salesforce"]["updated_at"]
+    assert rows["salesforce"]["read_count"] == 2                  # its own name, not Other's
+    assert rows["salesforce"]["last_read_at"].startswith(newest.created_at.isoformat()[:19])
+    assert rows["unread"]["read_count"] == 0 and rows["unread"]["last_read_at"] is None
+
+    # one who only uses the vault sees when, not who: reads are the Log's, and the Log is its managers'
+    member = _user("member")
+    _member(w.connect, member, WorkspaceMembership.EDITOR)
+    r = _client(member).get(f"/api/vaults/{w.vault.pk}")
+    assert r.status_code == 200, r.content
+    row = next(s for s in r.json()["secret_rows"] if s["name"] == "salesforce")
+    assert row["updated_at"] and row["updated_by"] == "" and row["read_count"] == 0

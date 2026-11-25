@@ -18,10 +18,12 @@ Never a value: names, who, when and from where.
 """
 from __future__ import annotations
 
+from django.db.models import Count, Max
+
 from apps.events.models import SettingChange
 from apps.harness.models import RunnerCredentialRead
 
-from ..models import AgentCredentialRead, Vault
+from ..models import AgentCredentialRead, Vault, VaultSecret
 
 _VIA = {"ui": "browser", "mcp": "MCP tool", "cli": "canopy CLI", "api": "API", "runner": "runner"}
 
@@ -45,3 +47,29 @@ def entries(vault: Vault, *, limit: int = 200) -> list[dict]:
                     "what": f"read {r.name[len(prefix):]}", "where": where, "turn_id": r.turn_id})
     out.sort(key=lambda e: e["at"], reverse=True)
     return out[:limit]
+
+
+def secret_rows(vault: Vault, *, activity: bool) -> list[dict]:
+    """Each secret's name and when it last changed; with `activity` (the Log's audience) also by
+    whom, and its reads — counted from the same records `entries` shows (runner reads by vault,
+    agent reads by `<vault name>/<secret>`)."""
+    rows = VaultSecret.objects.filter(vault=vault).select_related("updated_by").order_by("name")
+    if not activity:
+        return [{"name": s.name, "updated_at": s.updated_at} for s in rows]
+    reads: dict[str, tuple] = {}
+
+    def add(name: str, last, n: int) -> None:
+        prev_last, prev_n = reads.get(name, (None, 0))
+        reads[name] = (max(filter(None, (prev_last, last)), default=None), prev_n + n)
+
+    for r in (RunnerCredentialRead.objects.filter(vault=vault).values("name")
+              .annotate(last=Max("created_at"), n=Count("id"))):
+        add(r["name"], r["last"], r["n"])
+    prefix = f"{vault.name}/"
+    for r in (AgentCredentialRead.objects.filter(name__startswith=prefix).values("name")
+              .annotate(last=Max("created_at"), n=Count("id"))):
+        add(r["name"][len(prefix):], r["last"], r["n"])
+    return [{"name": s.name, "updated_at": s.updated_at,
+             "updated_by": (s.updated_by.email or "") if s.updated_by_id else "",
+             "last_read_at": reads.get(s.name, (None, 0))[0], "read_count": reads.get(s.name, (None, 0))[1]}
+            for s in rows]
