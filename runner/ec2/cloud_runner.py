@@ -3893,6 +3893,47 @@ def install_aws_broker(*, run=subprocess.run) -> bool:
         _log(f"aws broker: not installed ({exc})")
     return False
 
+#: sysstat's switches. Ubuntu ships the package with collection OFF and 7 days kept, so
+#: a box's memory, disk and load over time were nowhere: CloudWatch has CPU and network
+#: only, and sizing a runner needs its peak memory. On, sadc samples every 10 minutes
+#: into /var/log/sysstat/saDD and `sar -r` / `sar -q` / `sar -d -f <file>` read it back.
+SYSSTAT_DEFAULT = pathlib.Path(os.environ.get("CANOPY_SYSSTAT_DEFAULT", "/etc/default/sysstat"))
+SYSSTAT_CONF = pathlib.Path(os.environ.get("CANOPY_SYSSTAT_CONF", "/etc/sysstat/sysstat"))
+SYSSTAT_HISTORY_DAYS = 31
+
+
+def _set_shell_var(path: pathlib.Path, name: str, value: str) -> bool:
+    """Set `NAME=value` in a shell-style config file; True when the file changed."""
+    text = path.read_text()
+    line = f"{name}={value}"
+    pat = re.compile(rf"^{re.escape(name)}=.*$", re.M)
+    new = pat.sub(line, text) if pat.search(text) else text.rstrip("\n") + f"\n{line}\n"
+    if new == text:
+        return False
+    path.write_text(new)
+    return True
+
+
+def enable_sysstat(*, run=subprocess.run) -> bool:
+    """ROOT: turn sysstat collection on, keeping SYSSTAT_HISTORY_DAYS of history, and
+    (re)start it when that changed anything. Idempotent: an unchanged box runs nothing.
+    Never raises; a box without the package only lacks the history."""
+    try:
+        if not SYSSTAT_DEFAULT.is_file():
+            return False
+        changed = _set_shell_var(SYSSTAT_DEFAULT, "ENABLED", '"true"')
+        if SYSSTAT_CONF.is_file():
+            changed = _set_shell_var(SYSSTAT_CONF, "HISTORY", str(SYSSTAT_HISTORY_DAYS)) or changed
+        if changed:
+            run(["systemctl", "enable", "--now", "sysstat.service"], capture_output=True)
+            run(["systemctl", "restart", "sysstat.service"], capture_output=True)
+            _log(f"sysstat: collection on, {SYSSTAT_HISTORY_DAYS} days kept")
+        return True
+    except Exception as exc:  # noqa: BLE001 — never block a box's setup on metrics
+        _log(f"sysstat: not enabled ({exc})")
+        return False
+
+
 #: The stack parameters a machine of several runners needs (never a secret), as the legacy
 #: runner.env names them — what an in-place move carries over into box.env.
 BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS",
@@ -16396,6 +16437,7 @@ def _runners_cli(argv: list[str]) -> int:
                                                 for u, on in sorted(applied.items())))
         _log("setup-runners: " + ", ".join(f"{u['id']} ({u['user']}, {u['name']})" for u in runners))
         install_aws_broker()
+        enable_sysstat()
         # A runner added to Runners later: start it, and pair it.
         for u in runners:
             subprocess.run(["systemctl", "enable", "--now", "--no-block",
