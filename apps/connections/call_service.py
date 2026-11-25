@@ -49,6 +49,7 @@ from apps.api.renderers import orjson_bytes
 from apps.common.rate_limit import over
 from apps.common.views_debug import is_machine
 from apps.workspaces.links import base_url
+from apps.workspaces.models import Workspace
 
 from . import calls, declarations, providers, server_key, server_tokens, services, temporary
 from .models import Connection, ConnectionOperation, ConnectionSurfaceShare
@@ -234,7 +235,7 @@ def _call_on_temporary(user, provider: str, surface: declarations.Surface, match
     title = _title(provider)
     # No app here means no hour can ever be granted: say so, without the link that grants one, or the
     # page loops through a start that lands straight back on it.
-    services.app_for(surface.workspace, provider)
+    services.app_serving(surface.workspace, provider)
     row = temporary.for_screens(user, provider, surface.workspace)
     if row is None:
         raise services.NotConnected(f"This page needs your {title} for the next hour. Allow it, then try again.")
@@ -248,7 +249,10 @@ def _call_on_temporary(user, provider: str, surface: declarations.Surface, match
     if matched.rule.kind == "write":
         _spend_write(user, payload.operation_id, surface)
     sent = _Sent()
-    subject = replace(temporary._subject(row), workspace=row.app.workspace)
+    # Recorded against the workspace the screen is in, which a parent's shared app is not.
+    where = (row.app.workspace if row.app.workspace_id == surface.workspace
+             else Workspace.objects.filter(slug=surface.workspace).first() or row.app.workspace)
+    subject = replace(temporary._subject(row), workspace=where)
     with _in_flight(user.pk):
         try:
             got = server_tokens.Access(temporary.token_of(row), "", "")

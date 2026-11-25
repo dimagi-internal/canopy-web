@@ -11935,6 +11935,8 @@ export interface paths {
          *     its `locked_options` (Salesforce: its login URL) cannot change: 409
          *     `app_locked`; remove the app to switch. Adding a scope does not change
          *     existing connections: each lists it in `missing_scopes` until reconnected.
+         *     `shared_with_children` lets the workspaces below use it for their people's
+         *     own screens when they have no app of their own.
          *     400 `invalid_app` says what was refused. From a browser this needs a fresh
          *     passkey check. Workspace admins only.
          */
@@ -42922,6 +42924,17 @@ export interface components {
              * @description Connections made with this app; removing it disconnects them.
              */
             readonly connection_count: number;
+            /**
+             * Shared With Children
+             * @description The workspaces below this one may use this app when they have none of their own: a person there signs in with it for their own screens (an hour of access, as here).
+             * @default false
+             */
+            readonly shared_with_children: boolean;
+            /**
+             * Inherited From
+             * @description Set when this workspace has no app of its own and its people's screens use an ancestor's that it shares: that workspace's slug. Change it there.
+             */
+            readonly inherited_from?: string | null;
             /** Updated At */
             readonly updated_at?: string | null;
             /**
@@ -42989,6 +43002,11 @@ export interface components {
              * @description The full list of extra scopes, from `scope_choices`; replaces the saved list.
              */
             readonly scopes?: readonly string[];
+            /**
+             * Shared With Children
+             * @description Let the workspaces below this one use this app when they have none of their own. Omitted keeps the saved choice.
+             */
+            readonly shared_with_children?: boolean | null;
         };
         /** AgentFitOut */
         readonly AgentFitOut: {

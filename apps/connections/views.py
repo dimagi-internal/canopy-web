@@ -170,20 +170,24 @@ def connections_start(request: HttpRequest, provider: str, workspace: str) -> Ht
             return _land(request, return_to, provider, "error", "bad_lend")
     for_agent = params.get("for_agent", "")
     short_lived = not slug and params.get("temporary") == "1"
+    # A person's own screens may sign in with a parent's app the parent shares (`app_serving`); every
+    # other connect uses this workspace's own app.
+    screens = short_lived and params.get("for_screens") == "1" and not for_agent
     try:
-        app = services.app_for(workspace, provider)
+        app = (services.app_serving if screens else services.app_for)(workspace, provider)
     except services.NotConfigured:
         return _land(request, return_to, provider, "error", "not_configured")
     if short_lived:
         if not temporary.supported(provider):
             return _land(request, return_to, provider, "error", "temporary_unsupported")
         # For the person's own screens (no agent), or lent to one agent.
-        screens = params.get("for_screens") == "1" and not for_agent
         if not screens and temporary.agent_for(workspace, for_agent) is None:
             return _land(request, return_to, provider, "error", "bad_agent")
+        # The callback is the app's own workspace's: the one registered at the provider.
         return HttpResponseRedirect(services.begin(
-            request.session, app=app, owner=owner, redirect_uri=_redirect_uri(request, provider, workspace),
-            return_to=return_to, for_agent=for_agent, temporary=True, for_screens=screens))
+            request.session, app=app, owner=owner, redirect_uri=_redirect_uri(request, provider, app.workspace_id),
+            return_to=return_to, for_agent=for_agent, temporary=True, for_screens=screens,
+            surface_workspace=workspace))
     try:
         services.owner_keyset(owner[0], owner_obj, request.user)
     except services.ConnectionError as e:  # no vault key: nothing to seal to, so nothing is begun
@@ -216,8 +220,9 @@ def connections_callback(request: HttpRequest, provider: str, workspace: str) ->
         agent = Agent.objects.filter(pk=parked.get("owner_id")).first()
         allowed = agent is None or (agent.is_admin(request.user) and agent.workspace_id == workspace)
     else:
+        # Where the screens are (a sub-workspace using this app), else the app's own workspace.
         allowed = (parked.get("owner_id") == request.user.pk
-                   and services.person_may_use(request.user, workspace))
+                   and services.person_may_use(request.user, parked.get("surface_workspace") or workspace))
     if not allowed:
         services.spend(request.session, state)  # nothing exchanged, nothing stored
         return _land(request, return_to, provider, "error", "forbidden")

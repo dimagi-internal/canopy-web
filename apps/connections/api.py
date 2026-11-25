@@ -734,10 +734,22 @@ def _app_out(request: HttpRequest, slug: str, cls: type[providers.Provider],
         locked_options=list(cls.locked_options),
         callback_url=_callback_url(request, cls.name, slug),
         connection_count=_connection_count(app),
+        shared_with_children=bool(app is not None and app.shared_with_children),
+        inherited_from=_inherited_from(slug, cls.name) if app is None or not providers.for_app(app).is_configured()
+        else None,
         updated_at=app.updated_at if app is not None else None,
         configured_by_email=((app.configured_by.email or app.configured_by.get_username())
                              if app is not None and app.configured_by is not None else ""),
     )
+
+
+def _inherited_from(slug: str, provider: str) -> str | None:
+    """The ancestor whose shared app serves this workspace's screens, when it has none of its own."""
+    try:
+        app = services.app_serving(slug, provider)
+    except services.NotConfigured:
+        return None
+    return app.workspace_id if app.workspace_id != slug else None
 
 
 def _app_row(slug: str, provider: str) -> ConnectionApp | None:
@@ -776,6 +788,8 @@ def configure_connection_app(request: HttpRequest, workspace: str, provider: str
     its `locked_options` (Salesforce: its login URL) cannot change: 409
     `app_locked`; remove the app to switch. Adding a scope does not change
     existing connections: each lists it in `missing_scopes` until reconnected.
+    `shared_with_children` lets the workspaces below use it for their people's
+    own screens when they have no app of their own.
     400 `invalid_app` says what was refused. From a browser this needs a fresh
     passkey check. Workspace admins only."""
     ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
@@ -786,7 +800,8 @@ def configure_connection_app(request: HttpRequest, workspace: str, provider: str
     try:
         app = services.configure_app(ws, cls.name, client_id=payload.client_id,
                                      client_secret=payload.client_secret, options=payload.options,
-                                     scopes=payload.scopes, by=request.user)
+                                     scopes=payload.scopes, shared_with_children=payload.shared_with_children,
+                                     by=request.user)
     except services.ConnectionError as exc:
         raise problem_for(exc, title=cls.title, owner="This workspace's") from None
     return _app_out(request, ws.slug, cls, app)

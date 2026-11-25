@@ -123,12 +123,14 @@ function AppCard({
   const [secret, setSecret] = useState('')
   const [options, setOptions] = useState<Record<string, string>>(() => initialOptions(app))
   const [scopes, setScopes] = useState<string[]>(() => [...(app.scopes ?? [])])
+  const [shared, setShared] = useState(Boolean(app.shared_with_children))
 
   /** The form, as the server now has it. */
   function reseed(a: ConnectionAppOut) {
     setClientId(a.client_id)
     setOptions(initialOptions(a))
     setScopes([...(a.scopes ?? [])])
+    setShared(Boolean(a.shared_with_children))
   }
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
@@ -157,6 +159,7 @@ function AppCard({
         options,
         // The full list: the server replaces the saved scopes with it.
         scopes: choices.map((c) => c.scope).filter((s) => scopes.includes(s)),
+        shared_with_children: shared,
       })
       setSecret('') // never keep a secret in component state once it has landed
       reseed(updated)
@@ -198,10 +201,16 @@ function AppCard({
     >
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-foreground">{app.title}</h3>
-        <span className={`text-[12px] ${app.configured ? 'text-success' : 'text-muted-foreground'}`}>
-          {app.configured ? 'Set up' : 'Not set up'}
+        <span className={`text-[12px] ${app.configured || app.inherited_from ? 'text-success' : 'text-muted-foreground'}`}>
+          {app.configured ? 'Set up' : app.inherited_from ? `Using ${app.inherited_from}'s` : 'Not set up'}
         </span>
       </div>
+      {!app.configured && app.inherited_from && (
+        <p className="text-[12px] text-muted-foreground">
+          People here sign in with the {app.title} app of <b>{app.inherited_from}</b>, which shares it with the
+          workspaces below it. Set up an app here only to use a different one.
+        </p>
+      )}
 
       <div className="space-y-1">
         <div className="flex items-center gap-2">
@@ -265,6 +274,11 @@ function AppCard({
           ))}
         </fieldset>
       )}
+
+      <label className="flex items-center gap-2 text-[13px] text-foreground">
+        <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />
+        Workspaces below this one may use this app when they have none of their own
+      </label>
 
       {note && (
         <p role="status" className={`text-[13px] ${note.tone === 'ok' ? 'text-success' : 'text-destructive'}`}>

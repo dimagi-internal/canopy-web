@@ -86,6 +86,7 @@ from apps.harness.models import Runner, RunnerDeviceKey
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
+from apps.workspaces.models import Workspace
 
 from . import declarations, providers, server_key, wire
 from . import recipients as rcpt
@@ -244,6 +245,29 @@ def app_for(workspace, provider: str) -> ConnectionApp:
     return app
 
 
+def app_serving(workspace, provider: str) -> ConnectionApp:
+    """The app a person's own screens in `workspace` sign in with: the workspace's own, else the nearest
+    ancestor's whose admins share it with the workspaces below (`shared_with_children`). An ancestor that
+    has an app but does not share it ends the search: a nearer refusal is never skipped for a farther yes.
+    NotConfigured when none serves. Its sign-in runs at the app's own workspace's callback, the one
+    registered at the provider; who may use it is still decided by `workspace` (`person_may_use`)."""
+    try:
+        return app_for(workspace, provider)
+    except NotConfigured:
+        pass
+    ws = Workspace.objects.filter(slug=_slug(workspace)).first()
+    for slug in (ws.ancestor_slugs() if ws is not None else []):
+        app = (ConnectionApp.objects.select_related("workspace")
+               .filter(workspace_id=slug, provider=provider, removed_at__isnull=True).first())
+        if app is None:
+            continue
+        if not app.shared_with_children:
+            break
+        _configured(app, provider)
+        return app
+    raise NotConfigured(f"{providers.get_class(provider).title} is not set up for this workspace")
+
+
 def readable_workspaces(user) -> set[str]:
     """The workspaces `user` can read: THE rule for whose apps a person may use
     and whose connections still hand them a token (`workspaces` decides membership)."""
@@ -271,7 +295,8 @@ def _app_subject(app: ConnectionApp) -> Subject:
 
 
 def configure_app(workspace, provider: str, *, client_id: str, client_secret: str = "",
-                  options: dict | None = None, scopes=(), by) -> ConnectionApp:
+                  options: dict | None = None, scopes=(), shared_with_children: bool | None = None,
+                  by) -> ConnectionApp:
     """Create or update the workspace's app for `provider`.
 
     A blank `client_secret` on an update keeps the stored one (rotating it is
@@ -299,7 +324,8 @@ def configure_app(workspace, provider: str, *, client_id: str, client_secret: st
     for attempt in range(2):
         try:
             with transaction.atomic():
-                app = _save_app(cls, slug, client_id, client_secret, options or {}, chosen, by)
+                app = _save_app(cls, slug, client_id, client_secret, options or {}, chosen, by,
+                                shared_with_children)
             break
         except IntegrityError:
             if attempt:
@@ -310,7 +336,7 @@ def configure_app(workspace, provider: str, *, client_id: str, client_secret: st
     return app
 
 
-def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> ConnectionApp:
+def _save_app(cls, slug, client_id, client_secret, options, chosen, by, shared_with_children=None) -> ConnectionApp:
     """`configure_app`'s write, inside its transaction, under the app row's lock."""
     app = ConnectionApp.objects.select_for_update().filter(workspace_id=slug, provider=cls.name).first()
     try:
@@ -341,6 +367,8 @@ def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> Conne
                                 + [labels.get(n, n) for n in changed])
             raise ConnectionError("app_locked", f"Accounts are connected with this {cls.title} app, so its {what} "
                                                 "cannot change; remove the app (which disconnects them) to switch.")
+    if shared_with_children is not None:  # None keeps what was saved
+        app.shared_with_children = shared_with_children
     app.client_id = client_id
     if client_secret:
         app.client_secret = client_secret
@@ -501,13 +529,15 @@ def _pkce_pair() -> tuple[str, str]:
 
 def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, return_to: str = "",
           lend_minutes: int | None = None, owner_turns_only: bool = False, for_agent: str = "",
-          temporary: bool = False, for_screens: bool = False) -> str:
+          temporary: bool = False, for_screens: bool = False, surface_workspace: str = "") -> str:
     """Park a PKCE verifier, a CSRF `state` and `app` in the session; return the
     authorize URL (with `app`'s client). `lend_minutes` and `owner_turns_only` are the
     limits the connection will carry (`complete`); `for_agent` is the slug the share
     screen ticks for the owner. `temporary` asks the provider for no refresh token, and
     the callback finishes it with `temporary.complete`, for the agent `for_agent` names, or,
-    with `for_screens`, for the person's own calls from screens.
+    with `for_screens`, for the person's own calls from screens. `surface_workspace` is where those
+    screens are when it is not the app's own workspace (a sub-workspace using its parent's app,
+    `app_serving`): the callback checks the person may still use THAT workspace.
 
     The verifier never leaves the server; only its S256 challenge goes to the
     provider, so an intercepted `code` cannot be exchanged by anyone else.
@@ -524,7 +554,8 @@ def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, retur
                       "client_id": app.client_id,
                       "owner_kind": kind, "owner_id": owner_id, "verifier": verifier, "return_to": return_to,
                       "lend_minutes": lend_minutes, "owner_turns_only": owner_turns_only, "for_agent": for_agent,
-                      "temporary": temporary, "for_screens": bool(temporary and for_screens)}
+                      "temporary": temporary, "for_screens": bool(temporary and for_screens),
+                      "surface_workspace": surface_workspace or app.workspace_id}
     session[SESSION_KEY] = pending  # reassigned so a Django session marks itself modified
     owner_obj = (Agent if kind == "agent" else get_user_model()).objects.filter(pk=owner_id).first()
     return p.authorize_url(state, redirect_uri, challenge, owner_kind=kind, owner=owner_obj, temporary=temporary)

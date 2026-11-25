@@ -170,10 +170,15 @@ def sweep(now=None) -> int:
 
 def for_screens(user, provider: str, workspace: str) -> TemporaryAccess | None:
     """The person's own short-lived access for screens in `workspace`, while it lasts and while they may
-    still use that workspace: what a screen's call for a `calls.TEMPORARY_ONLY` provider runs on."""
+    still use that workspace: what a screen's call for a `calls.TEMPORARY_ONLY` provider runs on. It is
+    the hour signed in with the app serving `workspace` (`services.app_serving`: its own, or a parent's
+    it shares), so one hour serves every workspace that app serves."""
+    try:
+        app = services.app_serving(workspace, provider)
+    except services.NotConfigured:
+        return None
     row = (TemporaryAccess.objects.select_related("app")
-           .filter(user=user, agent__isnull=True, provider=provider, app__workspace_id=workspace,
-                   app__removed_at__isnull=True, expires_at__gt=timezone.now())
+           .filter(user=user, agent__isnull=True, provider=provider, app=app, expires_at__gt=timezone.now())
            .first())
     if row is None or not services.person_may_use(user, workspace):
         return None
