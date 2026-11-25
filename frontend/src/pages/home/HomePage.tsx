@@ -245,7 +245,7 @@ export function HomePage(): JSX.Element {
           hint="Every open session you started — the IDE's “Started by me”."
           action={
             <div className="flex shrink-0 items-center gap-3">
-              <Link to="/ide" className="hidden text-[12px] text-muted-foreground hover:text-primary md:inline">
+              <Link to="/ide" className="text-[12px] text-muted-foreground hover:text-primary">
                 All sessions in the IDE →
               </Link>
               <NewChatMenu label="New session" className="h-6 px-1.5 text-[12px]" onError={setNewChatError} />
