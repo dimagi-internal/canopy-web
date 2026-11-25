@@ -76,7 +76,10 @@ def test_execute_chat_turn_registers_a_bridge_and_returns(monkeypatch, tmp_path)
     assert bridge.reader.read_new() == []
 
 
-def test_execute_chat_turn_with_no_transcript_finishes_without_registering(monkeypatch):
+def test_a_new_chat_session_that_never_starts_fails_the_turn(monkeypatch):
+    """No transcript for a session canopy just created: Claude Code never started (a
+    startup dialog). The turn FAILS, so a caller such as labs' worker-chat bridge hands
+    the thread to a person, instead of ending "done" with an empty reply."""
     monkeypatch.setattr(execute.cdp_control, "create_task", lambda *a, **k: {"task": "echo-1234"})
     monkeypatch.setattr(execute, "_wait_for_transcript", lambda *a, **k: None)
 
@@ -85,9 +88,11 @@ def test_execute_chat_turn_with_no_transcript_finishes_without_registering(monke
 
     res = execute.execute_chat_turn(cfg, client, "runner1", _turn())
 
-    assert res.startswith("chat:t1:")
+    assert res == "failed:t1"
     assert chat_bridge.IN_FLIGHT == {}, "nothing to pump -> nothing registered"
-    assert "transcript not found" in (client.finished or "")
+    assert client.finished_status == "failed"
+    assert client.finished_task == "echo-1234", "the session stays named for whoever answers it"
+    assert "has not started" in client.finished and "startup dialog" in client.finished
 
 
 def test_execute_turn_routes_chat_turns(monkeypatch):
@@ -338,7 +343,7 @@ def test_clear_is_never_reused_without_asking(monkeypatch, _fresh_collision_answ
 
 
 def test_clear_and_send_from_the_web_clears_without_a_popup(
-    monkeypatch, _fresh_collision_answers
+    monkeypatch, _fresh_collision_answers, tmp_path
 ):
     """A sender away from the box pressed "Clear & send": no dialog on a screen
     nobody is watching — the leftover line is cleared and the message goes in."""
@@ -357,6 +362,9 @@ def test_clear_and_send_from_the_web_clears_without_a_popup(
     monkeypatch.setattr(execute.dialog, "collision_choice", no_dialog)
     monkeypatch.setattr(execute.emdash, "task_state", lambda *a, **k: "open")
     monkeypatch.setattr(execute, "_undelivered", lambda *a, **k: False)
+    transcript = tmp_path / "s.jsonl"
+    transcript.write_text("")
+    monkeypatch.setattr(execute, "_wait_for_transcript", lambda *a, **k: transcript)
     cfg = types.SimpleNamespace(cdp_port=9222, emdash_db="/nonexistent")
     turn = _turn()
     turn["origin_ref"] = {**(turn.get("origin_ref") or {}), "clear_prompt": True}

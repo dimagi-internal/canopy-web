@@ -181,3 +181,13 @@ def _fresh_heartbeat_state():
     yield
     main._reset_heartbeat_state()
     main._control = None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_claude_config(monkeypatch, tmp_path):
+    """Never read or write the developer's real ~/.claude.json. A confined create
+    records Claude Code trust for a stored agent's checkout there (claude_trust), and
+    the native layer reads it to decide whether allow rules apply; on a runner box a
+    test writing it would trust a folder for every live session."""
+    from canopy_runner import claude_trust
+    monkeypatch.setattr(claude_trust, "config_path", lambda: tmp_path / "claude.json")
