@@ -38,7 +38,6 @@ import { WorkspaceMemberTreePage } from './pages/WorkspaceMemberTreePage'
 import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage'
 import { AccessRequestPage } from './pages/AccessRequestPage'
 import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
-import { ActAsApprovalPage } from './pages/ActAsApprovalPage'
 import { AllowAccessPage } from './pages/connections/AllowAccessPage'
 import { ConnectedPage } from './pages/connections/ConnectedPage'
 import { ShareConnectionPage } from './pages/connections/ShareConnectionPage'
@@ -367,12 +366,13 @@ export const routeTable: RouteObject[] = [
       // Canopy Runner opens after install). Root: a pairing has no workspace
       // until the person picks one here. Signed-in only (the server's default).
       { path: '/pair/:code', element: <PairRunnerPage /> },
-      // /act-as/:requestId — approve an agent acting as you on canopy (the push's link).
-      // Root: it is about you, not a workspace. Signed-in only; approving takes a passkey.
-      { path: '/act-as/:requestId', element: <ActAsApprovalPage /> },
+      // /approvals/:approvalId — a personal approval (an agent asking to act as you on canopy):
+      // root, because it is addressed to you alone and you may not be in the agent's workspace.
+      // Signed-in only; approving takes a passkey touch made for it.
+      { path: '/approvals/:approvalId', element: <ApprovalPage /> },
       // /confirm/page-permission/:grantId — confirm a page's act-as-you permission
       // in the browser, for a panel that cannot use a passkey (the Runner app).
-      // Root, for the same reason as /act-as: it is about you. Signed-in only.
+      // Root, for the same reason as /approvals/:approvalId: it is about you. Signed-in only.
       { path: '/confirm/page-permission/:grantId', element: <PagePermissionConfirmPage /> },
 
       // --- Tenant-scoped surfaces under /w/:workspace ---

@@ -33,9 +33,10 @@ export async function decideApproval(
 
 /**
  * Approve a passkey kind (`step_up`): a WebAuthn assertion begun for THIS request, then the approval.
- * A passkey touched recently for something else does not count (`decide` refuses it).
+ * A passkey touched recently for something else does not count (`decide` refuses it). `choice` is one of
+ * the card's `choices` (act-as-you: read or write), for a kind that has them.
  */
-export async function approveWithPasskey(id: number, comment: string): Promise<ApprovalCard> {
+export async function approveWithPasskey(id: number, comment: string, choice = ''): Promise<ApprovalCard> {
   const begun = await apiV2.POST('/api/approvals/{approval_id}/approve/begin', {
     params: { path: { approval_id: id } },
   })
@@ -47,7 +48,7 @@ export async function approveWithPasskey(id: number, comment: string): Promise<A
   if (!credential) throw new Error('No passkey was used')
   const res = await apiV2.POST('/api/approvals/{approval_id}/approve/finish', {
     params: { path: { approval_id: id } },
-    body: { credential: credentialToJSON(credential), comment },
+    body: { credential: credentialToJSON(credential), comment, choice },
   })
   ensureOk(res, 'Could not approve')
   return res.data as ApprovalCard

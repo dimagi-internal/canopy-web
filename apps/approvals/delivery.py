@@ -60,7 +60,10 @@ def deliver(request_id: int) -> dict[str, int]:
     if req is None or not req.is_pending:
         return {}
     sent = {c: 0 for c in ApprovalDelivery.CHANNELS}
-    for user in (u for u in recipients(req) if wants(u)):
+    # A personal request (an agent asking to act as you, now) is about the person's own authority and
+    # waits minutes, not days: it reaches them whatever their approval-card preference.
+    personal = kinds.is_personal(req.kind)
+    for user in (u for u in recipients(req) if personal or wants(u)):
         card = cards.build(req, viewer=user)
         have = set(ApprovalDelivery.objects.filter(request=req, user=user).values_list("channel", flat=True))
         for channel in FIRST_WAVE:

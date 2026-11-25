@@ -6,6 +6,7 @@ hard-coded handler as the approver. No model is involved in approving.
 """
 from __future__ import annotations
 
+from django.db.models import Q
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -30,11 +31,22 @@ LIST_MAX = 100
 
 
 def _visible(request: HttpRequest, pk: int) -> ApprovalRequest:
+    """A workspace's request, to its members; a personal kind's, to its one person only — whatever
+    their workspaces, and to nobody else in that workspace."""
     req = (ApprovalRequest.objects.select_related("workspace", "requested_by_agent", "requested_by_user",
                                                   "decided_by").filter(pk=pk).first())
-    if req is None or req.workspace_id not in visible_agent_workspaces(request):
+    if req is None:
+        raise HttpError(404, f"approval request {pk} not found")
+    if kinds.is_personal(req.kind):
+        if req.for_user_id is None or req.for_user_id != request.user.pk:
+            raise HttpError(404, f"approval request {pk} not found")
+    elif req.workspace_id not in visible_agent_workspaces(request):
         raise HttpError(404, f"approval request {pk} not found")
     return req
+
+
+def _personal_kinds() -> list[str]:
+    return [k.slug for k in kinds.all_kinds() if k.personal]
 
 
 def _raise(exc: services.ApprovalError):
@@ -50,13 +62,17 @@ def list_approval_kinds(request: HttpRequest) -> list[dict]:
 
 
 @router.get("/", response=list[ApprovalCardOut], summary="Requests waiting on you")
-# lists only requests in the caller's own workspaces, and only those they hold the authority to approve
-@gate("member")
+# requests in the caller's own workspaces they hold the authority to approve, and those addressed to them
+@gate("member", "self")
 def list_approvals(request: HttpRequest, status: str = "pending", scope: str = "") -> list[dict]:
-    """Requests in your workspaces that YOU could approve. `status=all` also lists decided ones you
+    """Requests in your workspaces that YOU could approve, and requests addressed to you alone (an
+    agent asking to act as you) wherever they were filed. `status=all` also lists decided ones you
     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`). A card with `step_up`
     is approved only on its page (`page_url`), with a passkey."""
-    qs = (ApprovalRequest.objects.filter(workspace_id__in=visible_agent_workspaces(request))
+    personal = _personal_kinds()
+    qs = (ApprovalRequest.objects.filter(
+              (Q(workspace_id__in=visible_agent_workspaces(request)) & ~Q(kind__in=personal))
+              | Q(kind__in=personal, for_user=request.user))
           .select_related("workspace", "requested_by_agent", "requested_by_user", "decided_by")
           .order_by("-created_at")[:400])
     out = []
@@ -82,6 +98,8 @@ def file_approval(request: HttpRequest, payload: ApprovalFileIn):
     agent = Agent.objects.filter(user=request.user).first()
     try:
         kind, params = kinds.parse(payload.kind, payload.params)
+        if kind.personal:
+            raise kinds.KindError(f"{kind.slug} is filed by its own route, never here")
         workspace = kind.describe(params).workspace
     except kinds.KindError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -103,7 +121,7 @@ def file_approval(request: HttpRequest, payload: ApprovalFileIn):
 
 
 @router.get("/{approval_id}", response=ApprovalCardOut, summary="One request, with everything needed to decide it")
-@gate("member")
+@gate("member", "self")  # a workspace's to its members; a personal kind's to its one person only
 def get_approval(request: HttpRequest, approval_id: int) -> dict:
     """The server-rendered preview of what approving will do, the requester's own words apart from it,
     who it was sent to and how, and — once decided — who decided it, through which channel, and what
@@ -113,7 +131,7 @@ def get_approval(request: HttpRequest, approval_id: int) -> dict:
 
 @router.post("/{approval_id}/decide", response=ApprovalCardOut, summary="Approve or decline a request")
 # the route takes any member; the kind's own authority check (members.manage, agent owner, …) decides
-@gate("member", setting=True, viewer_write="The route accepts any member of the workspace, but "
+@gate("member", "self", setting=True, viewer_write="The route accepts any member of the workspace, but "
       "services.decide refuses anyone who does not hold the authority the request's kind needs "
       "(e.g. members.manage for adding a member), so a viewer is refused there")
 def decide_approval(request: HttpRequest, approval_id: int, payload: ApprovalDecideIn) -> dict:
@@ -156,6 +174,7 @@ def _passkey_kind_i_may_approve(request: HttpRequest, approval_id: int) -> Appro
     if not kinds.needs_step_up(req.kind):
         raise ProblemError(422, "No passkey needed", type_=TYPE_VALIDATION,
                            detail="this request is approved with POST …/decide")
+    req = services.settle(req.pk) or req
     if not req.is_pending:
         raise ProblemError(409, "Conflict", type_=TYPE_CONFLICT, detail=services.already_decided(req))
     if not authority.may_approve(req, request.user):
@@ -168,7 +187,7 @@ def _passkey_kind_i_may_approve(request: HttpRequest, approval_id: int) -> Appro
 @router.post("/{approval_id}/approve/begin", response=PasskeyOptionsOut,
              summary="Start approving a request with my passkey")
 # a ceremony's challenge for one request; only someone who may approve it, in a browser, gets one
-@gate("member", kind="ephemeral-credential", viewer_write="A challenge changes nothing; only someone "
+@gate("member", "self", kind="ephemeral-credential", viewer_write="A challenge changes nothing; only someone "
       "holding the kind's authority gets one, and approving is finish's")
 def begin_approve_approval(request: HttpRequest, approval_id: int) -> PasskeyOptionsOut:
     """Options for navigator.credentials.get(), to approve THIS request (one whose card says
@@ -185,11 +204,12 @@ def begin_approve_approval(request: HttpRequest, approval_id: int) -> PasskeyOpt
 
 @router.post("/{approval_id}/approve/finish", response=ApprovalCardOut,
              summary="Approve a request with my passkey")
-@gate("member", setting=True, viewer_write="Only someone holding the kind's authority gets past "
+@gate("member", "self", setting=True, viewer_write="Only someone holding the kind's authority gets past "
       "_passkey_kind_i_may_approve, and services.decide asks again")
 def finish_approve_approval(request: HttpRequest, approval_id: int, payload: ApprovalPasskeyIn) -> dict:
     """Verify the passkey assertion begun for this request, then approve it: the kind's handler runs
-    as you, once. A browser session only; no token can. 400 when the passkey does not verify."""
+    as you, once. A card with `choices` needs one of their values as `choice` (422 otherwise). A browser
+    session only; no token can. 400 when the passkey does not verify."""
     req = _passkey_kind_i_may_approve(request, approval_id)
     try:
         passkeys.finish_assertion(request, payload.credential, slot=_slot(req, request.user))
@@ -197,7 +217,7 @@ def finish_approve_approval(request: HttpRequest, approval_id: int, payload: App
         raise ProblemError(400, "Passkey verification failed", type_=TYPE_VALIDATION, detail=str(exc)) from exc
     try:
         req = services.decide(approval_id, request.user, "approve", comment=payload.comment, via="web",
-                              stepped_up=True)
+                              stepped_up=True, choice=payload.choice)
     except services.ApprovalError as exc:
         _raise(exc)
     return cards.build(_visible(request, req.pk), viewer=request.user)

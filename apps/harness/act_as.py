@@ -10,9 +10,11 @@ by `tests/test_act_as_you_on_canopy.py`:
   started by a verified, active human who is not an agent (or by a chain on their
   behalf). Nothing the agent sends names the person, so it can never ask to act as anyone
   else. A contact is never anyone's asker here, and has no passkey anyway.
-* **Approved only with a fresh passkey touch.** `approve` runs only after a WebAuthn
-  assertion made for THIS request (`api_act_as`: begin/finish, slot `act-as:<id>`), in the
-  person's own browser; a session cookie, a step-up window or any token is not enough.
+* **Approved only with a fresh passkey touch.** Asking files a personal approval of kind
+  `agent.act_as` (`apps/approvals/kinds/agent_act_as.py`), addressed to the person alone and
+  delivered like every approval; `approve` runs only from its handler, after a WebAuthn
+  assertion made for THAT request on its page (`apps/approvals/api.py::finish_approve_approval`),
+  in the person's own browser; a session cookie, a step-up window or any token is not enough.
   The person picks the scope: `read` (GET routes and read-only tools) or `write`.
 * **Never write for an unattended, unreviewed turn.** A turn in `auto` mode may ask only to
   read (`unreviewed_write_refusal`): an unreviewed turn holding the person's write authority
@@ -101,6 +103,7 @@ EXCLUDED_PREFIXES: dict[str, str] = {
     "/api/vault/": "the person's vault key",
     "/api/vaults/": "workspace vaults: their values, members and keys",
     "/api/me/act-as-requests/": "act-as-you permissions themselves",
+    "/api/approvals/": "approval requests: a yes or no is the person's own, never an agent's as them",
     "/api/me/host-grants/": "act-as-you permissions on host sites (host grants)",
     "/api/embed/": "a host site's panel, where host grants are confirmed",
     "/api/me/agent-login-requests/": "accepting an agent's use of the person's account",
@@ -402,8 +405,7 @@ def ask(user, credential: dict | None, *, reason: str, scope: str) -> ActAsGrant
             login_session_id=session_id,
             login_runner_id=ob.login.runner_id if ob.login is not None and ob.login.session_id else None,
             reason=reason, requested_scope=scope, request_expires_at=now + REQUEST_TTL)
-    pushed = _notify(grant)
-    _event(grant, "act_as.requested", requested_scope=scope, pushed=pushed)
+    _event(grant, "act_as.requested", requested_scope=scope)
     return grant
 
 
@@ -441,6 +443,15 @@ def decline(grant: ActAsGrant, person) -> ActAsGrant:
     grant.refresh_from_db()
     if changed:
         _event(grant, "act_as.declined")
+    return grant
+
+
+def lapse(grant: ActAsGrant) -> ActAsGrant:
+    """A waiting request nobody can approve any more (its approval expired): expired now."""
+    changed = ActAsGrant.objects.filter(pk=grant.pk, status=ActAsGrant.PENDING).update(status=ActAsGrant.EXPIRED)
+    grant.refresh_from_db()
+    if changed:
+        _event(grant, "act_as.expired")
     return grant
 
 
@@ -521,36 +532,7 @@ def touch(grant: ActAsGrant) -> None:
         ActAsGrant.objects.filter(pk=grant.pk).update(last_used_at=now)
 
 
-# --- the person hears about it ------------------------------------------------------------------
-
-
-def approve_path(grant: ActAsGrant) -> str:
-    return f"/act-as/{grant.pk}"
-
-
-def _notify(grant: ActAsGrant) -> int:
-    """A push to the person's devices; the request is on their supervisor feed and in
-    Settings either way. Returns how many devices the push service accepted it for (0: no
-    subscribed device, push not configured, or it failed), recorded on the grant and in the
-    `act_as.requested` event so "did the push fire?" has an answer. Never raises."""
-    sent = 0
-    try:
-        from apps.push.services import send_to_user  # noqa: PLC0415 — as sign_in_requests
-
-        name = grant.agent.name or grant.agent.slug
-        asked = {"read": "read as you", "write": "act as you (read + write)",
-                 "either": "act as you"}[grant.requested_scope]
-        sent = send_to_user(grant.person, title=f"{name} asks to {asked} on canopy",
-                            body=f"{grant.reason[:160]} — tap to decide with your passkey.",
-                            url=approve_path(grant), ttl=int(REQUEST_TTL.total_seconds()),
-                            urgency="high") or 0
-    except Exception:  # noqa: BLE001 — the row is the record; a push is best-effort
-        logger.exception("act-as: could not push request %s", grant.pk)
-        sent = -1
-    ActAsGrant.objects.filter(pk=grant.pk).update(push_sent=sent)
-    grant.push_sent = sent
-    logger.info("act-as: request %s pushed to %d device(s)", grant.pk, sent)
-    return sent
+# --- the record ---------------------------------------------------------------------------------
 
 
 def _event(grant: ActAsGrant, kind: str, **extra) -> None:

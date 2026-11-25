@@ -24,7 +24,7 @@ export function ActAsRequests(): JSX.Element | null {
   if (pending.length === 0) return null
   return (
     <div className="flex flex-col gap-2" data-testid="act-as-requests">
-      {pending.map((r) => (
+      {pending.filter((r) => r.approval_url).map((r) => (
         <div
           key={r.id}
           role="alert"
@@ -35,7 +35,7 @@ export function ActAsRequests(): JSX.Element | null {
           <p className="mt-0.5 text-[13px] leading-snug text-foreground-secondary">{r.reason}</p>
           <div className="mt-2">
             <Link
-              to={`/act-as/${r.id}`}
+              to={r.approval_url}
               data-testid="act-as-open"
               className="rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
             >

@@ -237,10 +237,10 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'Where signing in from the browser extension\'s side panel lands, before you go back to the panel.',
   },
   {
-    path: '/act-as/:requestId',
+    path: '/approvals/:approvalId',
     group: 'Letting an agent act as you',
-    flat: 'personal/global: a request to act as YOU, from an agent in any of your workspaces',
-    title: 'Let an agent act as you on canopy',
+    flat: 'personal/global: a request addressed to YOU alone (an agent asking to act as you), from any workspace, yours or not',
+    title: 'Approval request for you',
     use: 'When an agent in a turn you started asks to use canopy as you.',
   },
   {

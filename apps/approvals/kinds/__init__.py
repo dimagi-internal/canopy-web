@@ -63,6 +63,10 @@ class Kind:
     #: a recent step-up for something else is not one. Only the web page can supply it: `decide`, a Slack
     #: click and an alert button are refused.
     step_up: bool = False
+    #: Addressed to ONE person, about their own authority (an agent acting as them): only that person
+    #: sees or decides it, whatever their workspaces, on its personal page (`/approvals/<id>`); it is
+    #: filed only by its own route, never `POST /api/approvals/`. `approvers` names that person.
+    personal: bool = False
 
     def describe(self, p) -> Described:  # pragma: no cover — abstract
         raise NotImplementedError
@@ -72,6 +76,21 @@ class Kind:
 
     def execute(self, user, p, request) -> dict:  # pragma: no cover — abstract
         raise NotImplementedError
+
+    def choices(self, p) -> list[tuple[str, str]]:
+        """What the approver picks between when approving ((value, button label), the first offered
+        first), or [] when approving is one yes. A kind with choices gets the picked value as
+        `execute(..., choice=)`; `services.decide` refuses any other value."""
+        return []
+
+    def lapsed(self, p) -> str | None:
+        """Why a pending request can no longer be approved (what it asks for is gone or over), or None.
+        `services.expire_due` closes a lapsed request as expired."""
+        return None
+
+    def closed(self, p, request) -> None:
+        """Called once a request closes without its handler running (declined, withdrawn, expired), in
+        the same transaction, for a kind that keeps its own record of the ask."""
 
     def recipients(self, p, d: Described) -> list:
         """Who is TOLD: the people accountable for this, not everyone who could approve it.
@@ -119,6 +138,14 @@ def get(key: str) -> Kind:
     return kind
 
 
+def is_personal(key: str) -> bool:
+    """Whether a request of kind `key` is addressed to one person (`Kind.personal`); an unknown kind is not."""
+    try:
+        return get(key).personal
+    except KindError:
+        return False
+
+
 def needs_step_up(key: str) -> bool:
     """Whether approving a request of kind `key` needs a passkey (`Kind.step_up`); an unknown kind does not."""
     try:
@@ -136,6 +163,11 @@ def parse(key: str, params: dict):
         problems = "; ".join(f"{'.'.join(str(x) for x in e['loc']) or 'params'}: {e['msg']}"
                              for e in exc.errors())
         raise KindError(f"bad params for {key}: {problems}") from None
+
+
+def all_kinds() -> list[Kind]:
+    _load()
+    return list(REGISTRY.values())
 
 
 def catalog() -> list[dict]:
@@ -157,6 +189,7 @@ def _load() -> None:
     global _loaded
     if _loaded:
         return
-    from . import agent_admin, agent_aws_role, agent_turns, vault_attach, workspace_members  # noqa: F401, PLC0415 — registers the kinds
+    from . import (  # noqa: F401, PLC0415 — registers the kinds
+        agent_act_as, agent_admin, agent_aws_role, agent_turns, vault_attach, workspace_members)
 
     _loaded = True

@@ -29,8 +29,8 @@ describe('passkeyHere', () => {
 
   it('puts an app route under the deployment prefix and keeps a full URL', () => {
     const origin = window.location.origin
-    expect(browserUrl('/act-as/abc', '/canopy/')).toBe(`${origin}/canopy/act-as/abc`)
-    expect(browserUrl('/act-as/abc', '/')).toBe(`${origin}/act-as/abc`)
+    expect(browserUrl('/approvals/7', '/canopy/')).toBe(`${origin}/canopy/approvals/7`)
+    expect(browserUrl('/approvals/7', '/')).toBe(`${origin}/approvals/7`)
     expect(browserUrl('https://canopy.dimagi.com/x?y=1', '/canopy/')).toBe('https://canopy.dimagi.com/x?y=1')
   })
 })
