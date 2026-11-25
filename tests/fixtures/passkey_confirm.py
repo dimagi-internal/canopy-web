@@ -39,3 +39,18 @@ def confirm(raw_token: str, auth: SoftAuthenticator, window_seconds: int | None 
     started = begin(raw_token)
     assert started.status_code == 200, started.content
     return finish(raw_token, auth.get(started.json()["options"]), window_seconds)
+
+
+def approve_approval(user, approval_id: int, *, comment: str = "", auth: SoftAuthenticator | None = None):
+    """Approve a passkey kind's approval request as `user` in their browser, as its page does: begin,
+    sign the challenge made for that request, finish. Gives `user` a passkey unless `auth` is theirs.
+    Returns the first refusal (begin's) or finish's response."""
+    browser = Client()
+    browser.force_login(user)
+    auth = auth or give_passkey(user)
+    started = browser.post(f"/api/approvals/{approval_id}/approve/begin", content_type="application/json")
+    if started.status_code != 200:
+        return started
+    return browser.post(f"/api/approvals/{approval_id}/approve/finish",
+                        data=json.dumps({"credential": auth.get(started.json()["options"]), "comment": comment}),
+                        content_type="application/json")

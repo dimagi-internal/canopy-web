@@ -17563,10 +17563,53 @@ export interface paths {
          *     decided once: a second decision is a 409 naming who got there first. 403 when you do not hold
          *     the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason.
          *     A request whose card says `step_up` is approved only from its page (`page_url`) in a browser, with
-         *     the approver's passkey (a browser without a fresh one gets 403 `step_up_required`; a token is always
-         *     refused): send the person that link. Declining needs no passkey.
+         *     a passkey touch made for that request (`approve/begin` + `approve/finish`); here it is 403
+         *     `passkey_for_this_request`. Declining needs no passkey.
          */
         readonly post: operations["decide_approval"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/approvals/{approval_id}/approve/begin": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start approving a request with my passkey
+         * @description Options for navigator.credentials.get(), to approve THIS request (one whose card says
+         *     `step_up`) with one of your passkeys. A browser session only; no token can. 409 when it is no
+         *     longer waiting, or you have no passkey (`no_passkey`, with where to register one).
+         */
+        readonly post: operations["begin_approve_approval"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/approvals/{approval_id}/approve/finish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a request with my passkey
+         * @description Verify the passkey assertion begun for this request, then approve it: the kind's handler runs
+         *     as you, once. A browser session only; no token can. 400 when the passkey does not verify.
+         */
+        readonly post: operations["finish_approve_approval"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -50081,6 +50124,18 @@ export interface components {
              */
             readonly comment: string;
         };
+        /** ApprovalPasskeyIn */
+        readonly ApprovalPasskeyIn: {
+            /** Credential */
+            readonly credential: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Comment
+             * @default
+             */
+            readonly comment: string;
+        };
         /** SlackShareOut */
         readonly SlackShareOut: {
             /** Status */
@@ -79760,6 +79815,54 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["ApprovalDecideIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ApprovalCardOut"];
+                };
+            };
+        };
+    };
+    readonly begin_approve_approval: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly approval_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasskeyOptionsOut"];
+                };
+            };
+        };
+    };
+    readonly finish_approve_approval: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly approval_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ApprovalPasskeyIn"];
             };
         };
         readonly responses: {

@@ -1,7 +1,8 @@
 import { useEffect, useState, type JSX } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
-import { decideApproval, getApproval, type ApprovalCard } from '@/api/approvals'
+import { approveWithPasskey, decideApproval, getApproval, type ApprovalCard } from '@/api/approvals'
+import { openInBrowser, PASSKEY_IN_BROWSER, passkeysWorkHere, useWhileAway } from '@/auth/passkeyHere'
 
 const OUTCOME: Record<ApprovalCard['status'], string> = {
   pending: 'Waiting',
@@ -45,7 +46,9 @@ function PlanStep({ text }: { text: string }): JSX.Element {
  * and sits first; the requester's own words are kept apart and labelled as theirs. `?do=approve|decline`
  * (the email's buttons) pre-selects the choice and asks for one more tap — a link never decides by itself.
  * A kind whose approval needs a passkey (`step_up`) is approved here and nowhere else: every other channel
- * links to this page instead of offering Approve, and the decide call asks for the passkey.
+ * links to this page instead of offering Approve, and approving asks for a passkey touch made for this
+ * request (a recent one for something else does not count). In the Canopy Runner app, where no passkey
+ * can be used, approving opens this page in the person's browser and this one follows it.
  */
 export function ApprovalPage(): JSX.Element | null {
   const { approvalId } = useParams()
@@ -55,6 +58,11 @@ export function ApprovalPage(): JSX.Element | null {
   const [error, setError] = useState<string | null>(null)
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
+  const [inBrowser, setInBrowser] = useState(false)
+  useWhileAway(
+    () => approvalId && getApproval(approvalId).then(setCard).catch(() => undefined),
+    inBrowser && card?.status === 'pending',
+  )
 
   useEffect(() => {
     if (!approvalId) return
@@ -75,7 +83,11 @@ export function ApprovalPage(): JSX.Element | null {
     setBusy(true)
     setError(null)
     try {
-      setCard(await decideApproval(card.id, decision, comment.trim()))
+      setCard(
+        decision === 'approve' && card.step_up
+          ? await approveWithPasskey(card.id, comment.trim())
+          : await decideApproval(card.id, decision, comment.trim()),
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong')
       // Someone else may have decided first: show what happened.
@@ -172,15 +184,34 @@ export function ApprovalPage(): JSX.Element | null {
             className="w-full rounded-md border border-input bg-input px-2 py-1.5 text-[13px] text-foreground"
           />
           {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+          {card.step_up && card.can_decide && !passkeysWorkHere() && (
+            <p className="mt-2 text-[12px] text-muted-foreground" data-testid="approval-in-browser">
+              {inBrowser ? 'Waiting for you to approve in your browser…' : PASSKEY_IN_BROWSER}
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              variant={chosen === 'decline' ? 'outline' : 'default'}
-              disabled={busy || !card.can_decide}
-              data-testid="approval-approve"
-              onClick={() => void decide('approve')}
-            >
-              {card.step_up ? 'Approve with your passkey' : 'Approve'}
-            </Button>
+            {card.step_up && !passkeysWorkHere() ? (
+              <Button
+                variant={inBrowser || chosen === 'decline' ? 'outline' : 'default'}
+                disabled={!card.can_decide}
+                data-testid="approval-approve"
+                onClick={() => {
+                  openInBrowser(card.url)
+                  setInBrowser(true)
+                }}
+              >
+                {inBrowser ? 'Open it again' : 'Approve in your browser'}
+              </Button>
+            ) : (
+              <Button
+                variant={chosen === 'decline' ? 'outline' : 'default'}
+                disabled={busy || !card.can_decide}
+                data-testid="approval-approve"
+                onClick={() => void decide('approve')}
+              >
+                {card.step_up ? 'Approve with your passkey' : 'Approve'}
+              </Button>
+            )}
             <Button
               variant={chosen === 'decline' ? 'default' : 'outline'}
               disabled={busy || !card.can_decide}

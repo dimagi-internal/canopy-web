@@ -27,7 +27,15 @@ its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalP
 - **A link never decides by itself.** The email's buttons open the request with the choice made, to
   confirm (mail scanners open every link: `channel_email.py`). A Slack click decides, but only from
   the DM canopy sent THAT person for THAT request, matched on the message ts
-  (`slack/approvals.py::handle_click`). A decision carries no passkey step-up, except for a kind with `Kind.step_up` (`vault.attach_agent`, which stands in for a route that needs one; `agent.definition.publish`, so a turn acting as an admin never approves an agent's change it was asked for; `agent.aws_role`, because it grants AWS account rights): the web decide route asks for it (`apps/approvals/api.py::decide_approval`), and `services.decide` refuses an approval from a Slack click or alert button for such a kind.
+  (`slack/approvals.py::handle_click`). A decision carries no passkey step-up, except for a kind with `Kind.step_up` (`vault.attach_agent`, which stands in for a route that needs one; `agent.definition.publish`, so a turn acting as an admin never approves an agent's change it was asked for; `agent.aws_role`, because it grants AWS account rights): `services.decide` approves such a kind only when its caller verified the passkey, which only the web page's ceremony does.
+- **A passkey kind is approved with a touch made for THAT request, never a recent one.** The page begins
+  a WebAuthn assertion for the request and approver (`apps/approvals/api.py::begin_approve_approval`,
+  slot `approval:<id>:<user>`) and approves only on its verification (`finish_approve_approval`), in a
+  browser, by a person who may approve it. The five-minute step-up window that other passkey routes
+  accept (`stepup.require_recent_step_up`) does not approve one: `decide_approval` refuses it with 403
+  `passkey_for_this_request`, so a passkey touched for something else a minute ago never carries an
+  AWS role or a vault attachment through. This is the same ceremony an act-as-you approval uses
+  (`apps/harness/api_act_as.py`).
 - **Superseded, not left pending.** When someone with the authority to take a request's action
   takes it directly, the request is closed by `services.supersede`: `cancelled`, result
   `{"superseded": true}`, a comment naming who acted, and no authority asked of them (the route
