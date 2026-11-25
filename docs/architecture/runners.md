@@ -51,8 +51,11 @@ active licence. The computer is a `PrivateRunner` linked to the `Runner` (`Priva
   a private runner is always directed (`Runner.directed_only`). A test box (`up.sh --test`) pairs with it
   on. For a sensitive-data box, allowlist its agents and leave directed-only off: directed-only would
   leave their routed turns with no taker.
-- A runner's name is changeable; the box keeps the name it paired as (`Runner.paired_as`), and pair-by-role
-  matches on either, so a replaced instance re-attaches to a renamed runner.
+- A runner has one name, changeable in its Settings. For a cloud box that string is also its host: renaming
+  moves `Runner.host` with it and carries the runner's session records along, and the box's own heartbeat no
+  longer puts the old host back (a laptop's host stays the machine, `user@machine`). The box keeps the name it
+  paired as (`Runner.paired_as`, internal, not shown), and pair-by-role matches on either, so a replaced
+  instance re-attaches to a renamed runner.
 
 ## Which workspaces a runner serves (the tenant gate)
 

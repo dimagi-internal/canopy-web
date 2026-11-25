@@ -14932,9 +14932,12 @@ export interface paths {
         readonly get?: never;
         /**
          * Rename this runner
-         * @description The name people see for this runner everywhere in canopy. Owner or a runner
-         *     administrator. Routing, pins and the vault follow the runner, not its name, so
-         *     nothing else changes. The box keeps the name it paired as (`paired_as`).
+         * @description The one name this runner goes by, everywhere in canopy. Owner or a runner
+         *     administrator. Routing, pins and the vault follow the runner's id, so they do not
+         *     change. A cloud box's host IS its name (one string, not two): renaming it moves
+         *     the host with it, and the runner's session records follow so they still resume.
+         *     `paired_as` stays as the box's internal pairing key (what it asks as when it
+         *     re-attaches); it is no longer shown.
          */
         readonly put: operations["set_runner_name"];
         readonly post?: never;
