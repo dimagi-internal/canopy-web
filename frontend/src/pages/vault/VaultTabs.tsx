@@ -338,7 +338,14 @@ export function machineCount(v: WorkspaceVaultOut): number {
  *  Change, Upload file (a service-account JSON, a PEM), Delete — each value sealed in this browser. */
 export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
   const manages = managesVault(v)
-  const entries: VaultEntry[] = v.secrets.map((name) => ({ name, set: true }))
+  // `secret_rows` carries when each changed; to the vault's managers also who, and its reads
+  // (the Log's audience). Older servers send names only.
+  const entries: VaultEntry[] = v.secret_rows?.length
+    ? v.secret_rows.map((s) => ({
+      name: s.name, set: true, updatedAt: s.updated_at ?? null, updatedBy: s.updated_by || null,
+      lastReadAt: s.last_read_at ?? null, readCount: s.read_count ?? null,
+    }))
+    : v.secrets.map((name) => ({ name, set: true }))
   return (
     <Sub id="vault-secrets">
       <VaultEditor
@@ -349,8 +356,8 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
           reload()
         }}
         onDelete={manages ? async (name) => onChange(await deleteWorkspaceVaultSecret(v.vault_id, name)) : undefined}
-        // The page knows names only: no timestamps, no read history to show.
-        usage={() => ''}
+        // Reads are shown only to those who manage the vault; to anyone else "never" would be a guess.
+        usage={manages ? undefined : () => ''}
         badge={<EncryptedBadge />}
       />
       {manages && v.kv === 0 && (

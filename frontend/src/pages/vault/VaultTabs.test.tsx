@@ -239,13 +239,35 @@ describe('vault page', () => {
     render(<VaultSecretsTab {...ctx()} />)
     fireEvent.click(screen.getByTestId('vault-add'))
     fireEvent.change(screen.getByLabelText('New secret name'), { target: { value: 'CWS_SERVICE_ACCOUNT_JSON' } })
-    const json = '{\n  "type": "service_account"\n}\n'
+    // A JSON key lands on one line (a value with a line break never reaches an agent's env);
+    // the `\n` escaped inside the private key string is kept.
+    const json = '{\n  "type": "service_account",\n  "private_key": "-----BEGIN-----\\nabc\\n-----END-----\\n"\n}\n'
+    const flat = '{"type": "service_account","private_key": "-----BEGIN-----\\nabc\\n-----END-----\\n"}'
     fireEvent.change(screen.getByTestId('upload-new'), { target: { files: [new File([json], 'key.json')] } })
-    await waitFor(() => expect((screen.getByLabelText('New secret value') as HTMLTextAreaElement).value)
-      .toBe('{\n  "type": "service_account"\n}'))
+    await waitFor(() => expect((screen.getByLabelText('New secret value') as HTMLTextAreaElement).value).toBe(flat))
+    expect(JSON.parse(flat)).toEqual(JSON.parse(json))
     fireEvent.submit(screen.getByLabelText('New secret name').closest('form')!)
     await waitFor(() => expect(ops.sealWorkspaceVaultValue)
-      .toHaveBeenCalledWith('v1', 'CWS_SERVICE_ACCOUNT_JSON', '{\n  "type": "service_account"\n}', ME))
+      .toHaveBeenCalledWith('v1', 'CWS_SERVICE_ACCOUNT_JSON', flat, ME))
+  })
+
+  it('says when each secret changed and was last read', () => {
+    const recent = new Date(Date.now() - 3 * 60_000).toISOString()
+    render(<VaultSecretsTab {...ctx({ secret_rows: [{
+      name: 'gog-oauth-client', updated_at: recent, updated_by: 'jj@dimagi.com', last_read_at: null, read_count: 0,
+    }] })} />)
+    const row = screen.getByTestId('vault-editor').textContent ?? ''
+    expect(row).toContain('jj')
+    expect(row).toContain('never')
+    expect(row).toMatch(/\d+\s*m/)
+  })
+
+  it('puts a pasted JSON key on one line, and leaves a PEM as it is', async () => {
+    const { oneLineIfJson } = await import('@/components/vault/VaultEditor')
+    expect(oneLineIfJson('{\n  "a": 1,\n  "b": [1,\n 2]\n}')).toBe('{"a": 1,"b": [1,2]}')
+    const pem = '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----'
+    expect(oneLineIfJson(pem)).toBe(pem)
+    expect(oneLineIfJson('plain')).toBe('plain')
   })
 
   it('deletes a secret through the shared table', async () => {

@@ -111,6 +111,9 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
     return WorkspaceVaultOut(
         vault_id=str(v.pk), workspace=v.workspace_id, name=v.name, kv=v.kv,
         secrets=sorted(VaultSecret.objects.filter(vault=v).values_list("name", flat=True)),
+        # Who read what is the Log's, so only its managers see reads and who changed a secret.
+        secret_rows=vault_log.secret_rows(
+            v, activity=user.is_authenticated and user.pk in ms and vault_members.is_admin(ms[user.pk].role)),
         attachments=[{"id": a.pk, "agent": a.agent.slug if a.agent_id else None, "workspace": a.workspace_id,
                       "runner": str(a.runner_id) if a.runner_id else None,
                       "runner_name": a.runner.name if a.runner_id else None,

@@ -45,6 +45,28 @@ const MAX_UPLOAD_BYTES = 64 * 1024
 // Env-var style, plus the hyphen `gog-token` carries.
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/
 
+/**
+ * A JSON key file (a Google service-account key) on one line: a value holding a line break
+ * is not an environment variable, and the runner leaves it out of an agent's env. A raw line
+ * break in JSON can only sit between tokens (inside a string it is written `\n`), so dropping
+ * each with its indentation leaves the same JSON. Anything that is not JSON (a PEM) is kept as is.
+ */
+export function oneLineIfJson(text: string): string {
+  if (!/\r?\n/.test(text)) return text
+  try {
+    JSON.parse(text)
+  } catch {
+    return text
+  }
+  const flat = text.replace(/\r?\n[ \t]*/g, '')
+  try {
+    JSON.parse(flat)
+    return flat
+  } catch {
+    return text
+  }
+}
+
 const needsYou = (e: VaultEntry) => e.flag?.tone === 'warning' || e.flag?.tone === 'destructive'
 
 export function VaultEditor({
@@ -125,7 +147,8 @@ export function VaultEditor({
 
   const save = (name: string) => (ev?: FormEvent) => {
     ev?.preventDefault()
-    const value = draft.trim()
+    // A pasted JSON key gets the same one-line treatment as an uploaded one.
+    const value = oneLineIfJson(draft.trim())
     if (!value || busy) return
     void run('Could not save', async () => {
       await onSave(name, value)
@@ -158,7 +181,7 @@ export function VaultEditor({
       return
     }
     setError(null)
-    setDraft((await file.text()).replace(/\r?\n$/, ''))
+    setDraft(oneLineIfJson((await file.text()).replace(/\r?\n$/, '')))
   }
 
   const uploadButton = (name: string, testId = `upload-${name}`) => (

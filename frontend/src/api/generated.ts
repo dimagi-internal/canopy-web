@@ -44724,6 +44724,28 @@ export interface components {
              */
             readonly key_place: string;
         };
+        /**
+         * VaultSecretRowOut
+         * @description One secret of a workspace vault as the Secrets table shows it. Never a value.
+         */
+        readonly VaultSecretRowOut: {
+            /** Name */
+            readonly name: string;
+            /** Updated At */
+            readonly updated_at?: string | null;
+            /**
+             * Updated By
+             * @default
+             */
+            readonly updated_by: string;
+            /** Last Read At */
+            readonly last_read_at?: string | null;
+            /**
+             * Read Count
+             * @default 0
+             */
+            readonly read_count: number;
+        };
         /** WorkspaceVaultOut */
         readonly WorkspaceVaultOut: {
             /** Vault Id */
@@ -44736,6 +44758,11 @@ export interface components {
             readonly kv: number;
             /** Secrets */
             readonly secrets: readonly string[];
+            /**
+             * Secret Rows
+             * @default []
+             */
+            readonly secret_rows: readonly components["schemas"]["VaultSecretRowOut"][];
             /** Attachments */
             readonly attachments: readonly components["schemas"]["VaultAttachmentOut"][];
             /** Members */
