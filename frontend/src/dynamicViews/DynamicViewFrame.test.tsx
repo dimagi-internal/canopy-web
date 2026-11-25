@@ -6,6 +6,7 @@ import { act, cleanup, render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { DynamicViewFrame, type BrowserHost } from './DynamicViewFrame'
 import { BrowserGate } from '@/ext/extensionBridge'
+import { ModeStore } from '@/ext/modeStore'
 import { CHANNEL, type AppContext } from './protocol'
 
 const SCOPE = { workspace: { slug: 'w', name: 'W' }, project: null, view: { id: 0, slug: 'kanban', title: 'Kanban', version: 0 }, viewer: { email: 'a@example.org', name: 'A' } }
@@ -118,6 +119,7 @@ describe('canopy.browser in the extension panel', () => {
       request: (c, a, clicked) => gate.request(c, a, clicked),
       open: (u) => gate.open(u),
       subscribe: () => () => undefined,
+      mode: new ModeStore('test', null),
     }
     return { sent, link, host }
   }
@@ -139,6 +141,31 @@ describe('canopy.browser in the extension panel', () => {
     expect(answer(3)).toMatchObject({ ok: true })
     expect(sent).toEqual(['read_open_thread', 'fill_compose'])
     expect(link.open).not.toHaveBeenCalled()
+  })
+
+  it('canopy.google runs in the person\'s mode, through the same gate, and says which', async () => {
+    const { sent, host } = panel()
+    const { frame, send, answer } = setup(host)
+    click(frame, false)
+    // Server mode (the default): a local-only operation is refused, and the tab is not touched.
+    await send({ type: 'google', id: 1, op: 'gmail.fill_compose', args: { bodyText: 'hi' } })
+    await settle()
+    expect(answer(1)).toMatchObject({ ok: false, code: 'not_in_mode' })
+    // Switching needs a click; then the same call goes to the tab, and still needs a click to act.
+    await send({ type: 'mode-set', id: 2, mode: 'local' })
+    expect(answer(2)).toMatchObject({ ok: false, code: 'needs_click' })
+    click(frame)
+    await send({ type: 'mode-set', id: 3, mode: 'local' })
+    expect(answer(3)).toMatchObject({ ok: true, data: { current: 'local', available: ['local', 'server'] } })
+    click(frame, false)
+    await send({ type: 'google', id: 4, op: 'gmail.fill_compose', args: { bodyText: 'hi' } })
+    await settle()
+    expect(answer(4)).toMatchObject({ ok: false, code: 'needs_click' })
+    click(frame)
+    await send({ type: 'google', id: 5, op: 'gmail.fill_compose', args: { bodyText: 'hi' } })
+    await settle()
+    expect(answer(5)).toMatchObject({ ok: true })
+    expect(sent).toEqual(['fill_compose'])
   })
 
   it('open() without a click is needs_click too', async () => {

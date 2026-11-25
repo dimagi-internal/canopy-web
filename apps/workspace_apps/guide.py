@@ -107,12 +107,29 @@ otherwise they reject with e.code "needs_click". A refusal rejects with e.code (
 unknown_capability, adapter_error, timeout, bad_request, needs_click). The template declares it; a
 workspace change cannot, and a template update that adds an act needs a workspace admin.
 
+LOCAL AND SERVER MODES: prefer canopy.google to calling the adapter or the Google API by hand. It
+runs a named operation in the page's MODE, which the person chooses with the panel's Local/Server
+switch (or canopy.mode.set(mode) from a click): "local" is the tab beside the panel, through the
+adapter; "server" is their Google through canopy-web. canopy.mode.current, canopy.mode.available
+(['server'] outside the panel), canopy.mode.on(handler). Operations (canopy.google.ops lists each
+one's modes): gmail.thread({threadId?}) [local, server] -> {mode, threadId, subject, gmailUrl,
+messages: [{emailId, from, to, cc, date, incoming, bodyText, bodyComplete}]}; gmail.draft({kind:
+"new"|"reply"|"reply_all", threadId?, to?, cc?, bcc?, subject?, bodyText}) [local, server], from a
+click -> {mode, where: "compose" (open on screen, unsaved) | "drafts" (saved), draftId, threadId};
+gmail.openEmail(), gmail.fillCompose({bodyText, mode?, subject?}), gmail.composeRecipients() [local
+only]. Call them as canopy.google.gmail.thread(...) or canopy.google.run("gmail.thread", args).
+Nothing ever falls back to the other mode: an operation the mode lacks rejects e.code "not_in_mode",
+a local one whose thread or compose isn't on screen "not_on_screen" (canopy.google.can(op) tells you
+before you offer it). Each mode still needs its own declaration: the adapter capability in
+`browser` for local, the Google calls in `connections` for server (gmail.draft on the server:
+GET gmail/threads/* and POST gmail/drafts).
+
 BUNDLE PAGES: a page with "kind": "bundle" is the template's own static files (an existing web UI:
 its "entry" HTML plus JS, CSS, images, fonts, uploaded as `files` with the version, never as a
 change). You cannot fork it, fill it or add one; you can retitle it or take it off the menu
 (set_page). Its code uses the same calls through window.canopy, which canopy injects ahead of the
 page's own scripts: await canopy.ready (-> {app, scope, browser}), then canopy.app.query / act / bulk /
-link / history / upload / tasks, canopy.connection.request, canopy.browser, canopy.page, and
+link / history / upload / tasks, canopy.connection.request, canopy.browser, canopy.mode, canopy.google, canopy.page, and
 canopy.open(page, params, {newTab}) to open another page of the app by slug or by its entry path
 ("kanban/kanban.html?id=5"). It has no storage, no network but its own files, no eval, no
 alert/confirm/prompt and no popups (docs/architecture/workspace-apps.md § Bundle pages).
