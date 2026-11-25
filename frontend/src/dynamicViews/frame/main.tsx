@@ -242,10 +242,12 @@ function browserApi(info: BrowserInfo) {
   return {
     adapter: info.adapter,
     capabilities: [...info.capabilities],
+    /** The capabilities that change the page: call one straight from a click, or it rejects `needs_click`. */
+    acts: [...(info.acts ?? [])],
     events: [...info.events],
     /** `{tab: {url, title}}` while the tab in front matches this page, else null. */
     context: () => call({ op: 'context' }) as Promise<{ tab: { url: string; title: string } } | null>,
-    /** Ask the tab's adapter for a declared capability: resolves its result, or rejects (`e.code`). */
+    /** Ask the tab's adapter for a declared capability: resolves its result, or rejects (`e.code`). An act needs a click. */
     request: (capability: string, args: Record<string, unknown> = {}) => call({ op: 'request', capability, args }),
     /** Hear a declared adapter event (or `context`, when the tab changes). Returns an unsubscribe. */
     on(event: string, handler: (data: unknown) => void) {

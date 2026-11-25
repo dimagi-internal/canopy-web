@@ -376,6 +376,8 @@ class BrowserAppOut(Schema):
     page_title: str
     adapter: str
     capabilities: list[str]
+    #: Which of `capabilities` change the page (the registry's `acts`): the panel relays one only from a click.
+    acts: list[str]
     events: list[str]
     #: The page's match patterns: the panel checks the tab against them again before every call.
     matches: list[str]

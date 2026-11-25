@@ -13,8 +13,8 @@ the surfaces where a mistake exposes data or hands out power:
 * acting — an action's role;
 * email — who an email goes to;
 * Salesforce — the calls an app's pages may make, and as whom (`connections`);
-* the browser — which tabs the extension's panel shows a page on, and what it may
-  read there (`browser`);
+* the browser — which tabs the extension's panel shows a page on, what it may
+  read there, and above all what it may change there (`browser`, the adapters' `acts`);
 * AI — the app's pages starting to send what they show to canopy's model (`ai`);
 * retention — what is anonymized or deleted, and when;
 * tasks — which project's tasks the app's pages act on, who may, and how (`tasks`,
@@ -25,6 +25,8 @@ workspace admin publishes the update (`services.publish`), exactly as for a
 risky change of the workspace's own. Nothing here names an app.
 """
 from __future__ import annotations
+
+from .browser import acts_of
 
 OUTSIDE = ("public", "link")
 
@@ -121,6 +123,10 @@ def changes(old: dict, new: dict) -> list[str]:
     # The browser extension: which tabs a page is offered on, and what it may read or hear there.
     if (old.get("browser") or []) != (new.get("browser") or []):
         out.append("changes which browser tabs the app's pages open beside, or what they may read from them")
+        added = sorted(_browser_acts(new) - _browser_acts(old))
+        if added:
+            out.append("lets the app's pages change what is on the browser tab, not only read it (from a click): "
+                       + ", ".join(f"{a} {c}" for a, c in added))
     # canopy's model: what the pages show leaves canopy for it (dropping it widens nothing).
     if new.get("ai") and not old.get("ai"):
         out.append("lets the app's pages send what they show to canopy's AI model")
@@ -134,6 +140,10 @@ def changes(old: dict, new: dict) -> list[str]:
     if _bound_default(old) != _bound_default(new) and tn:
         out.append("changes which project's tasks the app's pages act on")
     return out
+
+
+def _browser_acts(m: dict) -> set[tuple]:
+    return {(e.get("adapter"), c) for e in m.get("browser") or [] for c in acts_of(e.get("adapter"), e.get("capabilities"))}
 
 
 def _bound_default(m: dict):

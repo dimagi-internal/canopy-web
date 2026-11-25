@@ -137,6 +137,8 @@ export interface AppTaskFilters {
 export interface BrowserInfo {
   adapter: string
   capabilities: string[]
+  /** Which of `capabilities` change the page: callable only straight from a click (else `needs_click`). */
+  acts: string[]
   events: string[]
 }
 

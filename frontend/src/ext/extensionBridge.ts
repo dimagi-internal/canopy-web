@@ -13,15 +13,19 @@
  *   carries a fresh id and fails `timeout` after `REQUEST_TIMEOUT_MS`.
  * - **app page ⇄ panel** (`BrowserGate`): a call is relayed only when the capability (or
  *   event) is in the page's `browser` declaration AND the current tab's URL matches the
- *   page's patterns; the page sees the tab only while it matches.
+ *   page's patterns; the page sees the tab only while it matches. An ACT (a capability that
+ *   changes the page, by the server's registry — never the extension's `hello`) is relayed
+ *   only when the canopy page saw a click on the app page as the call arrived.
  */
+import { NEEDS_CLICK } from '../dynamicViews/connectionCalls'
 import { matchesAny } from './matchPattern'
 
 export const PREFIX = 'canopy-ext:'
 export const VERSION = 1
 export const REQUEST_TIMEOUT_MS = 10_000
 
-export type ErrorCode = 'no_adapter' | 'not_ready' | 'unknown_capability' | 'adapter_error' | 'timeout' | 'bad_request'
+/** The protocol's codes, plus canopy's own `needs_click` (an act or `open()` without a click; never sent to the extension). */
+export type ErrorCode = 'no_adapter' | 'not_ready' | 'unknown_capability' | 'adapter_error' | 'timeout' | 'bad_request' | 'needs_click'
 
 export interface Tab { id: number; url: string; title: string }
 export interface AdapterInfo { name: string; version?: string; capabilities?: string[]; events?: string[] }
@@ -214,6 +218,8 @@ export class ExtensionLink {
 export interface BrowserDeclaration {
   adapter: string
   capabilities: readonly string[]
+  /** Which of `capabilities` change the page (`browser.py::ADAPTERS` `acts`): relayed only from a click. */
+  acts: readonly string[]
   events: readonly string[]
   matches: readonly string[]
 }
@@ -243,13 +249,18 @@ export class BrowserGate {
     return visibleContext(this.decl, this.link.context)
   }
 
-  /** A declared capability, on the tab now in front of the person, if it matches. */
-  request(capability: unknown, args: unknown): Promise<unknown> {
+  /**
+   * A declared capability, on the tab now in front of the person, if it matches. `clicked` is
+   * the canopy page's own reading of a click on the app page (`pageClickedFrame`), taken when
+   * the call arrived: an act is refused without it.
+   */
+  request(capability: unknown, args: unknown, clicked = false): Promise<unknown> {
     if (typeof capability !== 'string' || !this.decl.capabilities.includes(capability)) {
       return Promise.reject(new BrowserError('unknown_capability',
         `This page does not declare "${String(capability)}" in its manifest's browser entry.`))
     }
     if (args != null && !isObj(args)) return Promise.reject(new BrowserError('bad_request', 'args must be an object'))
+    if (this.decl.acts.includes(capability) && !clicked) return Promise.reject(new BrowserError('needs_click', NEEDS_CLICK))
     const tab = this.link.context?.tab
     if (!tab || !matchesAny(this.decl.matches, tab.url)) {
       return Promise.reject(new BrowserError('no_adapter', 'The tab in front of you is not one this page runs on.'))
