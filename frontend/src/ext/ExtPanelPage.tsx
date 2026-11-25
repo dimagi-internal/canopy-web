@@ -25,6 +25,8 @@ import type { BrowserHost } from '@/dynamicViews/DynamicViewFrame'
 import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
 import { AppFrame } from '@/workspaceApps/AppFrame'
 import { scopedPath } from '@/lib/scopedLinks'
+import { ModeStore, modeKey } from './modeStore'
+import type { Mode } from '@/dynamicViews/protocol'
 import { BrowserGate, ExtensionLink, allowedOrigins, visibleContext, type Context } from './extensionBridge'
 
 /** Where the sign-in tab lands: a page that says to come back here. */
@@ -230,6 +232,10 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
   // The declaration of the page on screen, as the server listed it for this tab; none → no canopy.browser.
   const decl = apps.find((a) => a.workspace === entry.workspace && a.app_key === entry.app_key && a.page_slug === pageSlug) ?? null
   const contextListeners = useRef(new Set<(visible: unknown) => void>())
+  // The person's mode for this app (docs/architecture/local-and-server-modes.md), shared by its pages.
+  const modes = useMemo(() => new ModeStore(modeKey(entry.workspace, entry.app_key)), [entry.workspace, entry.app_key])
+  const [mode, setMode] = useState<Mode>(() => modes.get())
+  useEffect(() => modes.subscribe(setMode), [modes])
   const host: BrowserHost | undefined = useMemo(() => {
     if (!decl) return undefined
     // The gate reads the tab as the extension last described it (`link.context`), on every call.
@@ -239,6 +245,7 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
       context: () => gate.context(),
       request: (capability, args, clicked) => gate.request(capability, args, clicked),
       open: (url) => gate.open(url),
+      mode: modes,
       subscribe(listener) {
         const onEvent = (event: string, data: unknown, tabId: number, adapter: string) => {
           if (gate.admits({ event, data, tabId, adapter })) listener(event, data)
@@ -253,7 +260,7 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [decl?.workspace, decl?.app_key, decl?.page_slug, link])
+  }, [decl?.workspace, decl?.app_key, decl?.page_slug, link, modes])
 
   // A change of tab reaches the page as the `context` event (what it may see of the new one).
   const seen = useRef<string>('')
@@ -273,6 +280,8 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
   if (!page) return <p className="p-4 text-sm text-muted-foreground">This page is not available to you.</p>
   const full = page.layout === 'full'
   return (
+    <>
+    {decl && <ModeSwitch mode={mode} onChange={(m) => modes.set(m)} />}
     <div className={full ? 'relative min-h-0 flex-1 overflow-hidden' : 'min-h-0 flex-1 overflow-auto p-2'}>
       <AppFrame
         fill={full}
@@ -302,6 +311,35 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
         pages={app.pages}
         browser={host}
       />
+    </div>
+    </>
+  )
+}
+
+/**
+ * Where this app's Google work runs: in this browser (the tab, through the extension) or through
+ * canopy-web. The person's choice, kept per app; nothing switches it for them.
+ */
+export function ModeSwitch({ mode, onChange }: { mode: Mode; onChange: (mode: Mode) => void }) {
+  const option = (m: Mode, label: string, title: string) => (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={mode === m}
+      title={title}
+      onClick={() => onChange(m)}
+      className={`rounded px-2 py-0.5 ${mode === m ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <div className="flex items-center justify-end gap-2 border-b px-2 py-1 text-xs">
+      <span className="text-muted-foreground">Google</span>
+      <div role="radiogroup" aria-label="Where Google work runs" className="flex rounded-md bg-muted p-0.5">
+        {option('local', 'Local', 'In this browser: the Gmail tab beside the panel. Nothing goes through canopy-web.')}
+        {option('server', 'Server', 'Through canopy-web, with your Google connection. Works without the tab open.')}
+      </div>
     </div>
   )
 }

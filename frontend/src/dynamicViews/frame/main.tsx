@@ -15,7 +15,9 @@ import {
   type AppTaskFilters,
   type BrowserInfo,
   type FrameMessage,
+  type GoogleCatalogue,
   type HostMessage,
+  type ModeInfo,
   type ReadRequest,
   type ViewScope,
 } from '../protocol'
@@ -83,6 +85,60 @@ function ask(msg: (id: number) => FrameMessage): Promise<unknown> {
 /** Values to strings, nulls dropped: page params as the URL holds them. */
 function strings(params: Record<string, unknown> = {}): Record<string, string> {
   return Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))
+}
+
+// ---- canopy.mode and canopy.google (docs/architecture/local-and-server-modes.md) --------------------
+
+let modeNow: ModeInfo = { current: 'server', available: ['server'] }
+let catalogue: GoogleCatalogue = {}
+const modeHandlers = new Set<(mode: ModeInfo) => void>()
+
+function withCode<T>(p: Promise<T>): Promise<T> {
+  return p.catch((e: Error & { error?: string; code?: string }) => {
+    if (e.error) e.code = e.error
+    throw e
+  })
+}
+
+/** The page's mode, chosen by the person: what `canopy.google` runs in. Never switched by a failure. */
+const modeApi = {
+  /** 'local' (the tab beside the extension's panel) or 'server' (through canopy-web). */
+  get current() { return modeNow.current },
+  /** The modes this page may be in: ['server'] anywhere but the extension's panel. */
+  get available() { return [...modeNow.available] },
+  /** Switch this app's mode, from a click (the panel's own switch does the same). */
+  set: (mode: 'local' | 'server') =>
+    withCode(ask((id) => ({ channel: CHANNEL, type: 'mode-set', id, mode }))) as Promise<ModeInfo>,
+  /** Hear a switch of mode. Returns an unsubscribe. */
+  on(handler: (mode: ModeInfo) => void) {
+    if (typeof handler !== 'function') throw new Error('canopy.mode.on(handler): handler must be a function')
+    modeHandlers.add(handler)
+    return () => { modeHandlers.delete(handler) }
+  },
+}
+
+/** Google operations by name, run in the page's mode. Each answer carries the `mode` it ran in; an
+ *  operation the mode lacks rejects `not_in_mode`, a local one with nothing on screen `not_on_screen`. */
+const run = (op: string, args: Record<string, unknown> = {}) =>
+  withCode(ask((id) => ({ channel: CHANNEL, type: 'google', id, op, args })))
+const googleApi = {
+  /** {op: {modes, act, summary}}: what each operation does and where it runs. */
+  get ops() { return JSON.parse(JSON.stringify(catalogue)) as GoogleCatalogue },
+  /** Whether `op` runs in the page's mode now. */
+  can: (op: string) => !!catalogue[op]?.modes.includes(modeNow.current),
+  run,
+  gmail: {
+    /** {mode, threadId, subject, gmailUrl, messages: [...]}, oldest first. Local: the thread on screen. */
+    thread: (args: { threadId?: string } = {}) => run('gmail.thread', args),
+    /** A new email or a reply, never sent, from a click. Local: open on screen; server: saved in Drafts. */
+    draft: (args: Record<string, unknown>) => run('gmail.draft', args),
+    /** Local only: the email open on screen. */
+    openEmail: () => run('gmail.open_email'),
+    /** Local only: write into the compose window on screen, from a click. */
+    fillCompose: (args: { bodyText: string; mode?: 'insert' | 'replace'; subject?: string }) => run('gmail.fill_compose', args),
+    /** Local only: the compose window's recipients. */
+    composeRecipients: () => run('gmail.compose_recipients'),
+  },
 }
 
 /** The app page drawn now, for `canopy.open(page)` and `canopy.page.setParams` (null on a plain view). */
@@ -167,6 +223,8 @@ const canopy = {
   /** Call a connected account the view declares (`connections`), through canopy: resolves {status, body}
    * or rejects with a sentence (`e.message`; `e.error`, and `e.connect_url` when connecting would fix it).
    * A write needs a real click on the page; a read does not. */
+  mode: modeApi,
+  google: googleApi,
   connection: {
     request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string; allowDuplicates?: boolean; allow_duplicates?: boolean }) {
       return ask((id) => ({ channel: CHANNEL, type: 'connection-call', id, request: req }))
@@ -226,6 +284,8 @@ const canopy = {
 
 /** Handlers a page registered with `canopy.browser.on(event, handler)`, by event. */
 const browserHandlers = new Map<string, Set<(data: unknown) => void>>()
+
+
 
 /**
  * `canopy.browser`: the tab beside the browser extension's panel, for an app page whose
@@ -346,6 +406,8 @@ function App() {
         document.documentElement.classList.toggle('dark', msg.theme === 'dark')
         browserHandlers.clear()
         canopy.browser = msg.browser ? browserApi(msg.browser) : null
+        modeNow = msg.mode ?? { current: 'server', available: ['server'] }
+        catalogue = msg.google ?? {}
         try {
           const View = compile(msg.code)
           const api = msg.app ? appApi(msg.app) : null
@@ -363,6 +425,15 @@ function App() {
           statusListeners.get(msg.id)?.(msg.task)
         } catch (e) {
           toHost({ channel: CHANNEL, type: 'error', message: e instanceof Error ? e.message : String(e) })
+        }
+      } else if (msg.type === 'mode') {
+        modeNow = msg.mode
+        for (const handler of modeHandlers) {
+          try {
+            handler({ ...modeNow, available: [...modeNow.available] })
+          } catch (e) {
+            toHost({ channel: CHANNEL, type: 'error', message: e instanceof Error ? e.message : String(e) })
+          }
         }
       } else if (msg.type === 'browser-event') {
         for (const handler of browserHandlers.get(msg.event) ?? []) {

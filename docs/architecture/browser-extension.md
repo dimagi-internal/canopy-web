@@ -18,6 +18,7 @@ connections ([`vault-connections.md`](vault-connections.md) § Calls from screen
 | The panel: signed out, picker, drawing the page | `frontend/src/ext/ExtPanelPage.tsx`, `ExtSignedInPage.tsx` |
 | Wire protocol v1 and the gate | `frontend/src/ext/extensionBridge.ts` (`ExtensionLink`, `BrowserGate`), `matchPattern.ts` |
 | `canopy.browser` in the sandbox | `frontend/src/dynamicViews/frame/main.tsx::browserApi`, answered in `DynamicViewFrame.tsx` |
+| `canopy.google` and the Local/Server switch | [`local-and-server-modes.md`](local-and-server-modes.md) |
 
 ## Rules
 

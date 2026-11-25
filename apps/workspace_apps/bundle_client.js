@@ -43,6 +43,10 @@
   var statusListeners = {}
   var pageActions = {}
   var browserHandlers = {}
+  // canopy.mode / canopy.google (docs/architecture/local-and-server-modes.md): the person's mode and the catalogue.
+  var modeNow = { current: 'server', available: ['server'] }
+  var catalogue = {}
+  var modeHandlers = []
   var context = null
   var resolveReady
   var ready = new Promise(function (resolve) { resolveReady = resolve })
@@ -147,6 +151,33 @@
     ai: {
       complete: function (req) { return ask(function (id) { return { type: 'app', id: id, request: { op: 'ai', request: req || {} } } }) },
     },
+    /** The page's mode, chosen by the person: 'local' (the tab beside the extension's panel) or 'server'
+     *  (through canopy-web). Never switched by a failure. `available` is ['server'] outside the panel. */
+    mode: {
+      get current() { return modeNow.current },
+      get available() { return modeNow.available.slice() },
+      /** Switch this app's mode, from a click (the panel's own switch does the same). */
+      set: function (mode) { return ask(function (id) { return { type: 'mode-set', id: id, mode: mode } }) },
+      on: function (handler) {
+        if (typeof handler !== 'function') throw new Error('canopy.mode.on(handler): handler must be a function')
+        modeHandlers.push(handler)
+        return function () { var i = modeHandlers.indexOf(handler); if (i >= 0) modeHandlers.splice(i, 1) }
+      },
+    },
+    /** Google operations by name, run in the page's mode; each answer carries the `mode` it ran in. An
+     *  operation the mode lacks rejects `not_in_mode`, a local one with nothing on screen `not_on_screen`. */
+    google: {
+      get ops() { return JSON.parse(JSON.stringify(catalogue)) },
+      can: function (op) { return !!(catalogue[op] && catalogue[op].modes.indexOf(modeNow.current) >= 0) },
+      run: googleRun,
+      gmail: {
+        thread: function (args) { return googleRun('gmail.thread', args) },
+        draft: function (args) { return googleRun('gmail.draft', args) },
+        openEmail: function () { return googleRun('gmail.open_email') },
+        fillCompose: function (args) { return googleRun('gmail.fill_compose', args) },
+        composeRecipients: function () { return googleRun('gmail.compose_recipients') },
+      },
+    },
     connection: {
       request: function (req) { return ask(function (id) { return { type: 'connection-call', id: id, request: req } }) },
       begin: function () { return ask(function (id) { return { type: 'connection-begin', id: id } }) },
@@ -205,6 +236,10 @@
     }
   }
 
+  function googleRun(op, args) {
+    return ask(function (id) { return { type: 'google', id: id, op: op, args: args || {} } })
+  }
+
   function browserApi(info) {
     function call(request) {
       return ask(function (id) { return { type: 'browser', id: id, request: request } })
@@ -255,11 +290,18 @@
       context = Object.assign({}, msg.app || {}, { pages: (msg.bundle && msg.bundle.pages) || [] })
       canopy.app = msg.app ? appApi(msg.app) : null
       canopy.browser = msg.browser ? browserApi(msg.browser) : null
+      modeNow = msg.mode || { current: 'server', available: ['server'] }
+      catalogue = msg.google || {}
       canopy.scope = msg.scope || null
       resolveReady({ app: canopy.app, scope: canopy.scope, browser: canopy.browser })
       try { window.dispatchEvent(new CustomEvent('canopy:ready', { detail: { app: canopy.app } })) } catch (e) { reportError(e) }
     } else if (msg.type === 'agent-task-status') {
       try { if (statusListeners[msg.id]) statusListeners[msg.id](msg.task) } catch (e) { reportError(e) }
+    } else if (msg.type === 'mode') {
+      modeNow = msg.mode
+      modeHandlers.slice().forEach(function (h) {
+        try { h({ current: modeNow.current, available: modeNow.available.slice() }) } catch (e) { reportError(e) }
+      })
     } else if (msg.type === 'browser-event') {
       (browserHandlers[msg.event] || []).slice().forEach(function (h) {
         try { h(msg.data) } catch (e) { reportError(e) }

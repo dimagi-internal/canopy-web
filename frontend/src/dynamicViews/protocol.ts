@@ -142,6 +142,19 @@ export interface BrowserInfo {
   events: string[]
 }
 
+/**
+ * The page's mode (docs/architecture/local-and-server-modes.md): `canopy.google` runs `local` (the tab,
+ * through its adapter) or `server` (the viewer's Google through canopy-web), as the person chose.
+ * `available` is ['server'] anywhere but the extension's panel.
+ */
+export type Mode = 'local' | 'server'
+export interface ModeInfo {
+  current: Mode
+  available: Mode[]
+}
+/** `canopy.google.ops`: each operation's modes, whether it changes something, and what it does. */
+export type GoogleCatalogue = Record<string, { modes: Mode[]; act: boolean; summary: string }>
+
 /** A `canopy.browser` call out of the frame, answered by `read-result`. */
 export type BrowserOp =
   | { op: 'context' }
@@ -159,9 +172,11 @@ export interface BundleInfo {
 
 /** Page → frame. */
 export type HostMessage =
-  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext; browser?: BrowserInfo; bundle?: BundleInfo }
+  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext; browser?: BrowserInfo; bundle?: BundleInfo; mode?: ModeInfo; google?: GoogleCatalogue }
   // A declared adapter event on the tab in front of the person, or `context` when that tab changed.
   | { channel: typeof CHANNEL; type: 'browser-event'; event: string; data: unknown }
+  // The person switched the page's mode (the panel's switch, or `canopy.mode.set`).
+  | { channel: typeof CHANNEL; type: 'mode'; mode: ModeInfo }
   | { channel: typeof CHANNEL; type: 'data'; data: Record<string, unknown> }
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: true; data: unknown }
   // `code` and `connect_url` come with a refused call to a connected account (`ConnectionRefusal`).
@@ -209,6 +224,10 @@ export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'download'; id: number; name: string; mime: string; data: unknown }
   // `canopy.browser` in the extension's panel: the tab's context, an adapter capability, opening a tab.
   | { channel: typeof CHANNEL; type: 'browser'; id: number; request: BrowserOp }
+  // `canopy.google.run(op, args)`: an operation in the page's mode. Answered by a `read-result`.
+  | { channel: typeof CHANNEL; type: 'google'; id: number; op: string; args?: Record<string, unknown> }
+  // `canopy.mode.set(mode)`: from a click, in the extension's panel. Answered by a `read-result`.
+  | { channel: typeof CHANNEL; type: 'mode-set'; id: number; mode: string }
   // canopy's panel (pagePanel.ts): what the view shows, the actions it offers the agent,
   // its answers, and a question for the panel (only on a click on the view).
   | { channel: typeof CHANNEL; type: 'page-state'; state: unknown }
