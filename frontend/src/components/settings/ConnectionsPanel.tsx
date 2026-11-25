@@ -399,7 +399,7 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
           <>
             <span>{stuck ? NOT_WORKING : on ? 'On' : 'Off'}</span>
             {canChange && (
-              <Link to={href} aria-label={`${on || stuck ? 'Turn off' : 'Turn on'} ${USED_BY}`} className={shareLink}>
+              <Link to={on || stuck ? href : `${href}&turn_on=canopy-web`} aria-label={`${on || stuck ? 'Turn off' : 'Turn on'} ${USED_BY}`} className={shareLink}>
                 {on || stuck ? 'Turn off' : 'Turn on'}
               </Link>
             )}

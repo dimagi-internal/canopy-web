@@ -27,8 +27,16 @@ export function safeReturnTo(given: string | null | undefined): string {
 }
 
 const NOT_SHARED = 'Not shared yet: no agent or computer can use it.'
-const LOCKED = 'To choose who can use this account, unlock it with your passkey. '
-  + 'You pick the agents and computers on the next screen. Nothing changes until you press Share.'
+const LOCKED = 'To choose who can use this account, unlock it with your passkey. On the next screen you pick: '
+  + 'project screens and apps (Used by canopy-web), your agents, and your computers. Nothing changes until you press Share.'
+const TURN_ON_STEPS = 'To turn on Used by canopy-web: unlock with your passkey, keep Project screens and apps ticked, then press Share.'
+const PROVIDER_TITLES: Record<string, string> = { salesforce: 'Salesforce', google: 'Google', github: 'GitHub' }
+
+/** "your Salesforce account (jo@x.org)": which connection this is, in words. */
+export function accountWords(provider: string, label?: string | null): string {
+  const title = PROVIDER_TITLES[provider] ?? provider
+  return label ? `your ${title} account (${label})` : `your ${title} account`
+}
 const RECONNECTED = 'This connection was reconnected. If you did not just do that, stop and tell an admin.'
 const CHANGED = 'This connection changed in another tab or computer. Loading it again.'
 const RELOCK = 'Unlock your vault key and try again.'
@@ -64,6 +72,8 @@ export function ShareConnectionPage(): JSX.Element | null {
   const { workspace = '', id = '' } = useParams()
   const [params] = useSearchParams()
   const returnTo = safeReturnTo(params.get('return_to'))
+  // Arrived from "Used by canopy-web → Turn on": start with Project screens and apps ticked.
+  const turnOnCanopyWeb = params.get('turn_on') === 'canopy-web'
   // Only ticks a box the owner can see and untick; the statement they sign is what counts.
   const forAgent = params.get('agent') ?? ''
   const navigate = useNavigate()
@@ -154,7 +164,7 @@ export function ShareConnectionPage(): JSX.Element | null {
     const listedMachines = new Set(s.candidates.filter((c) => c.kind === 'device' && !c.agent_id && c.mine).map((c) => c.target))
     // The box starts from what the owner signed, never from the row's served `on`. Only an
     // unshared row has no statement in force, and there `on` is canopy-web's own sealing at sign-in.
-    setCanopyWebTicked(keep ? !!keep.canopyWeb : s.state === 'unshared' ? !!s.server?.on : !!statement?.canopy_web)
+    setCanopyWebTicked(keep ? !!keep.canopyWeb : turnOnCanopyWeb || (s.state === 'unshared' ? !!s.server?.on : !!statement?.canopy_web))
     const asked = s.agents.filter((a) => a.slug === forAgent).map((a) => a.id)
     const wantAgents = keep ? keep.agents : statement?.agents ?? asked
     const wantComputers = s.owner_agent ? [] : keep ? keep.myComputers : statement?.my_computers ?? []
@@ -259,7 +269,7 @@ export function ShareConnectionPage(): JSX.Element | null {
   return (
     <div className="max-w-2xl space-y-4" data-testid="share-connection">
       <h1 className="text-lg font-semibold text-foreground">
-        {opened || unsafe ? 'Share this connection' : `Who can use ${state.account_label || 'this connection'}`}
+        {opened || unsafe ? `Share ${accountWords(state.provider, state.account_label)}` : `Who can use ${accountWords(state.provider, state.account_label)}`}
       </h1>
 
       {unsafe ? (
@@ -271,6 +281,7 @@ export function ShareConnectionPage(): JSX.Element | null {
         </div>
       ) : !opened ? (
         <div className="space-y-3">
+          {turnOnCanopyWeb && <p data-testid="turn-on-steps" className="text-sm font-medium text-foreground">{TURN_ON_STEPS}</p>}
           <p className="text-sm text-muted-foreground">{LOCKED}</p>
           <Button onClick={() => void unlock(state)} disabled={busy}>Unlock with your passkey</Button>
           {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
