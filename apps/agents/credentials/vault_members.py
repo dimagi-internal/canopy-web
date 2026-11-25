@@ -25,7 +25,10 @@ works for is a member, so approving a machine never grants by itself.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from django.db import transaction
@@ -178,13 +181,38 @@ class _UserRef:
     email: str
 
 
+_read_once: contextvars.ContextVar[dict | None] = contextvars.ContextVar("vault_members_read_once", default=None)
+
+
+@contextmanager
+def read_once() -> Iterator[None]:
+    """Inside the block, `members` works out each vault's members once. For a read-only
+    request that asks about the same vaults from several rules (a keeper's
+    `GET /vault-keeper`: who may keep, who is pending, whose endorsements count); a
+    change still applies from the next request."""
+    token = _read_once.set({})
+    try:
+        yield
+    finally:
+        _read_once.reset(token)
+
+
 def members(vault: Vault | None) -> dict[int, Membership]:
     """Every member of `vault`, by user id, with their role and every source. People
     only (`not_a_person`): an agent's login is never one."""
 
-    out: dict[int, Membership] = {}
     if vault is None:
-        return out
+        return {}
+    memo = _read_once.get()
+    if memo is None:
+        return _members(vault)
+    if vault.pk not in memo:
+        memo[vault.pk] = _members(vault)
+    return dict(memo[vault.pk])
+
+
+def _members(vault: Vault) -> dict[int, Membership]:
+    out: dict[int, Membership] = {}
     direct = list(VaultMember.objects.filter(vault=vault).select_related("user"))
     # A direct member counts only while they are still in the vault's workspace
     # (directly or inherited): leaving it, or the vault moving, ends it.

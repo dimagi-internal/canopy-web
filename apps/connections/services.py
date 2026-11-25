@@ -81,6 +81,8 @@ from apps.agents.models import Agent
 from apps.events import services as events
 from apps.harness import device_keys
 from apps.harness import initiator as who
+from apps.harness import runner_sync
+from apps.harness.models import Runner, RunnerDeviceKey
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
@@ -194,6 +196,18 @@ def disconnect_owned_by(user) -> None:
 
     if pks:
         transaction.on_commit(revoke_after_commit)
+
+
+def ring_keepers(conn: Connection) -> None:
+    """Move the keeper version of every cloud box holding `conn` (`runner_sync.bump_keepers`),
+    inside the transaction that gave them work on it: it is being revoked, or its statement
+    now lets machines that do not hold it yet have it. The box's keeper pass (`keeper.work`)
+    then runs at once instead of on its reconcile."""
+    jkts = [t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device"]
+    if jkts:
+        runner_sync.bump_keepers(RunnerDeviceKey.objects.filter(
+            ecdh_jkt__in=jkts, status=RunnerDeviceKey.ACTIVE, runner__kind=Runner.CLOUD)
+            .values_list("runner_id", flat=True))
 
 
 def connections_for(owner: Owner) -> QuerySet[Connection]:
@@ -869,6 +883,7 @@ def disconnect(conn: Connection, *, by, revoke_now: bool = True, lapsed: bool = 
             row.lease_id, row.lease_holder, row.lease_expires_at = None, "", None
             row.save(update_fields=["state", "revoking_since", "revoke_at_provider", "lease_id", "lease_holder",
                                     "lease_expires_at", "updated_at"])
+            ring_keepers(row)
         else:
             row.delete()  # its grants go with it (CASCADE)
     summary = (f"{subject.owner}'s {subject.provider} ({subject.account_label}) ended: its time ran out" if lapsed

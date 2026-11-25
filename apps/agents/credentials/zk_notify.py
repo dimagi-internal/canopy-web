@@ -43,6 +43,7 @@ from functools import partial
 from html import escape
 
 from django.core.cache import cache
+from django.db import transaction
 from django.utils import timezone
 
 from apps.harness.models import RunnerDeviceKey
@@ -51,7 +52,7 @@ from apps.push.services import send_to_user
 from apps.workspaces import links as wslinks
 
 from ..models import Agent, AgentVaultWrap, Vault, VaultKeyWrap, ZkGrantNotice
-from . import vault_members, workspace_vaults, zk
+from . import keeper_doorbell, vault_members, workspace_vaults, zk
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +119,15 @@ def sweep(now=None) -> int:
             replaced_at__isnull=False).values_list("user_id", "replaced_at"))
         waiting_people = {int(tg) for (k, tg) in pending if k == "member" and tg.isdecimal()}
         for (kind, target), t in pending.items():
-            notice, _ = ZkGrantNotice.objects.get_or_create(
-                **w.where, kind=kind, target=target, kv=w.kv,
-                defaults={"first_seen_at": now, "label": _label(t)[:300]},
-            )
+            with transaction.atomic():
+                notice, created = ZkGrantNotice.objects.get_or_create(
+                    **w.where, kind=kind, target=target, kv=w.kv,
+                    defaults={"first_seen_at": now, "label": _label(t)[:300]},
+                )
+                if created:
+                    # Someone new is waiting: the boxes that hold this key keep now,
+                    # not on their reconcile.
+                    keeper_doorbell.ring(**w.where)
             new_key = restarted.get(int(target)) if kind == "member" and target.isdecimal() else None
             if notice.notified_at or notice.cleared_at or (new_key is None and now - notice.first_seen_at < GRACE):
                 continue

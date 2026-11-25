@@ -1,7 +1,7 @@
 """Keepers re-seal, holders revoke, nothing waits forever (spec §4.1, §4.5; contract
 §0.6 routes 13-15; rulings R2, R7, R12).
 
-A cloud box's keeper (`canopy vault zk keep`, every 120 s) asks for connection
+A cloud box's keeper (`canopy vault zk keep`, when its keeper version moves) asks for connection
 work (`work`): each connection one of its device keys holds that is either
 `active` with machines the statement allows still waiting for a copy, or
 `revoking`. For the first it re-seals the SAME plaintext to the waiting machines

@@ -44,8 +44,9 @@ def get_vault_keeper_work(request: HttpRequest, runner_id: uuid.UUID) -> VaultKe
     The box decides whom to trust; canopy-web only lists."""
 
     runner = runner_or_404(request, runner_id)
-    # Every vault and delegated entry asks the same owners' licenses of their boxes.
-    with licenses.read_once():
+    # Every vault and delegated entry asks the same owners' licenses of their boxes, and
+    # each vault's members from several rules.
+    with licenses.read_once(), vault_members.read_once():
         return VaultKeeperOut(agents=vault_keeper.work(runner), delegated=accounts.keeper_work(runner))
 
 

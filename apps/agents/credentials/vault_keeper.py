@@ -41,7 +41,7 @@ from apps.harness import device_keys
 from apps.harness.models import RunnerDeviceKey
 
 from ..models import Agent, AgentVaultEndorsement, AgentVaultWrap, Vault, VaultKeyWrap
-from . import vault_members, workspace_vaults, zk, zk_endorse
+from . import keeper_doorbell, vault_members, workspace_vaults, zk, zk_endorse
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +201,7 @@ def store_pins(vault: Vault, *, kv: int, expected_version: int, value: str) -> d
         v.keeper_pins_zk, v.keeper_pins_kv = value, kv
         v.keeper_pins_version += 1
         v.save(update_fields=["keeper_pins_zk", "keeper_pins_kv", "keeper_pins_version"])
+        keeper_doorbell.ring(vault=v)
     return pins_of(v)
 
 

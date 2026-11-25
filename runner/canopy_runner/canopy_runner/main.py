@@ -1693,7 +1693,12 @@ def main() -> None:
     # The vault keeper: pass on the vault keys this machine holds to whoever is
     # waiting and trusted, so nobody has to click "Give access". See vault_keep.
     from . import vault_keep as _vault_keep
-    _vault_keep.start()
+
+    def _keeper_version():
+        box = getattr(client, "sync_box", None)
+        return box.keeper() if box is not None else None
+
+    _vault_keep.start(version=_keeper_version)
 
     # Pause sentinel: the menu-bar app (or `touch ~/.canopy/PAUSED`) drops this file
     # to halt ALL token-spending work instantly without killing the process or fighting

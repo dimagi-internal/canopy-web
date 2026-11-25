@@ -88,3 +88,18 @@ def test_a_box_that_holds_every_agent_lists_each_within_a_bound():
     # Measured: 145 and 218 queries (877 and 767 when each question read the fleet).
     assert n_delegated <= 200, n_delegated
     assert n_vault <= 300, n_vault
+
+
+def test_the_keeper_route_reads_each_vaults_members_once_and_answers_the_same():
+    """`GET /vault-keeper` asks each vault's members from several rules (who keeps, who
+    waits, whose endorsements count) and each owner's license of their boxes: inside
+    its `read_once` blocks each is worked out once, and the answer does not change."""
+    from apps.agents.credentials import licenses, vault_members
+
+    runner = _fleet(6, shared=True)
+    n_plain, plain = _count(lambda r: (vault_keeper.work(r), accounts.keeper_work(r)), runner)
+    with licenses.read_once(), vault_members.read_once():
+        n_once, once = _count(lambda r: (vault_keeper.work(r), accounts.keeper_work(r)), runner)
+    assert once == plain
+    # Measured: 219 against 363.
+    assert n_once <= 250 < n_plain, (n_once, n_plain)

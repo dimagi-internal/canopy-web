@@ -57,6 +57,8 @@ class SyncBox:
         self._read_at: float | None = None
         self._streams: list[dict] = []
         self._fresh: dict[str, list] = {}
+        #: The keeper version of the newest answer (None: it carried none).
+        self._keeper_version: int | None = None
         #: Highest `v` seen on a reply, ack or frame.
         self.seen_v = -1
         self._nudged = True  # the first tick reads
@@ -137,10 +139,18 @@ class SyncBox:
             self.seen_v = max(self.seen_v, self.version)
             self._read_at = now
             self._streams = list(body.get("streams") or [])
+            kv = body.get("keeper_version")
+            self._keeper_version = kv if isinstance(kv, int) and not isinstance(kv, bool) else None
             self._fresh = {k: list(body.get(k) or []) for k in EDGE_KEYS}
         return True
 
     # ---- what the drains read -------------------------------------------------
+
+    def keeper(self) -> int | None:
+        """The keeper version `/sync` last answered (`vault_keep`): None while the box is
+        not on `/sync`, or the server's answer carries none."""
+        with self._lock:
+            return self._keeper_version if self.supported is True else None
 
     def streams(self) -> list[dict]:
         with self._lock:
