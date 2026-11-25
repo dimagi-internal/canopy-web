@@ -21,7 +21,7 @@ from apps.harness.schemas import TurnFinishIn
 from apps.host_grants import reply_relay
 from apps.tokens.models import AppCredential
 from tests.fixtures.contact_websocket import _world
-from tests.test_reply_push import HOOK, _arrive, _end, _say
+from tests.fixtures.reply_push import HOOK, _arrive, _end, _say
 
 pytestmark = pytest.mark.django_db
 
