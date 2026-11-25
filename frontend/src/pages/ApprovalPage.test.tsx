@@ -9,7 +9,7 @@ const withPasskey = vi.fn()
 vi.mock('@/api/approvals', () => ({
   getApproval: (k: string) => get(k),
   decideApproval: (id: number, d: string, c: string) => decide(id, d, c),
-  approveWithPasskey: (id: number, c: string) => withPasskey(id, c),
+  approveWithPasskey: (id: number, c: string, choice?: string) => withPasskey(id, c, choice),
 }))
 const here = { passkeys: true }
 const opened = vi.fn()
@@ -38,14 +38,14 @@ const CARD = {
   plan: ['wouter@dimagi.com becomes editor of Connect', 'If they already have an account they are added now'],
   if_declined: 'Nothing happens. The request is closed.', source_url: '', created_at: '2026-10-30T10:00:00Z',
   expires_at: null, sent_to: ['Jonathan Jackson (push, slack)'], decided: null, outcome: 'Waiting for a decision.',
-  result: {}, error: '', can_decide: true, history: [{ kind: 'created', by: '', at: '2026-10-30T10:00:00Z' }],
+  result: {}, error: '', can_decide: true, choices: [], history: [{ kind: 'created', by: '', at: '2026-10-30T10:00:00Z' }],
 }
 
-function open(path = '/w/connect/approvals/7') {
+function open(path = '/w/connect/approvals/7', route = '/w/:workspace/approvals/:approvalId') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/w/:workspace/approvals/:approvalId" element={<ApprovalPage />} />
+        <Route path={route} element={<ApprovalPage />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -139,7 +139,7 @@ describe('ApprovalPage', () => {
     open()
     fireEvent.click(await screen.findByTestId('approval-approve'))
     await waitFor(() => expect(screen.getByTestId('approval-outcome').textContent).toContain('Approved and done'))
-    expect(withPasskey).toHaveBeenCalledWith(7, '')
+    expect(withPasskey).toHaveBeenCalledWith(7, '', '')
     expect(decide).not.toHaveBeenCalled()
   })
 
@@ -161,5 +161,19 @@ describe('ApprovalPage', () => {
     expect(screen.getByTestId('approval-in-browser').textContent).toContain('Waiting for you to approve')
     expect(withPasskey).not.toHaveBeenCalled()
     expect(decide).not.toHaveBeenCalled()
+  })
+
+  it('offers a personal kind\'s choices, read-only first, and approves the one picked with a passkey', async () => {
+    const choices = [
+      { value: 'read', label: 'Allow read-only (30 min)' },
+      { value: 'write', label: 'Allow read + write (30 min)' },
+    ]
+    get.mockResolvedValue({ ...CARD, kind: 'agent.act_as', step_up: true, choices, url: '/approvals/7' })
+    withPasskey.mockResolvedValue({ ...CARD, status: 'done', can_decide: false, choices: [] })
+    open('/approvals/7', '/approvals/:approvalId')
+    expect((await screen.findByTestId('approval-choose-read')).textContent).toBe('Allow read-only (30 min)')
+    expect(screen.queryByTestId('approval-approve')).toBeNull()
+    fireEvent.click(screen.getByTestId('approval-choose-write'))
+    await waitFor(() => expect(withPasskey).toHaveBeenCalledWith(7, '', 'write'))
   })
 })

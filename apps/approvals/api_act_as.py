@@ -1,14 +1,15 @@
 """`/api/me/act-as-requests/` — an agent asking to act as the person who started its turn,
-on canopy-web, and that person deciding with their passkey (`apps/harness/act_as.py`).
+on canopy-web (`apps/harness/act_as.py`), and the personal approval that asks them.
 
-Two callers, kept apart on every route:
+Asking files an approval of kind `agent.act_as` (`kinds/agent_act_as.py`) addressed to that
+person alone; they approve it on its page (`/approvals/<id>`) with a passkey touch made for it,
+picking read-only or read + write, or decline it there — the one approval path every kind uses
+(`api.py`). These routes are the rest:
 
 * **the agent**, with the login canopy-web issued for its turn: asks (POST), reads the
   status and collects the token once (GET `{id}`), stops it (POST `{id}/stop`). It reads
   only requests that same login made.
-* **the person**, in their own browser: lists theirs (GET), approves with a WebAuthn
-  assertion made for THIS request (POST `{id}/approve/begin` + `/approve/finish`), declines,
-  stops. Approve and decline refuse every token: there must be a person at a browser.
+* **the person**: lists theirs (GET), reads one, stops one.
 """
 from __future__ import annotations
 
@@ -19,16 +20,18 @@ from typing import Literal
 from django.http import HttpRequest
 from ninja import Field, Router, Schema
 
+from django.db import transaction
+
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
-from apps.passkeys import services as passkeys
-from apps.passkeys import stepup
-from apps.passkeys.schemas import PasskeyAssertIn, PasskeyOptionsOut
+from apps.harness import act_as, acting_person
+from apps.harness.models import ActAsGrant
 from apps.workspaces import links
 
-from . import act_as, acting_person
-from .models import ActAsGrant
+from . import cards, services
+from .kinds import agent_act_as
+from .models import ApprovalRequest
 
 router = Router(auth=session_auth, tags=["act as you"])
 
@@ -44,7 +47,8 @@ class ActAsRequestIn(Schema):
 class ActAsCreatedOut(Schema):
     id: uuid.UUID
     status: str
-    #: Where the person approves, with their passkey. Pushed to their devices too.
+    #: Where the person approves, with their passkey: the request's approval page. Sent to them
+    #: as every approval is (a push, Slack, email).
     approve_url: str
     #: When the request lapses if nobody acts on it (30 minutes).
     expires_at: datetime
@@ -70,17 +74,14 @@ class ActAsRequestOut(Schema):
     session_url: str = ""
     created_at: datetime | None = None
     approved_at: datetime | None = None
+    #: The approval page where the person decides it (app-relative), while it waits.
+    approval_url: str = ""
 
 
 class ActAsStatusOut(ActAsRequestOut):
     #: The token, in the agent's FIRST read of a live approval only. Send it as
     #: `Authorization: Bearer <token>`; it signs in as the person. Never shown again.
     token: str | None = None
-
-
-class ActAsApproveIn(PasskeyAssertIn):
-    #: `read` or `write` — what the person grants.
-    scope: str
 
 
 def _problem(exc: act_as.Refused) -> ProblemError:
@@ -111,15 +112,21 @@ def _session_url(grant: ActAsGrant) -> str:
     return path or ""
 
 
+def _approval(grant: ActAsGrant) -> ApprovalRequest | None:
+    return ApprovalRequest.objects.filter(idempotency_key=agent_act_as.idempotency_key(grant)).first()
+
+
 def _out(grant: ActAsGrant) -> ActAsRequestOut:
     status = act_as.status_of(grant)
     expires = grant.expires_at if grant.approved_at else grant.request_expires_at
+    approval = _approval(grant) if status == ActAsGrant.PENDING else None
     return ActAsRequestOut(
         id=grant.pk, status=status, scope=grant.scope, requested_scope=grant.requested_scope,
         expires_at=expires, agent=grant.agent.slug,
         agent_name=grant.agent.name or grant.agent.slug, person=grant.person.email,
         reason=grant.reason, turn_id=str(grant.turn_id), session_url=_session_url(grant),
-        created_at=grant.created_at, approved_at=grant.approved_at)
+        created_at=grant.created_at, approved_at=grant.approved_at,
+        approval_url=cards.url(approval) if approval is not None and approval.is_pending else "")
 
 
 # --- the agent --------------------------------------------------------------------------------
@@ -130,20 +137,28 @@ def _out(grant: ActAsGrant) -> ActAsRequestOut:
 @gate("agent-login", kind="request")  # the turn's own login; the person decides
 def create_act_as_request(request: HttpRequest, payload: ActAsRequestIn):
     """Call with the login canopy-web issued for your turn. canopy-web works out who
-    started the turn (never from the request) and asks them — a push, their supervisor
-    feed and Settings — to let you act as them for 30 minutes, read-only or read + write,
-    with their passkey. 403 says why when there is no one to ask (a confined turn, one
+    started the turn (never from the request) and asks them — an approval addressed to them
+    alone, sent like every approval (a push, Slack, email) and on their supervisor feed and
+    Settings — to let you act as them for 30 minutes, read-only or read + write, with their
+    passkey. Give them `approve_url`. 403 says why when there is no one to ask (a confined turn, one
     canopy or an agent started, an unverified asker, a stored token). Poll
     `GET /api/me/act-as-requests/{id}` — from this turn or any later one of yours in the
     same conversation; the request waits 30 minutes, past the end of this turn while the
     conversation is still the person's."""
     try:
-        grant = act_as.ask(request.user, getattr(request, "auth_credential", None),
-                           reason=payload.reason, scope=payload.scope)
+        with transaction.atomic():
+            grant = act_as.ask(request.user, getattr(request, "auth_credential", None),
+                               reason=payload.reason, scope=payload.scope)
+            approval, _ = services.create(
+                kind=agent_act_as.SLUG, params={"request": str(grant.pk)}, requested_by_agent=grant.agent,
+                reason=grant.reason, for_email=grant.person.email,
+                expires_in_hours=act_as.REQUEST_TTL.total_seconds() / 3600,
+                idempotency_key=agent_act_as.idempotency_key(grant))
     except act_as.Refused as exc:
         raise _problem(exc) from exc
-    return 201, ActAsCreatedOut(id=grant.pk, status=grant.status,
-                                approve_url=f"{links.base_url()}{act_as.approve_path(grant)}",
+    except services.ApprovalError as exc:
+        raise ProblemError(exc.status, "Could not ask", type_=TYPE_CONFLICT, detail=str(exc)) from exc
+    return 201, ActAsCreatedOut(id=grant.pk, status=grant.status, approve_url=cards.page_url(approval),
                                 expires_at=grant.request_expires_at)
 
 
@@ -187,7 +202,13 @@ def stop_act_as_request(request: HttpRequest, request_id: uuid.UUID) -> ActAsReq
         by = "person"
     else:
         raise ProblemError(404, "Not found", type_=TYPE_NOT_FOUND)
-    return _out(act_as.stop(grant, by=by))
+    with transaction.atomic():
+        grant = act_as.stop(grant, by=by)
+        approval = _approval(grant)
+        if approval is not None and approval.is_pending:
+            services.supersede(approval.pk, request.user,
+                               why=f"Stopped by {'the agent' if by == 'agent' else grant.person.email}.")
+    return _out(grant)
 
 
 # --- the person ----------------------------------------------------------------------------
@@ -218,68 +239,3 @@ def list_my_act_as_requests(request: HttpRequest) -> list[ActAsRequestOut]:
         if act_as.settle(grant).status in (ActAsGrant.PENDING, ActAsGrant.APPROVED):
             out.append(_out(grant))
     return out
-
-
-def _mine_in_browser(request: HttpRequest, request_id: uuid.UUID, what: str) -> ActAsGrant:
-    stepup.require_browser(request, what)
-    stepup.require_a_person(request, what)
-    grant = _row(request_id)
-    if grant is None or grant.person_id != request.user.pk:
-        raise ProblemError(404, "Not found", type_=TYPE_NOT_FOUND)
-    return grant
-
-
-def _slot(grant: ActAsGrant) -> str:
-    # One ceremony per request and person: a challenge begun for one cannot approve another.
-    return f"act-as:{grant.pk}:{grant.person_id}"
-
-
-@router.post("/{uuid:request_id}/approve/begin", response=PasskeyOptionsOut,
-             summary="Start approving an agent acting as me, with my passkey")
-@gate("self", kind="ephemeral-credential")  # a ceremony's challenge, for the person's own request
-def begin_approve_act_as_request(request: HttpRequest, request_id: uuid.UUID) -> PasskeyOptionsOut:
-    """Options for navigator.credentials.get(), to approve THIS request with one of your
-    passkeys. A browser session only; no token can."""
-    grant = _mine_in_browser(request, request_id, "approving an act-as-you permission")
-    if act_as.status_of(grant) != ActAsGrant.PENDING:
-        raise ProblemError(409, "Conflict", type_=TYPE_CONFLICT,
-                           detail=f"this request is {act_as.status_of(grant)}")
-    options = passkeys.begin_assertion(request, slot=_slot(grant))
-    if options is None:
-        raise ProblemError(409, "No passkey registered", type_=TYPE_CONFLICT,
-                           detail="Register a passkey (Settings → Passkeys), then approve.",
-                           members={"error": "no_passkey", "register_url": stepup.REGISTER_PATH})
-    return PasskeyOptionsOut(options=options)
-
-
-@router.post("/{uuid:request_id}/approve/finish", response=ActAsRequestOut,
-             summary="Approve an agent acting as me, with my passkey")
-@gate("self", setting=True)
-def finish_approve_act_as_request(request: HttpRequest, request_id: uuid.UUID,
-                                  payload: ActAsApproveIn) -> ActAsRequestOut:
-    """Verify the passkey assertion begun for this request, then let the agent act as you
-    — `read` (it may read, never change) or `write` — for 30 minutes from now, while its
-    turn runs. A browser session only; no token can."""
-    grant = _mine_in_browser(request, request_id, "approving an act-as-you permission")
-    try:
-        passkeys.finish_assertion(request, payload.credential, slot=_slot(grant))
-    except passkeys.CeremonyError as exc:
-        raise ProblemError(400, "Passkey verification failed", type_=TYPE_VALIDATION,
-                           detail=str(exc)) from exc
-    try:
-        grant = act_as.approve(grant, request.user, payload.scope)
-    except act_as.Refused as exc:
-        raise _problem(exc) from exc
-    return _out(grant)
-
-
-@router.post("/{uuid:request_id}/decline", response=ActAsRequestOut,
-             summary="Decline an agent acting as me")
-@gate("self", setting=True)
-def decline_act_as_request(request: HttpRequest, request_id: uuid.UUID) -> ActAsRequestOut:
-    """Say no. A browser session only; no token can."""
-    grant = _mine_in_browser(request, request_id, "declining an act-as-you request")
-    try:
-        return _out(act_as.decline(grant, request.user))
-    except act_as.Refused as exc:
-        raise _problem(exc) from exc

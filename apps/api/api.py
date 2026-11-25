@@ -336,7 +336,7 @@ from apps.agents.api_proposals import router as proposals_router  # noqa: E402
 from apps.attention.alerts_api import router as alerts_router  # noqa: E402
 from apps.attention.api import router as attention_router  # noqa: E402
 from apps.agents.api_login_requests import router as agent_login_requests_router  # noqa: E402
-from apps.harness.api_act_as import router as act_as_router  # noqa: E402
+from apps.approvals.api_act_as import router as act_as_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.canopy_sessions.api import me_router as my_sessions_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402

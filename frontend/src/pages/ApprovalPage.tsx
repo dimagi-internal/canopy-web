@@ -79,13 +79,13 @@ export function ApprovalPage(): JSX.Element | null {
   if (error && !card) return <p className="max-w-2xl text-sm text-destructive">{error}</p>
   if (!card) return <div className="h-40 max-w-2xl animate-pulse rounded-lg bg-muted" />
 
-  const decide = async (decision: 'approve' | 'decline') => {
+  const decide = async (decision: 'approve' | 'decline', choice = '') => {
     setBusy(true)
     setError(null)
     try {
       setCard(
         decision === 'approve' && card.step_up
-          ? await approveWithPasskey(card.id, comment.trim())
+          ? await approveWithPasskey(card.id, comment.trim(), choice)
           : await decideApproval(card.id, decision, comment.trim()),
       )
     } catch (e) {
@@ -202,6 +202,18 @@ export function ApprovalPage(): JSX.Element | null {
               >
                 {inBrowser ? 'Open it again' : 'Approve in your browser'}
               </Button>
+            ) : (card.choices ?? []).length > 0 ? (
+              (card.choices ?? []).map((c, i) => (
+                <Button
+                  key={c.value}
+                  variant={i === 0 && chosen !== 'decline' ? 'default' : 'outline'}
+                  disabled={busy || !card.can_decide}
+                  data-testid={`approval-choose-${c.value}`}
+                  onClick={() => void decide('approve', c.value)}
+                >
+                  {c.label}
+                </Button>
+              ))
             ) : (
               <Button
                 variant={chosen === 'decline' ? 'outline' : 'default'}

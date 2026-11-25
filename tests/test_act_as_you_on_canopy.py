@@ -41,6 +41,7 @@ from apps.mcp import api_tools
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
+from apps.approvals.models import ApprovalDelivery, ApprovalRequest
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces import services as wsvc
@@ -53,6 +54,7 @@ pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 JJ = "jj@dimagi.com"
 REQUESTS = "/api/me/act-as-requests/"
+APPROVALS = "/api/approvals/"
 
 
 @pytest.fixture(autouse=True)
@@ -115,14 +117,32 @@ def _browser(user) -> Client:
     return c
 
 
+def _approval(grant_id) -> ApprovalRequest:
+    """The personal approval the ask filed (`agent.act_as`), addressed to the person alone."""
+    return ApprovalRequest.objects.get(idempotency_key=f"agent.act_as:{grant_id}")
+
+
+def _begin(browser, grant_id):
+    return browser.post(f"{APPROVALS}{_approval(grant_id).pk}/approve/begin")
+
+
+def _finish(browser, grant_id, credential, scope):
+    return browser.post(f"{APPROVALS}{_approval(grant_id).pk}/approve/finish",
+                        json.dumps({"credential": credential, "choice": scope}), content_type="application/json")
+
+
+def _decline(browser, grant_id):
+    return browser.post(f"{APPROVALS}{_approval(grant_id).pk}/decide", json.dumps({"decision": "decline"}),
+                        content_type="application/json")
+
+
 def _approve(w, grant_id, scope="write", *, user=None, passkey=None):
-    """The person's browser: begin, sign the challenge with their passkey, finish."""
+    """The person's browser, on the request's approval page: begin, sign the challenge with their
+    passkey, finish with the scope they pick."""
     browser = _browser(user or w["jj"])
-    started = browser.post(f"{REQUESTS}{grant_id}/approve/begin")
+    started = _begin(browser, grant_id)
     assert started.status_code == 200, started.content
-    cred = (passkey or w["passkey"]).get(started.json()["options"])
-    return browser.post(f"{REQUESTS}{grant_id}/approve/finish",
-                        json.dumps({"credential": cred, "scope": scope}), content_type="application/json")
+    return _finish(browser, grant_id, (passkey or w["passkey"]).get(started.json()["options"]), scope)
 
 
 def _live_token(w, scope="write", *, turn=None):
@@ -141,17 +161,22 @@ def _live_token(w, scope="write", *, turn=None):
 # --- asking: only the turn's own asker ------------------------------------------------------
 
 
-def test_the_agent_asks_and_canopy_works_out_the_person_from_its_turn(w, monkeypatch):
+def test_the_agent_asks_and_canopy_works_out_the_person_from_its_turn(
+        w, monkeypatch, django_capture_on_commit_callbacks):
     pushed = []
-    monkeypatch.setattr("apps.push.services.send_to_user",
+    monkeypatch.setattr("apps.approvals.channel_push.send_to_user",
                         lambda user, **kw: pushed.append((user.email, kw["url"])) or 1)
-    r = _ask(_login(w, _turn(w)))
+    with django_capture_on_commit_callbacks(execute=True):
+        r = _ask(_login(w, _turn(w)))
     assert r.status_code == 201, r.content
     body = r.json()
-    assert body["status"] == "pending" and body["approve_url"].endswith(f"/act-as/{body['id']}")
+    approval = _approval(body["id"])
+    assert body["status"] == "pending" and body["approve_url"].endswith(f"/approvals/{approval.pk}")
     grant = ActAsGrant.objects.get(pk=body["id"])
     assert (grant.person, grant.agent, grant.requested_scope) == (w["jj"], w["hal"], "either")
-    assert pushed == [(JJ, f"/act-as/{body['id']}")]
+    # The ask is a personal approval addressed to Jonathan alone, sent like every approval.
+    assert (approval.kind, approval.for_user, approval.requested_by_agent) == ("agent.act_as", w["jj"], w["hal"])
+    assert pushed == [(JJ, f"/approvals/{approval.pk}")]
     # It is on their Settings / feed list.
     listed = _browser(w["jj"]).get(REQUESTS).json()
     assert [row["id"] for row in listed] == [body["id"]]
@@ -165,7 +190,7 @@ def test_the_person_is_always_the_turns_asker_never_one_the_agent_names(w):
     grant = ActAsGrant.objects.get(pk=r.json()["id"])
     assert grant.person == w["col"]
     # Jonathan cannot approve it — it is not his.
-    assert _browser(w["jj"]).post(f"{REQUESTS}{grant.pk}/approve/begin").status_code == 404
+    assert _begin(_browser(w["jj"]), grant.pk).status_code == 404
 
 
 def test_naming_someone_else_on_behalf_is_refused(w):
@@ -240,9 +265,7 @@ def test_a_session_cookie_or_a_step_up_window_alone_does_not_approve(w):
     gid = _ask(_login(w, _turn(w))).json()["id"]
     browser = _browser(w["jj"])
     grant_step_up(browser)  # a passkey touch for something else, minutes ago
-    r = browser.post(f"{REQUESTS}{gid}/approve/finish",
-                     json.dumps({"credential": {"id": "x"}, "scope": "write"}),
-                     content_type="application/json")
+    r = _finish(browser, gid, {"id": "x"}, "write")
     assert r.status_code == 400  # no ceremony begun for THIS request
     assert ActAsGrant.objects.get(pk=gid).status == "pending"
 
@@ -251,10 +274,8 @@ def test_a_ceremony_begun_for_one_request_cannot_approve_another(w):
     first = _ask(_login(w, _turn(w))).json()["id"]
     second = _ask(_login(w, _turn(w, agent=w["eva"]))).json()["id"]
     browser = _browser(w["jj"])
-    options = browser.post(f"{REQUESTS}{first}/approve/begin").json()["options"]
-    r = browser.post(f"{REQUESTS}{second}/approve/finish",
-                     json.dumps({"credential": w["passkey"].get(options), "scope": "write"}),
-                     content_type="application/json")
+    options = _begin(browser, first).json()["options"]
+    r = _finish(browser, second, w["passkey"].get(options), "write")
     assert r.status_code == 400
     assert ActAsGrant.objects.get(pk=second).status == "pending"
 
@@ -263,20 +284,30 @@ def test_someone_elses_passkey_does_not_approve(w):
     gid = _ask(_login(w, _turn(w))).json()["id"]
     stranger = give_passkey(w["col"])
     browser = _browser(w["jj"])
-    options = browser.post(f"{REQUESTS}{gid}/approve/begin").json()["options"]
-    r = browser.post(f"{REQUESTS}{gid}/approve/finish",
-                     json.dumps({"credential": stranger.get(options), "scope": "write"}),
-                     content_type="application/json")
+    options = _begin(browser, gid).json()["options"]
+    r = _finish(browser, gid, stranger.get(options), "write")
     assert r.status_code == 400
 
 
-@pytest.mark.parametrize("action", ["approve/begin", "approve/finish", "decline"])
-def test_approve_and_decline_refuse_every_token(w, action):
+@pytest.mark.parametrize("action", ["approve/begin", "approve/finish"])
+def test_approving_refuses_every_token(w, action):
     gid = _ask(_login(w, _turn(w))).json()["id"]
     raw, _ = PersonalToken.create_for_user(user=w["jj"], label="laptop")
-    r = Client().post(f"{REQUESTS}{gid}/{action}", json.dumps({"credential": {}, "scope": "write"}),
+    r = Client().post(f"{APPROVALS}{_approval(gid).pk}/{action}", json.dumps({"credential": {}, "choice": "write"}),
                       content_type="application/json", **bearer_headers(raw))
     assert r.status_code == 403
+    assert ActAsGrant.objects.get(pk=gid).status == "pending"
+
+
+def test_the_agent_neither_sees_nor_decides_the_persons_approval(w):
+    login = _login(w, _turn(w))
+    gid = _ask(login).json()["id"]
+    aid = _approval(gid).pk
+    assert Client().get(f"{APPROVALS}{aid}", **bearer_headers(login)).status_code == 404
+    r = Client().post(f"{APPROVALS}{aid}/decide", json.dumps({"decision": "decline"}),
+                      content_type="application/json", **bearer_headers(login))
+    assert r.status_code == 404
+    assert all(row["id"] != aid for row in Client().get(APPROVALS, **bearer_headers(login)).json())
     assert ActAsGrant.objects.get(pk=gid).status == "pending"
 
 
@@ -288,7 +319,7 @@ def test_a_read_request_cannot_be_granted_write(w):
 def test_decline(w):
     login = _login(w, _turn(w))
     gid = _ask(login).json()["id"]
-    assert _browser(w["jj"]).post(f"{REQUESTS}{gid}/decline").status_code == 200
+    assert _decline(_browser(w["jj"]), gid).status_code == 200
     body = _status(login, gid).json()
     assert body["status"] == "declined" and body["token"] is None
 
@@ -299,7 +330,7 @@ def test_an_unanswered_request_lapses_after_ten_minutes(w):
     ActAsGrant.objects.filter(pk=gid).update(request_expires_at=timezone.now() - dt.timedelta(seconds=1))
     assert _status(login, gid).json()["status"] == "expired"
     browser = _browser(w["jj"])
-    assert browser.post(f"{REQUESTS}{gid}/approve/begin").status_code == 409
+    assert _begin(browser, gid).status_code == 409
 
 
 # --- the token: once, 30 minutes, dies with the turn ---------------------------------------
@@ -340,7 +371,7 @@ def test_thirty_minutes_from_the_touch_never_extended(w):
     for _ in range(3):  # use, re-read, try to approve again: the end never moves
         Client().get("/api/me/attention/", **bearer_headers(token))
         _status(login, grant.pk)
-        assert _browser(w["jj"]).post(f"{REQUESTS}{grant.pk}/approve/begin").status_code == 409
+        assert _begin(_browser(w["jj"]), grant.pk).status_code == 409
     grant.refresh_from_db()
     assert grant.expires_at == end
     ActAsGrant.objects.filter(pk=grant.pk).update(expires_at=timezone.now() - dt.timedelta(seconds=1))
@@ -360,7 +391,7 @@ def test_approval_after_the_turn_ended_is_refused(w):
     turn = _turn(w)
     gid = _ask(_login(w, turn)).json()["id"]
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
-    assert _browser(w["jj"]).post(f"{REQUESTS}{gid}/approve/begin").status_code == 409
+    assert _begin(_browser(w["jj"]), gid).status_code == 409
 
 
 @pytest.mark.parametrize("who", ["agent", "person"])
@@ -769,11 +800,12 @@ def test_the_agent_lists_its_requests_in_this_chat_without_tokens(w):
     assert _status(later, gid).json()["token"]
 
 
-def test_the_push_is_recorded(w, monkeypatch):
-    monkeypatch.setattr("apps.push.services.send_to_user", lambda user, **kw: 2)
-    gid = _ask(_login(w, _turn(w))).json()["id"]
-    assert ActAsGrant.objects.get(pk=gid).push_sent == 2
-    assert Event.objects.get(kind="act_as.requested").payload["pushed"] == 2
+def test_the_push_is_recorded_as_the_approvals_delivery(w, monkeypatch, django_capture_on_commit_callbacks):
+    monkeypatch.setattr("apps.approvals.channel_push.send_to_user", lambda user, **kw: 2)
+    with django_capture_on_commit_callbacks(execute=True):
+        gid = _ask(_login(w, _turn(w))).json()["id"]
+    approval = _approval(gid)
+    assert ApprovalDelivery.objects.filter(request=approval, user=w["jj"], channel="push").exists()
 
 
 def test_an_unreviewed_turn_may_act_as_you_to_read_only(w):
@@ -809,7 +841,7 @@ def test_an_attended_auto_chat_may_ask_for_write_and_the_passkey_approval_is_the
     gid = asked.json()["id"]
     # Still nothing without the person's passkey touch, and only the same person approves.
     assert _status(login, gid).json().get("token") in (None, "")
-    assert _browser(w["col"]).post(f"{REQUESTS}{gid}/approve/begin").status_code == 404
+    assert _begin(_browser(w["col"]), gid).status_code == 404
     assert _approve(w, gid, "write").status_code == 200
     assert ActAsGrant.objects.get(pk=gid).scope == "write"
     assert _status(login, gid).json()["token"].startswith(act_as.PREFIX)

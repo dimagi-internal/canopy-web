@@ -53,7 +53,7 @@ export function requirePasskeysHere(): void {
   if (!passkeysWorkHere()) throw new PasskeyInBrowserError()
 }
 
-/** The absolute URL of `target`: a full URL as is, an app route (`/act-as/…`) under
+/** The absolute URL of `target`: a full URL as is, an app route (`/approvals/…`) under
  *  the deployment's prefix (`/canopy` on the shared labs host, `frameBase.ts`). */
 export function browserUrl(target: string, base: string = import.meta.env.BASE_URL): string {
   if (/^https?:\/\//.test(target)) return target

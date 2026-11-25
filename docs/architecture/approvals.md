@@ -34,8 +34,16 @@ its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalP
   browser, by a person who may approve it. The five-minute step-up window that other passkey routes
   accept (`stepup.require_recent_step_up`) does not approve one: `decide_approval` refuses it with 403
   `passkey_for_this_request`, so a passkey touched for something else a minute ago never carries an
-  AWS role or a vault attachment through. This is the same ceremony an act-as-you approval uses
-  (`apps/harness/api_act_as.py`).
+  AWS role or a vault attachment through. A kind with `Kind.choices` (act-as-you: read-only or read + write) takes the
+  approver's pick with the touch.
+- **A personal kind is addressed to one person, about their own authority.** `agent.act_as`
+  (`kinds/agent_act_as.py`, filed only by `POST /api/me/act-as-requests/`, `api_act_as.py`) asks the
+  person a turn is for whether its agent may act as them. Its approver may not be a member of the
+  agent's workspace, so `Kind.personal` makes it seen and decided by that person alone, whatever their
+  workspaces, and by nobody else (`api.py::_visible`, `list_approvals`), on `/approvals/<id>`
+  (`cards.url`); `POST /api/approvals/` refuses to file one; it reaches them whatever their
+  approval-card preference (`delivery.deliver`). `Kind.lapsed` closes one whose ask is over (the turn
+  ended) and `Kind.closed` carries a decline, withdrawal or expiry back to its own record.
 - **Superseded, not left pending.** When someone with the authority to take a request's action
   takes it directly, the request is closed by `services.supersede`: `cancelled`, result
   `{"superseded": true}`, a comment naming who acted, and no authority asked of them (the route

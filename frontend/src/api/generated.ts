@@ -16990,9 +16990,10 @@ export interface paths {
         /**
          * Ask to act as the person who started this turn, on canopy-web
          * @description Call with the login canopy-web issued for your turn. canopy-web works out who
-         *     started the turn (never from the request) and asks them — a push, their supervisor
-         *     feed and Settings — to let you act as them for 30 minutes, read-only or read + write,
-         *     with their passkey. 403 says why when there is no one to ask (a confined turn, one
+         *     started the turn (never from the request) and asks them — an approval addressed to them
+         *     alone, sent like every approval (a push, Slack, email) and on their supervisor feed and
+         *     Settings — to let you act as them for 30 minutes, read-only or read + write, with their
+         *     passkey. Give them `approve_url`. 403 says why when there is no one to ask (a confined turn, one
          *     canopy or an agent started, an unverified asker, a stored token). Poll
          *     `GET /api/me/act-as-requests/{id}` — from this turn or any later one of yours in the
          *     same conversation; the request waits 30 minutes, past the end of this turn while the
@@ -17043,69 +17044,6 @@ export interface paths {
          *     request is withdrawn, a live token stops signing in from its next request.
          */
         readonly post: operations["stop_act_as_request"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/me/act-as-requests/{request_id}/approve/begin": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Start approving an agent acting as me, with my passkey
-         * @description Options for navigator.credentials.get(), to approve THIS request with one of your
-         *     passkeys. A browser session only; no token can.
-         */
-        readonly post: operations["begin_approve_act_as_request"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/me/act-as-requests/{request_id}/approve/finish": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Approve an agent acting as me, with my passkey
-         * @description Verify the passkey assertion begun for this request, then let the agent act as you
-         *     — `read` (it may read, never change) or `write` — for 30 minutes from now, while its
-         *     turn runs. A browser session only; no token can.
-         */
-        readonly post: operations["finish_approve_act_as_request"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/me/act-as-requests/{request_id}/decline": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Decline an agent acting as me
-         * @description Say no. A browser session only; no token can.
-         */
-        readonly post: operations["decline_act_as_request"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -17507,7 +17445,8 @@ export interface paths {
         };
         /**
          * Requests waiting on you
-         * @description Requests in your workspaces that YOU could approve. `status=all` also lists decided ones you
+         * @description Requests in your workspaces that YOU could approve, and requests addressed to you alone (an
+         *     agent asking to act as you) wherever they were filed. `status=all` also lists decided ones you
          *     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`). A card with `step_up`
          *     is approved only on its page (`page_url`), with a passkey.
          */
@@ -17607,7 +17546,8 @@ export interface paths {
         /**
          * Approve a request with my passkey
          * @description Verify the passkey assertion begun for this request, then approve it: the kind's handler runs
-         *     as you, once. A browser session only; no token can. 400 when the passkey does not verify.
+         *     as you, once. A card with `choices` needs one of their values as `choice` (422 otherwise). A browser
+         *     session only; no token can. 400 when the passkey does not verify.
          */
         readonly post: operations["finish_approve_approval"];
         readonly delete?: never;
@@ -49392,6 +49332,11 @@ export interface components {
             readonly created_at?: string | null;
             /** Approved At */
             readonly approved_at?: string | null;
+            /**
+             * Approval Url
+             * @default
+             */
+            readonly approval_url: string;
         };
         /** ActAsStatusOut */
         readonly ActAsStatusOut: {
@@ -49448,17 +49393,13 @@ export interface components {
             readonly created_at?: string | null;
             /** Approved At */
             readonly approved_at?: string | null;
+            /**
+             * Approval Url
+             * @default
+             */
+            readonly approval_url: string;
             /** Token */
             readonly token?: string | null;
-        };
-        /** ActAsApproveIn */
-        readonly ActAsApproveIn: {
-            /** Credential */
-            readonly credential: {
-                readonly [key: string]: unknown;
-            };
-            /** Scope */
-            readonly scope: string;
         };
         /** AlertActionOut */
         readonly AlertActionOut: {
@@ -49990,6 +49931,11 @@ export interface components {
              * @description Approving needs the approver's passkey, so only the request's page (`page_url`), in a browser, can approve it; Slack, an alert, a token and an agent can only decline it.
              */
             readonly step_up: boolean;
+            /**
+             * Choices
+             * @description What the approver picks between when approving (send the `value` as `choice`), first offered first; empty when approving is one yes.
+             */
+            readonly choices?: readonly components["schemas"]["ApprovalChoiceOut"][];
             /** Requested By */
             readonly requested_by: string;
             /** Reason */
@@ -50024,6 +49970,13 @@ export interface components {
             readonly can_decide: boolean;
             /** History */
             readonly history: readonly components["schemas"]["ApprovalHistoryOut"][];
+        };
+        /** ApprovalChoiceOut */
+        readonly ApprovalChoiceOut: {
+            /** Value */
+            readonly value: string;
+            /** Label */
+            readonly label: string;
         };
         /** ApprovalDecidedOut */
         readonly ApprovalDecidedOut: {
@@ -50141,6 +50094,11 @@ export interface components {
              * @default
              */
             readonly comment: string;
+            /**
+             * Choice
+             * @default
+             */
+            readonly choice: string;
         };
         /** SlackShareOut */
         readonly SlackShareOut: {
@@ -79160,76 +79118,6 @@ export interface operations {
         };
     };
     readonly stop_act_as_request: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly request_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ActAsRequestOut"];
-                };
-            };
-        };
-    };
-    readonly begin_approve_act_as_request: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly request_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PasskeyOptionsOut"];
-                };
-            };
-        };
-    };
-    readonly finish_approve_act_as_request: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly request_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["ActAsApproveIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ActAsRequestOut"];
-                };
-            };
-        };
-    };
-    readonly decline_act_as_request: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

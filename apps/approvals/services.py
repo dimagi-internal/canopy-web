@@ -76,7 +76,7 @@ def create(*, kind: str, params: dict, requested_by_agent=None, requested_by_use
     try:
         with transaction.atomic():
             req = ApprovalRequest.objects.create(
-                workspace_id=described.workspace, kind=k.slug, params=p.model_dump(), title=described.title[:300],
+                workspace_id=described.workspace, kind=k.slug, params=p.model_dump(mode="json"), title=described.title[:300],
                 summary=described.summary, plan=described.plan, if_declined=IF_DECLINED, scopes=described.scopes,
                 reason=(reason or "").strip()[:REASON_MAX], evidence=_evidence(evidence),
                 source_url=(source_url or "")[:500], requested_by_agent=requested_by_agent,
@@ -101,7 +101,7 @@ def _after_create(pk: int) -> None:
 
 
 def decide(request_id: int, user, decision: str, *, comment: str = "", via: str = "web",
-           stepped_up: bool = False) -> ApprovalRequest:
+           stepped_up: bool = False, choice: str = "") -> ApprovalRequest:
     if decision not in ("approve", "decline"):
         raise ApprovalError("decision must be approve or decline", 422)
     if not getattr(user, "is_authenticated", False):
@@ -126,6 +126,9 @@ def decide(request_id: int, user, decision: str, *, comment: str = "", via: str 
         if decision == "approve" and k.step_up and not stepped_up:
             raise ApprovalError(f"{k.label} needs your passkey: approve it on its page in canopy, "
                                 f"{cards.page_url(req)}", 403)
+        offered = [value for value, _label in k.choices(p)]
+        if decision == "approve" and offered and choice not in offered:
+            raise ApprovalError(f"choose one of: {', '.join(offered)}", 422)
         comment = (comment or "").strip()
         if decision == "decline":
             _close(req, ApprovalRequest.DECLINED, user, via=via, comment=comment, event=ApprovalEvent.DECLINED)
@@ -133,7 +136,7 @@ def decide(request_id: int, user, decision: str, *, comment: str = "", via: str 
             _event(req, ApprovalEvent.APPROVED, user, via=via)
             try:
                 with transaction.atomic():
-                    result = k.execute(user, p, req)
+                    result = k.execute(user, p, req, choice=choice) if offered else k.execute(user, p, req)
             except kinds.ExecError as exc:
                 _close(req, ApprovalRequest.FAILED, user, via=via, comment=comment, event=ApprovalEvent.FAILED,
                        error=str(exc))
@@ -161,6 +164,12 @@ def _close(req: ApprovalRequest, status: str, user, *, via: str, comment: str, e
     req.error = error
     req.save(update_fields=["status", "decided_by", "decided_at", "via", "comment", "result", "error", "updated_at"])
     _event(req, event, user, via=via, error=error, result=result or {})
+    if status in (ApprovalRequest.DECLINED, ApprovalRequest.CANCELLED, ApprovalRequest.EXPIRED):
+        try:
+            k, p = kinds.parse(req.kind, req.params)
+        except kinds.KindError:
+            return
+        k.closed(p, req)
 
 
 def _after_close(pk: int) -> None:
@@ -205,12 +214,38 @@ def supersede(request_id: int, user, *, why: str) -> ApprovalRequest | None:
     return req
 
 
+def settle(request_id: int) -> ApprovalRequest | None:
+    """The request as of now: a pending one past its time, or whose kind says it lapsed, is closed as
+    expired first. None when it is gone."""
+    with transaction.atomic():
+        req = ApprovalRequest.objects.select_for_update(of=("self",)).filter(pk=request_id).first()
+        if req is None:
+            return None
+        if req.is_pending and ((req.expires_at and req.expires_at <= timezone.now()) or _lapsed(req)):
+            _close(req, ApprovalRequest.EXPIRED, None, via="", comment="", event=ApprovalEvent.EXPIRED)
+            transaction.on_commit(lambda pk=req.pk: _after_close(pk))
+    return req
+
+
+def _lapsed(req: ApprovalRequest) -> bool:
+    try:
+        k, p = kinds.parse(req.kind, req.params)
+        return k.lapsed(p) is not None
+    except kinds.KindError:
+        return False
+
+
 def expire_due(now=None) -> int:
-    """Close every pending request past its time. Returns how many."""
+    """Close every pending request past its time, or whose kind says it lapsed (`Kind.lapsed`).
+    Returns how many."""
     now = now or timezone.now()
     n = 0
-    for pk in list(ApprovalRequest.objects.filter(status=ApprovalRequest.PENDING, expires_at__lte=now)
-                   .values_list("pk", flat=True)[:100]):
+    due = list(ApprovalRequest.objects.filter(status=ApprovalRequest.PENDING, expires_at__lte=now)
+               .values_list("pk", flat=True)[:100])
+    lapsing = [k.slug for k in kinds.all_kinds() if type(k).lapsed is not kinds.Kind.lapsed]
+    due += [r.pk for r in ApprovalRequest.objects.filter(status=ApprovalRequest.PENDING, kind__in=lapsing)
+            .exclude(pk__in=due)[:100] if _lapsed(r)]
+    for pk in due:
         with transaction.atomic():
             req = ApprovalRequest.objects.select_for_update(of=("self",)).filter(
                 pk=pk, status=ApprovalRequest.PENDING).first()

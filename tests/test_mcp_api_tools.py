@@ -117,7 +117,7 @@ CREDENTIAL_ROUTES_ON_MCP: dict[str, str] = {
         "begin_passkey_registration", "begin_passkey_step_up", "finish_passkey_step_up",
     ), "a passkey ceremony: nothing it returns is a credential without the person's authenticator"),
     **dict.fromkeys((
-        "begin_confirm_my_host_grant", "begin_approve_act_as_request",
+        "begin_confirm_my_host_grant",
     ), "a passkey ceremony's start for the person's own act-as grant, in a browser session only "
        "(`stepup.require_browser`): a token's call is refused, and the answer is a WebAuthn "
        "challenge, never a credential"),

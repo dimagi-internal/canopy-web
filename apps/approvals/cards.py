@@ -6,7 +6,7 @@ params; the requester's own words (`reason`, `evidence`) are kept apart and labe
 """
 from __future__ import annotations
 
-from apps.workspaces.links import scoped_path, scoped_url
+from apps.workspaces.links import base_url, scoped_path, scoped_url
 
 from . import kinds
 from .authority import may_approve
@@ -17,11 +17,17 @@ _VIA = {"slack": "Slack", "web": "the web", "email": "email", "push": "a notific
 
 
 def url(req: ApprovalRequest) -> str:
+    """The request's page: under its workspace, or — a personal kind's, which its one person may not
+    be a member of — `/approvals/<id>`, about them rather than a workspace."""
+    if kinds.is_personal(req.kind):
+        return f"/approvals/{req.pk}"
     return scoped_path(req.workspace_id, f"/approvals/{req.pk}")
 
 
 def page_url(req: ApprovalRequest) -> str:
     """`url`, absolute: what a Slack message, an email or an agent's reply links to."""
+    if kinds.is_personal(req.kind):
+        return f"{base_url()}{url(req)}"
     return scoped_url(req.workspace_id, f"/approvals/{req.pk}")
 
 
@@ -60,10 +66,11 @@ def build(req: ApprovalRequest, *, viewer=None) -> dict:
     `step_up` says approving needs a passkey in a browser: every channel then offers a link to the
     request's page (`STEP_UP_APPROVE`) where it would offer Approve, and keeps Decline, which needs none."""
     try:
-        kind = kinds.get(req.kind)
+        kind, params = kinds.parse(req.kind, req.params)
         label, needs, step_up = kind.label, kind.needs, kind.step_up
+        choices = [{"value": v, "label": lbl} for v, lbl in kind.choices(params)] if req.is_pending else []
     except kinds.KindError:
-        label, needs, step_up = req.kind, "", False
+        label, needs, step_up, choices = req.kind, "", False, []
     sent = {}
     for d in req.deliveries.select_related("user"):
         sent.setdefault(who(d.user), set()).add(d.channel)
@@ -74,7 +81,7 @@ def build(req: ApprovalRequest, *, viewer=None) -> dict:
     return {
         "id": req.pk, "key": req.key, "kind": req.kind, "kind_label": label, "needs": needs,
         "title": req.title, "summary": req.summary, "status": req.status, "workspace": req.workspace_id,
-        "url": url(req), "page_url": page_url(req), "step_up": step_up,
+        "url": url(req), "page_url": page_url(req), "step_up": step_up, "choices": choices,
         "requested_by": requested_by(req), "reason": req.reason, "evidence": req.evidence,
         "plan": req.plan, "if_declined": req.if_declined, "source_url": req.source_url,
         "created_at": req.created_at, "expires_at": req.expires_at,

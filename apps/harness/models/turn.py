@@ -779,8 +779,8 @@ class ActAsGrant(models.Model):
 
     The agent asks (`POST /api/me/act-as-requests/`, with its turn's own login); canopy-web
     works out who the person is from that login (`turn_asker`), never from anything the
-    agent sends. The person approves at `/act-as/<id>` with a fresh WebAuthn assertion,
-    choosing read-only or read + write; from that touch the agent's token signs in as
+    agent sends. The person approves its personal approval (`agent.act_as`, at
+    `/approvals/<id>`) with a WebAuthn assertion made for it, choosing read-only or read + write; from that touch the agent's token signs in as
     them for `act_as.LIFETIME` and never longer, and only while `turn` is still executing.
     The token is returned to the agent once and only its hash is kept.
     """
@@ -830,9 +830,6 @@ class ActAsGrant(models.Model):
     token_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
     token_issued_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
-    #: Devices the push service accepted the request's notification for; 0 none, -1 failed,
-    #: null not tried.
-    push_sent = models.IntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]

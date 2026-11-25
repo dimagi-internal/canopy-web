@@ -41,6 +41,8 @@ class ApprovalPasskeyIn(StrictModel):
     #: The WebAuthn assertion made for this request (`approve/begin`'s options).
     credential: dict[str, Any]
     comment: str = Field(default="", max_length=2000)
+    #: One of the card's `choices`, for a kind that has them.
+    choice: str = Field(default="", max_length=32)
 
 
 class ApprovalEvidenceOut(StrictModel):
@@ -62,6 +64,11 @@ class ApprovalHistoryOut(StrictModel):
     at: dt.datetime
 
 
+class ApprovalChoiceOut(StrictModel):
+    value: str
+    label: str
+
+
 class ApprovalCardOut(StrictModel):
     id: int
     key: str
@@ -77,6 +84,9 @@ class ApprovalCardOut(StrictModel):
     step_up: bool = Field(description="Approving needs the approver's passkey, so only the request's page "
                                       "(`page_url`), in a browser, can approve it; Slack, an alert, a token and "
                                       "an agent can only decline it.")
+    choices: list[ApprovalChoiceOut] = Field(default_factory=list, description=(
+        "What the approver picks between when approving (send the `value` as `choice`), first offered "
+        "first; empty when approving is one yes."))
     requested_by: str
     reason: str
     evidence: list[ApprovalEvidenceOut]

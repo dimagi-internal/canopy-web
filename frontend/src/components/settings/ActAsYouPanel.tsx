@@ -84,8 +84,8 @@ export function ActAsYouPanel() {
                   <Td density="cozy" tone="secondary">{g.agent_name || g.agent}</Td>
                   <Td density="cozy" tone="muted">{g.reason}</Td>
                   <Td density="cozy" tone="muted">
-                    {g.status === 'pending' ? (
-                      <Link to={`/act-as/${g.id}`} className="text-primary hover:underline">
+                    {g.status === 'pending' && g.approval_url ? (
+                      <Link to={g.approval_url} className="text-primary hover:underline">
                         waiting for you
                       </Link>
                     ) : g.scope === 'write' ? (
