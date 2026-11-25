@@ -31,6 +31,10 @@ def serves_of(capabilities) -> dict:
     return said if isinstance(said, dict) else {}
 
 
+#: Columns only `runner_sync` writes (an F() increment); `Runner.save` leaves them out.
+_BUMPED_ONLY = frozenset({"sync_version", "keeper_version"})
+
+
 class Runner(models.Model):
     """A paired executor (laptop emdash daemon, cloud container, remote box)."""
 
@@ -256,6 +260,10 @@ class Runner(models.Model):
     # doorbell frames. Only `runner_sync.bump` writes it (an F() increment); `save`
     # leaves it out, so a stale in-memory row never writes an older value back.
     sync_version = models.BigIntegerField(default=0)
+    # Moves, together with `sync_version`, whenever canopy-web records vault work this
+    # box may keep (`runner_sync.bump_keepers`): a box runs its vault keeper when this
+    # differs from the value it last kept at, not on a clock. Written like `sync_version`.
+    keeper_version = models.BigIntegerField(default=0)
     # What the box REPORTS about its own features, one named check each —
     # `{"checks": [{"name", "status": ok|warn|fail, "detail"}], "checked_at",
     # "bootstrapped_at", "received_at"}`. OBSERVED, never typed, like `projects`.
@@ -398,9 +406,9 @@ class Runner(models.Model):
             self.paired_as = self.name
         if not creating and kwargs.get("update_fields") is None and not args:
             kwargs["update_fields"] = [f.attname for f in self._meta.concrete_fields
-                                       if not f.primary_key and f.attname != "sync_version"]
+                                       if not f.primary_key and f.attname not in _BUMPED_ONLY]
         elif kwargs.get("update_fields") is not None:
-            kwargs["update_fields"] = [f for f in kwargs["update_fields"] if f != "sync_version"]
+            kwargs["update_fields"] = [f for f in kwargs["update_fields"] if f not in _BUMPED_ONLY]
         super().save(*args, **kwargs)
         if creating and self.workspace_id:
             RunnerEnrollment.objects.get_or_create(

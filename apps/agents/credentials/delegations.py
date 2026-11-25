@@ -32,7 +32,7 @@ from django.utils import timezone
 
 from ..definition import definition_key
 from ..models import Agent, AgentCredential, RepoIdentity
-from . import accounts, zk
+from . import accounts, keeper_doorbell, zk
 
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 15
@@ -280,6 +280,8 @@ def set_github(agent: Agent, user, token: str):
                 "provider_expires_at": _expires(meta),
                 "checks": meta["checks"], "checked_at": timezone.now(), "checked_by": "server",
             })
+        # Sealed to the machines that hold it now; the others wait for one of them.
+        keeper_doorbell.ring(agent=agent)
     return entry
 
 

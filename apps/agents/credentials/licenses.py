@@ -83,7 +83,8 @@ _read_once: contextvars.ContextVar[dict | None] = contextvars.ContextVar("licens
 
 @contextmanager
 def read_once() -> Iterator[None]:
-    """Inside the block, `active` reads each (agent, person) once. For a read-only
+    """Inside the block, `active` reads the active licenses once, and asks the caller
+    list once for each (agent, person) that holds one. For a read-only
     request that asks one owner's license of each of their boxes (a keeper's
     `GET /vault-keeper`); a demotion still applies from the next request."""
     token = _read_once.set({})
@@ -102,8 +103,18 @@ def active(agent, user) -> AgentLicense | None:
         return _active(agent, user)
     key = (agent.pk, user.pk)
     if key not in memo:
-        memo[key] = _active(agent, user)
+        if _ROWS not in memo:
+            # Most pairs a keeper asks about hold no license: one read of the active ones
+            # answers them all, and only a pair that holds one asks the caller list.
+            memo[_ROWS] = {(lic.agent_id, lic.user_id): lic
+                           for lic in AgentLicense.objects.filter(status=AgentLicense.ACTIVE)}
+        lic = memo[_ROWS].get(key)
+        memo[key] = lic if lic is not None and _decision(agent, user).access == access.FULL else None
     return memo[key]
+
+
+#: `read_once`'s key for the active licenses it read.
+_ROWS = "active-rows"
 
 
 def _active(agent, user) -> AgentLicense | None:

@@ -1,23 +1,25 @@
-"""The cloud runner's keeper pass: `canopy vault zk keep` on its own clock, in the
-background, at most every KEEP_INTERVAL_SECONDS, never blocking or failing the loop."""
+"""The cloud runner's keeper pass: `canopy vault zk keep` in the background, never
+blocking or failing the loop. With a `/sync` answer that carries `keeper_version` it
+runs when that moved, and otherwise only on KEEP_RECONCILE_SECONDS; without one, on
+its own clock, at most every KEEP_INTERVAL_SECONDS."""
 from __future__ import annotations
 
 import subprocess
 
 
 class _Done:
-    def __init__(self, stdout="", stderr=""):
-        self.stdout, self.stderr, self.returncode = stdout, stderr, 0
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
 
 
 def _run_inline(cloud_runner, monkeypatch):
     """Run the keeper's thread body in place, so a test sees its effect."""
     class Inline:
-        def __init__(self, target, **kw):
-            self._target = target
+        def __init__(self, target, args=(), **kw):
+            self._target, self._args = target, args
 
         def start(self):
-            self._target()
+            self._target(*self._args)
 
         def is_alive(self):
             return False
@@ -70,3 +72,46 @@ def test_a_failing_keeper_never_raises_and_can_be_turned_off(cloud_runner, monke
     assert "could not run" in logs[0]
     monkeypatch.setenv("VAULT_KEEP", "0")
     assert cloud_runner.maybe_keep_vaults(now=99999.0) is False
+
+
+def _synced(cloud_runner, keeper_version):
+    cloud_runner._SYNC.update(supported=True, answer={"version": 1, "keeper_version": keeper_version})
+
+
+def test_with_a_keeper_version_an_unmoved_one_waits_for_the_reconcile(cloud_runner, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cloud_runner.subprocess, "run", lambda argv, **kw: calls.append(argv) or _Done(""))
+    monkeypatch.setattr(cloud_runner, "_log", lambda *a, **k: None)
+    _run_inline(cloud_runner, monkeypatch)
+    _synced(cloud_runner, 7)
+    assert cloud_runner.maybe_keep_vaults(now=1000.0) is True                     # the first pass
+    assert cloud_runner.maybe_keep_vaults(now=1000.0 + cloud_runner.KEEP_INTERVAL_SECONDS) is False
+    assert cloud_runner.maybe_keep_vaults(now=1000.0 + cloud_runner.KEEP_RECONCILE_SECONDS) is True
+    assert len(calls) == 2
+
+
+def test_a_moved_keeper_version_runs_a_pass_at_once(cloud_runner, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cloud_runner.subprocess, "run", lambda argv, **kw: calls.append(argv) or _Done(""))
+    monkeypatch.setattr(cloud_runner, "_log", lambda *a, **k: None)
+    _run_inline(cloud_runner, monkeypatch)
+    _synced(cloud_runner, 7)
+    assert cloud_runner.maybe_keep_vaults(now=1000.0) is True
+    _synced(cloud_runner, 8)
+    assert cloud_runner.maybe_keep_vaults(now=1005.0) is False                    # passes stay spaced
+    assert cloud_runner.maybe_keep_vaults(now=1000.0 + cloud_runner.KEEP_MIN_GAP_SECONDS) is True
+    assert cloud_runner.maybe_keep_vaults(now=1000.0 + 2 * cloud_runner.KEEP_MIN_GAP_SECONDS) is False
+    assert len(calls) == 2
+
+
+def test_a_failed_pass_is_tried_again_on_the_clock(cloud_runner, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cloud_runner.subprocess, "run",
+                        lambda argv, **kw: calls.append(argv) or _Done("", "boom", returncode=1))
+    monkeypatch.setattr(cloud_runner, "_log", lambda *a, **k: None)
+    _run_inline(cloud_runner, monkeypatch)
+    _synced(cloud_runner, 7)
+    assert cloud_runner.maybe_keep_vaults(now=1000.0) is True
+    assert cloud_runner.maybe_keep_vaults(now=1000.0 + cloud_runner.KEEP_MIN_GAP_SECONDS) is False
+    assert cloud_runner.maybe_keep_vaults(now=1000.0 + cloud_runner.KEEP_INTERVAL_SECONDS) is True
+    assert len(calls) == 2

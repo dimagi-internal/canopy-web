@@ -141,9 +141,12 @@ class RunnerSyncOut(Schema):
     `/menu-answers`, `/closes`, `/backfills`, `/handoffs`, `/streams`); `sections`
     holds what other apps register (`runner_sync.register_section`, e.g. `listen`).
     `mint_due` says `/mint/claim` has something (claiming it consumes a code, so it
-    stays its own call). `version` is the ETag's number."""
+    stays its own call). `version` is the ETag's number. `keeper_version` moves (with
+    `version`) when there is new vault work this box may keep: the box runs its vault
+    keeper when it differs from the value it last kept at."""
 
     version: int
+    keeper_version: int = 0
     interrupts: list[SessionInterruptOut] = []
     answers: list[MenuAnswerOut] = []
     closes: list[CloseOut] = []

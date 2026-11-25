@@ -234,6 +234,8 @@ def share(conn: Connection, *, user, statement: dict, sig: str, by_jkt: str, sea
         conn.owner_endorsements = rcpt.snapshot_owner_endorsements(conn)
         conn.save()
         added, removed = _follow_statement(conn, agent_pks, by=user)
+        # The machines it now allows that hold no copy wait for a box that does.
+        services.ring_keepers(conn)
 
     subject = services.Subject.of(conn)
     for agent in added:

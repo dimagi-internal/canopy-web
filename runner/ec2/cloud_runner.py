@@ -15675,27 +15675,58 @@ def _start_turn(runner_id: str, turn: dict) -> bool:
 
 # ── the vault keeper ────────────────────────────────────────────────────────
 # A box that holds an agent's vault key passes it on to whoever canopy-web says is
-# waiting and this box trusts (`canopy vault zk keep`),
-# so a new vault member
-# or an approved machine gets the key without anyone being asked. Background,
-# fail-open, at most every KEEP_INTERVAL_SECONDS; `VAULT_KEEP=0` turns it off.
+# waiting and this box trusts (`canopy vault zk keep`), so a new vault member or an
+# approved machine gets the key without anyone being asked. Background, fail-open;
+# `VAULT_KEEP=0` turns it off.
+#
+# When to run: canopy-web moves this box's keeper version (`keeper_version` in its
+# `/sync` answer) in the same transaction as any write that gives it vault work, so
+# a pass runs when that differs from the version the last finished pass kept at, and
+# otherwise every KEEP_RECONCILE_SECONDS, for anything no write rang. A server whose
+# `/sync` says nothing about it (or a box not on `/sync`) keeps the clock:
+# every KEEP_INTERVAL_SECONDS. A pass that failed is tried again on that clock too.
 
 KEEP_INTERVAL_SECONDS = 120
-_KEEP_STATE = {"at": 0.0, "thread": None, "last": ""}
+#: The keeper's reconcile while `/sync` carries a keeper version.
+KEEP_RECONCILE_SECONDS = float(os.environ.get("KEEP_RECONCILE_SECONDS", "900"))
+#: The shortest gap between two passes a moved version starts.
+KEEP_MIN_GAP_SECONDS = 15
+#: at: when the last pass started. kept: the keeper version the last finished pass
+#: started at (None: none finished, or the last one failed).
+_KEEP_STATE = {"at": 0.0, "thread": None, "last": "", "kept": None}
 
 
-def _keep_vaults() -> None:
+def _keep_vaults(version: int | None = None) -> None:
     try:
         out = subprocess.run([_canopy_cli(), "vault", "zk", "keep"], capture_output=True, text=True,
                              env={**_child_safe_env(), **_cli_base_env()}, timeout=KEEP_INTERVAL_SECONDS)
     except Exception as exc:  # noqa: BLE001 — a keeper hiccup never touches the loop
         _log(f"vault keeper: could not run ({exc})")
+        _KEEP_STATE["kept"] = None
         return
     text = ((out.stdout or "") + (out.stderr or "")).strip()
-    # Say it once: the same "waiting" every two minutes is noise, a grant is news.
+    # Say it once: the same "waiting" every pass is noise, a grant is news.
     if text and (text != _KEEP_STATE["last"] or "granted:" in text):
         _log("vault keeper: " + text.replace("\n", " | ")[:1500])
     _KEEP_STATE["last"] = text
+    _KEEP_STATE["kept"] = version if getattr(out, "returncode", 0) == 0 else None
+
+
+def sync_keeper_version() -> int | None:
+    """The keeper version of the last `/sync` answer; None when there is none to go by
+    (no answer yet, a server without `/sync`, or one whose answer does not carry it)."""
+    answer = _SYNC["answer"] if _SYNC["supported"] else None
+    v = answer.get("keeper_version") if isinstance(answer, dict) else None
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _keep_due(now: float, version: int | None) -> bool:
+    since = now - _KEEP_STATE["at"] if _KEEP_STATE["at"] else float("inf")
+    if version is None or _KEEP_STATE["kept"] is None and _KEEP_STATE["at"]:
+        return since >= KEEP_INTERVAL_SECONDS
+    if version != _KEEP_STATE["kept"]:
+        return since >= KEEP_MIN_GAP_SECONDS
+    return since >= KEEP_RECONCILE_SECONDS
 
 
 def maybe_keep_vaults(*, now: float | None = None) -> bool:
@@ -15706,10 +15737,11 @@ def maybe_keep_vaults(*, now: float | None = None) -> bool:
     running = _KEEP_STATE["thread"]
     if running is not None and running.is_alive():
         return False
-    if _KEEP_STATE["at"] and now - _KEEP_STATE["at"] < KEEP_INTERVAL_SECONDS:
+    version = sync_keeper_version()
+    if not _keep_due(now, version):
         return False
     _KEEP_STATE["at"] = now
-    t = threading.Thread(target=_keep_vaults, name="vault-keeper", daemon=True)
+    t = threading.Thread(target=_keep_vaults, args=(version,), name="vault-keeper", daemon=True)
     _KEEP_STATE["thread"] = t
     t.start()
     return True

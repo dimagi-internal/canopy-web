@@ -45,6 +45,19 @@ def bump(*runner_ids) -> None:
         Runner.objects.filter(pk__in=ids).update(sync_version=F("sync_version") + 1)
 
 
+def bump_keepers(*runner_ids) -> None:
+    """`bump`, and also move each runner's keeper version: canopy-web recorded vault
+    work the box may keep (someone newly waiting for a key it holds, an endorsement
+    or a keepers' record it checks them against). The box runs `canopy vault zk keep`
+    when the keeper version in `/sync` differs from the one it last kept at. Same
+    rules as `bump`: inside the writing transaction, an F() increment."""
+    ids = {getattr(r, "pk", r) for r in _flat(runner_ids)}
+    ids.discard(None)
+    if ids:
+        Runner.objects.filter(pk__in=ids).update(sync_version=F("sync_version") + 1,
+                                                 keeper_version=F("keeper_version") + 1)
+
+
 def version_of(runner_id) -> int:
     """The current version, read from the row (never a cached instance)."""
     v = Runner.objects.filter(pk=getattr(runner_id, "pk", runner_id)).values_list(

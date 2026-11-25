@@ -23,7 +23,7 @@ from apps.harness import device_keys
 from apps.passkeys.models import UserVaultKeyset
 
 from ..models import AgentVaultEndorsement
-from . import vault_members, zk
+from . import keeper_doorbell, vault_members, zk
 from .zk import ZkError, _shape, b64u_bytes
 
 MAX_ENDORSEMENTS = 64
@@ -149,4 +149,8 @@ def add(agent, *, user, items: list, own_machines_only: bool = False) -> int:
             AgentVaultEndorsement.objects.update_or_create(
                 agent=agent, kind=kind, target=target, endorser=user,
                 defaults={"key_jkt": key_jkt, "endorser_jkt": my_jkt, "sig": sig})
+        # A machine a keeper refused for want of an endorsement may now be trusted. Every
+        # keeper: a workspace vault checks its machines against its agents' endorsements.
+        if rows:
+            keeper_doorbell.ring()
     return len(rows)

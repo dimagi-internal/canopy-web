@@ -840,6 +840,7 @@ def sync_for(runner) -> dict:
     ).values_list("pk", flat=True)
     return {
         "version": runner.sync_version,
+        "keeper_version": runner.keeper_version,
         **session_interrupts_for(runner),
         **menu_answers_for(runner),
         **closes_for(runner),
