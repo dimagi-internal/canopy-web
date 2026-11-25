@@ -32,6 +32,17 @@ CANOPY_STANDIN = os.path.join(_STANDIN_DIR, "canopy")
 with open(CANOPY_STANDIN, "w") as _fh:
     _fh.write('#!/bin/sh\necho "the real canopy CLI is not reachable from the runner tests" >&2\nexit 1\n')
 os.chmod(CANOPY_STANDIN, 0o755)
+# Agents run this suite on the runner box itself, beside live turns, as a user whose
+# sudoers line lets the runner restart its own unit and start its updater. A test that
+# reached the real `sudo` or `systemctl` there would restart canopy-runner and cut
+# every turn in flight. Both names resolve to refusing stand-ins, like `canopy`; a test
+# wanting their behaviour fakes subprocess.run.
+HOST_STANDINS = {}
+for _name in ("sudo", "systemctl"):
+    HOST_STANDINS[_name] = os.path.join(_STANDIN_DIR, _name)
+    with open(HOST_STANDINS[_name], "w") as _fh:
+        _fh.write(f'#!/bin/sh\necho "the runner tests may not run the real {_name}" >&2\nexit 1\n')
+    os.chmod(HOST_STANDINS[_name], 0o755)
 os.environ["PATH"] = f"{_STANDIN_DIR}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
