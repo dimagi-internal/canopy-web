@@ -451,7 +451,8 @@ export interface paths {
          *     whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
          *     `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
          *     `rate_limited`, `provider_rate_limited` (Salesforce is limiting calls: `retry_after` and `limits` when it
-         *     said them), `session_ended`, `request_too_large`, `response_too_large`, `response_unreadable`,
+         *     said them), `session_ended`, `scope_added` (the app now asks for a permission the viewer's hour lacks),
+         *     `request_too_large`, `response_too_large`, `response_unreadable`,
          *     `provider_unavailable`. Salesforce's own count of the org's API use comes back as `limits`.
          *
          *     `GET query/<locator>` is a query's next page (the locator from its `nextRecordsUrl`), covered by the
