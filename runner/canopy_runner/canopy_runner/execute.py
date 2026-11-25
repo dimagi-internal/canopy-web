@@ -288,7 +288,8 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
     _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=agent,
                          sent=res)
     reason = _undelivered(client, turn_id, task, verifier, work_prompt,
-                          port=cfg.cdp_port, project=agent)
+                          port=cfg.cdp_port, project=agent,
+                          emdash_db=getattr(cfg, "emdash_db", "") or "")
     if reason:
         caller.clear_pending(task)
         _fail_typed(client, turn_id, task, reason)
@@ -484,7 +485,7 @@ def _fail_typed(client, turn_id: str, task: str, reason: str = "") -> None:
 
 
 def _undelivered(client, turn_id: str, task: str, verifier, prompt: str, *,
-                 port: int = 9222, project: str = "") -> str:
+                 port: int = 9222, project: str = "", emdash_db: str = "") -> str:
     """Why the send verifiably did NOT reach Claude Code (see delivery.py), after a
     bounded, duplicate-safe attempt to recover it (`_recover_delivery`) — or "" when
     it did (or cannot be checked).
@@ -505,7 +506,7 @@ def _undelivered(client, turn_id: str, task: str, verifier, prompt: str, *,
             "payload": {"status": "delivery_unmatched", "task": task, "landed": "yes"}}])
         return ""
     delivered, reason = _recover_delivery(client, turn_id, task, verifier, prompt,
-                                          port=port, project=project)
+                                          port=port, project=project, emdash_db=emdash_db)
     if delivered:
         return ""
     logger.warning("UNDELIVERED turn=%s task=%s: sent, but nothing reached the transcript "
@@ -630,8 +631,43 @@ def _post_screen_tail(client, turn_id: str, task: str, attempt: int, reason: str
         "screen_tail": _screen_tail(screen)}}])
 
 
+#: How often recovery looks again when the sidebar lookup misses a task that emdash's
+#: sqlite holds live, and how long it waits between looks. Reads only: a retry here
+#: can never put the message into the session twice.
+SIDEBAR_MISS_RETRIES = 3
+SIDEBAR_MISS_DELAY = 2.0
+
+
+def _read_composer_past_sidebar_miss(verifier, prompt: str, task: str, *, port: int,
+                                     project: str, emdash_db: str = "",
+                                     sleep=time.sleep):
+    """`cdp_control.read_composer`, except that a TASK_NOT_FOUND for a task emdash's
+    sqlite holds LIVE is a sidebar miss, not a gone task, so it looks again (bounded).
+
+    The sidebar lookup is a DOM scan of a virtualized list that re-renders while the
+    session's row changes (it starts running, a human scrolls), so one scan can miss
+    a row the next scan finds. sqlite is the truth for whether the task exists
+    (`emdash.task_state`). The transcript is checked between looks, so an original
+    that lands meanwhile ends the wait. Returns the look's state dict, or "landed".
+    Raises the last CDPError when the task is not live in sqlite, sqlite cannot say
+    ("unknown"), the error is not a lookup miss, or the looks run out."""
+    for attempt in range(SIDEBAR_MISS_RETRIES + 1):
+        try:
+            return cdp_control.read_composer(task, port=port, project=project)
+        except cdp_control.CDPError as exc:
+            if (attempt == SIDEBAR_MISS_RETRIES or "TASK_NOT_FOUND" not in str(exc)
+                    or emdash.task_state(emdash_db, task) != "live"):
+                raise
+            logger.info("delivery recovery on '%s': the sidebar missed a task emdash holds "
+                        "live — looking again (%d/%d)", task, attempt + 1, SIDEBAR_MISS_RETRIES)
+        sleep(SIDEBAR_MISS_DELAY)
+        if _landed(verifier, prompt):
+            return "landed"
+    raise AssertionError("unreachable")
+
+
 def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
-                      port: int, project: str) -> tuple[bool, str]:
+                      port: int, project: str, emdash_db: str = "") -> tuple[bool, str]:
     """After a MISSING confirm, try (boundedly) to get the message delivered without
     ever putting it into the session twice. (delivered, reason): delivered when it is
     now believed delivered; otherwise reason says why recovery gave up.
@@ -665,15 +701,21 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
                 "status": "delivery_late", "task": task, "attempt": attempt, "landed": "yes"}}])
             return True, ""
         try:
-            state = cdp_control.read_composer(task, port=port, project=project)
+            state = _read_composer_past_sidebar_miss(verifier, prompt, task, port=port,
+                                                     project=project, emdash_db=emdash_db)
         except cdp_control.CDPError as exc:
             logger.warning("delivery recovery on '%s' (turn=%s): cannot read the session — "
                            "leaving it: %s", task, turn_id, str(exc)[:200])
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                 "status": "delivery_retry", "task": task, "attempt": attempt,
                 "action": delivery.LEAVE, "reason": "unreadable",
+                "task_state": emdash.task_state(emdash_db, task),
                 "detail": str(exc)[:200]}}])
             return False, "unreadable"
+        if state == "landed":
+            _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
+                "status": "delivery_late", "task": task, "attempt": attempt, "landed": "yes"}}])
+            return True, ""
         action, reason = delivery.recovery_action(state, prompt)
         if (action, reason) == (delivery.LEAVE, "session_busy"):
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
@@ -1222,7 +1264,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=target,
                              sent=res)
         reason = _undelivered(client, turn_id, task, verifier, prompt,
-                              port=cfg.cdp_port, project=target)
+                              port=cfg.cdp_port, project=target,
+                              emdash_db=getattr(cfg, "emdash_db", "") or "")
         if reason:
             caller.clear_pending(task)
             _fail_typed(client, turn_id, task, reason)

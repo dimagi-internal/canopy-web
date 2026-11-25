@@ -34,6 +34,7 @@ def _fast(monkeypatch):
     monkeypatch.setattr(execute, "BUSY_WAIT_TIMEOUT", 0.3)
     monkeypatch.setattr(execute, "BUSY_WAIT_POLL", 0.01)
     monkeypatch.setattr(execute, "SNAPSHOT_AFTER_SEND", False)
+    monkeypatch.setattr(execute, "SIDEBAR_MISS_DELAY", 0.01)
 
     def no_screen(*a, **k):
         raise cdp_control.CDPError("screen read not faked in this test")
@@ -318,6 +319,77 @@ def test_an_unreadable_composer_fails_as_before(monkeypatch, transcript):
     assert out == "failed:t1"
     assert len(s.sends) == 1 and s.keys == []
     assert "Couldn't confirm" in client.failed
+
+
+def _sidebar_miss(session):
+    raise cdp_control.CDPError('TASK_NOT_FOUND: no task "c-you-were-just-brought-into-an-8202" '
+                               'under project "ace" in this emdash (archived, or another '
+                               'macOS account)')
+
+
+def test_a_sidebar_miss_on_a_live_task_is_looked_at_again(monkeypatch, transcript):
+    """The sidebar scan missed a task emdash's sqlite holds live. That is a miss, not
+    a gone task: the next look finds our text and Enter recovers it."""
+    s = _Session(monkeypatch, transcript, looks=[_sidebar_miss, _state(typed=PROMPT)],
+                 enter_lands=True)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out.startswith("chat:t1")
+    assert client.failed is None
+    assert s.reads == 2 and len(s.sends) == 1
+    assert client.retries() == [("submit", "composer_holds_message")]
+    assert "delivery_recovered" in client.statuses()
+
+
+def test_an_original_landing_during_a_sidebar_miss_ends_the_wait(monkeypatch, transcript):
+    def miss_while_it_lands(session):
+        _land(session.transcript)
+        _sidebar_miss(session)
+    s = _Session(monkeypatch, transcript, looks=[miss_while_it_lands], retype_lands=True)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out.startswith("chat:t1")
+    assert client.failed is None
+    assert s.reads == 1 and len(s.sends) == 1 and s.keys == []
+    assert "delivery_late" in client.statuses()
+
+
+@pytest.mark.parametrize("db_state", ["archived", "absent", "unknown"])
+def test_a_sidebar_miss_is_believed_when_sqlite_does_not_hold_the_task_live(
+        monkeypatch, transcript, db_state):
+    def gone_then_miss(session):
+        # The task leaves emdash after the send: sqlite stops calling it live.
+        monkeypatch.setattr(emdash, "task_state", lambda *a, **k: db_state)
+        _sidebar_miss(session)
+    s = _Session(monkeypatch, transcript, looks=[gone_then_miss, _state(typed=PROMPT)],
+                 enter_lands=True)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out == "failed:t1"
+    assert s.reads == 1 and len(s.sends) == 1 and s.keys == []
+    assert client.retries() == [("leave", "unreadable")]
+    retry = [e["payload"] for e in client.events
+             if e["payload"].get("status") == "delivery_retry"][0]
+    assert retry["task_state"] == db_state
+    assert "could not read the session's screen" in client.failed
+
+
+def test_a_sidebar_miss_that_persists_gives_up_after_bounded_looks(monkeypatch, transcript):
+    s = _Session(monkeypatch, transcript, looks=[_sidebar_miss], retype_lands=True)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out == "failed:t1"
+    assert s.reads == 1 + execute.SIDEBAR_MISS_RETRIES
+    assert len(s.sends) == 1 and s.keys == []
+    assert client.retries() == [("leave", "unreadable")]
 
 
 def test_a_human_typing_between_the_look_and_the_retype_is_not_clobbered(monkeypatch, transcript):
