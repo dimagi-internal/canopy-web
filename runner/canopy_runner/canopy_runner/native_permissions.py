@@ -599,13 +599,21 @@ def write_worktree_settings(worktree: str, permissions: dict, *, profile: str = 
 
 
 def confine_worktree(cap: dict, worktree: str, *, caller_path: str | None = None,
-                     thread_id: str = "", home: pathlib.Path | None = None) -> pathlib.Path:
+                     thread_id: str = "", home: pathlib.Path | None = None,
+                     allow_rules: bool = True) -> pathlib.Path:
     """Compute and write the native layer for one confined worktree. Raises OSError.
     The session's own Claude sessions are not known here (emdash starts them), so
-    its whole project directory stays its own (`reach_denies`, sessions=None)."""
+    its whole project directory stays its own (`reach_denies`, sessions=None).
+
+    `allow_rules=False` writes the deny list (and `defaultMode`) with no allow rules:
+    for a worktree whose repository Claude Code does not trust, where project allow
+    rules are dropped after a startup dialog that would stall the session
+    (claude_trust). The deny list needs no trust."""
     names = mcp_server_names(home=home, worktree=worktree)
     perms = settings_for(cap, worktree=worktree, caller_path=caller_path, thread_id=thread_id,
                          servers=set(names))
+    if not allow_rules:
+        perms = {**perms, "allow": []}
     return write_worktree_settings(worktree, perms, profile=str((cap or {}).get("name") or ""),
                                    stop_servers=servers_to_stop(cap, names))
 

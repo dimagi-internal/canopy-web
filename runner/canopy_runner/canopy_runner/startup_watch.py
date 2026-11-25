@@ -22,9 +22,14 @@ counts it as waiting on you. It does not lock the composer (`menuBlocksComposer`
 **What the marker does NOT do.** It does not say which dialog it is. Reading the
 screen needs CDP, which clicks the task and steals focus. Guessing from
 timing is how a signal starts lying. It does not answer the dialog either. A
-startup dialog's default is not always the safe choice: the trust gate's default
-is "Yes, I trust this folder", and the Chrome offer's answer is saved as a
-machine-wide preference. That stays a human's decision.
+startup dialog's default is not always the safe choice: the folder-trust gate's
+default is "Yes, I trust this folder"; its "pre-approves N tool permissions"
+variant (a trusted worktree whose repository is not, see claude_trust) defaults to
+"No, continue without these permissions", which silently strips a confined
+session's allow rules; and the Chrome offer's answer is saved as a machine-wide
+preference. That stays a human's decision. A chat turn whose new session has no
+transcript is failed by the chat path itself (execute_chat_turn), so its caller
+hears an error rather than an empty reply.
 
 **Why only sessions canopy created.** An emdash task a human opened and has not
 typed into also has no transcript, and that is not a stall. So only the names

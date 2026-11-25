@@ -28,7 +28,7 @@ from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
                native_permissions, page_site, readiness, scoped_token, session_naming, startup_watch, transcript)
-from . import stored_agents, transfer, whois
+from . import claude_trust, stored_agents, transfer, whois
 from .client import ClientError
 from .tail import TailReader
 
@@ -123,6 +123,20 @@ def _confine(client, turn: dict, task: str) -> bool:
         return False
 
 
+def _trust_stored_checkout(turn: dict) -> None:
+    """Before a caller's session is created in a STORED agent's checkout, record Claude
+    Code's trust for that checkout, so the confined profile's own allow rules apply
+    instead of stopping the session on the "This folder pre-approves N tool
+    permissions" dialog (claude_trust). Best-effort: without it the native layer is
+    written deny-only, and profile_guard confines the session either way."""
+    if caller.confined_profile(turn) is None or not stored_agents.is_stored(turn):
+        return
+    path = str(stored_agents.agent_dir(turn.get("agent_slug") or ""))
+    if not claude_trust.trust_stored_checkout(path):
+        logger.warning("caller turn=%s: could not record Claude Code trust for %s",
+                       turn.get("id"), path)
+
+
 #: How long to wait for emdash to record a NEW session's worktree before giving up
 #: on the native layer for it (profile_guard still confines it either way).
 NATIVE_WAIT_SECONDS = 10.0
@@ -148,6 +162,7 @@ def _native_confine(cfg, client, turn: dict, task: str) -> bool:
         worktree = emdash.task_worktree(cfg.emdash_db, target, task)
     written = False
     detail = ""
+    allow = True
     # emdash names the worktree dir after the task (`emdash-<task>-<suffix>` or
     # `<task>-<suffix>`); anything else is not this session's, and settings written
     # into the wrong directory would confine — or fail to confine — the wrong one.
@@ -156,10 +171,16 @@ def _native_confine(cfg, client, turn: dict, task: str) -> bool:
     elif task not in os.path.basename(os.path.normpath(worktree)):
         detail = f"worktree {worktree!r} is not named for {task!r}"
     else:
+        # Allow rules in an untrusted repository are dropped by Claude Code after a
+        # startup dialog no one is there to answer; leave them out (claude_trust).
+        allow = claude_trust.allow_rules_apply(worktree)
+        if not allow:
+            logger.warning("caller turn=%s: %r is in a repository Claude Code does not trust; "
+                           "native layer written deny-only", turn.get("id"), worktree)
         try:
             native_permissions.confine_worktree(
                 cap, worktree, caller_path=str(caller.CALLER_ROOT / f"{turn.get('id')}.json"),
-                thread_id=caller.thread_id(turn))
+                thread_id=caller.thread_id(turn), allow_rules=allow)
             written = True
         except OSError as exc:
             detail = f"could not write settings: {exc}"
@@ -168,6 +189,7 @@ def _native_confine(cfg, client, turn: dict, task: str) -> bool:
                        "profile_guard alone confines it", turn.get("id"), task, detail)
     _post_events_best_effort(client, turn["id"], [{"kind": "status", "payload": {
         "status": "native_permissions", "task": task, "written": written,
+        **({} if allow else {"allow_rules": "omitted: repository not trusted"}),
         **({"detail": detail[:200]} if detail else {})}}])
     return written
 
@@ -805,7 +827,12 @@ def _resolve_transcript_path(target: str, task: str, *, emdash_db: str | None = 
     )
 
 
-def _wait_for_transcript(target: str, task: str, *, timeout: float = 45.0, poll: float = 0.5,
+#: How long a chat turn waits for its session's transcript before failing the turn.
+TRANSCRIPT_WAIT_S = 45.0
+
+
+def _wait_for_transcript(target: str, task: str, *, timeout: float = TRANSCRIPT_WAIT_S,
+                         poll: float = 0.5,
                          emdash_db: str | None = None):
     """A freshly-created emdash session's transcript .jsonl doesn't exist until Claude
     Code starts writing. Wait (bounded) for it to appear; reused sessions resolve at once.
@@ -1121,6 +1148,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
                       status="cancelled", emdash_task_id=task or "")
         return f"cancelled:{turn_id}"
 
+    created_here = not task
     if task and not _confine(client, turn, task):
         return f"failed:{turn_id}"
     if task:
@@ -1224,6 +1252,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         name = _task_name(target, turn)
         if not _confine(client, turn, name):
             return f"failed:{turn_id}"
+        _trust_stored_checkout(turn)
         caller.write_pending(name, turn, envelope)
         chat_key.write(turn, task=name)
         page_site.write(turn, task=name)
@@ -1272,11 +1301,20 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     if path is not None:
         chat_key.write(turn, task=task, transcript_id=pathlib.Path(path).stem)
     if path is None:
+        # FAILED, not done: the reply cannot reach the asker, and a caller such as
+        # labs' worker-chat bridge hands a failed turn to a person. Ending it "done"
+        # with no text left a Connect Worker's message unanswered while the session
+        # sat on a startup dialog. A NEW session with no transcript has not started
+        # (startup_watch); the session stays open in emdash for whoever answers it.
         logger.warning("chat turn=%s: no transcript for task=%s (agent=%s) — reply not bridged",
                        turn_id, task, target)
-        client.finish(turn_id, note="chat: transcript not found; reply not bridged",
-                      emdash_task_id=task)
-        return f"chat:{turn_id}:{task}"
+        why = ("the session has not started (no transcript after "
+               f"{int(TRANSCRIPT_WAIT_S)}s; Claude Code is likely waiting on a startup "
+               "dialog in emdash)" if created_here else
+               "the session's transcript could not be found")
+        client.finish(turn_id, status="failed", emdash_task_id=task,
+                      note=f"chat: {why}; reply not bridged")
+        return f"failed:{turn_id}"
     # Hand off to the tick pump and RETURN — the turn stays EXECUTING until the agent
     # hands the floor back. Waiting here would block the whole runner loop (heartbeat,
     # claims, session reports) for the length of an agent turn, which is minutes.
@@ -1405,6 +1443,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     name = _task_name(agent, turn)
     if not _confine(client, turn, name):
         return f"failed:{turn_id}"
+    _trust_stored_checkout(turn)
     caller.write_pending(name, turn, envelope)
     try:
         res = cdp_control.create_task(agent, prompt, task_name=name, port=cfg.cdp_port)

@@ -165,8 +165,10 @@ def test_an_unresolvable_transcript_sends_unverified_as_before(monkeypatch):
 
     execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
 
-    assert client.failed is None
+    # Sent unverified, as before; with no transcript the reply cannot be bridged, so
+    # the turn fails (saying so) rather than ending "done" with nothing.
     assert any(e["payload"].get("status") == "delivery_unverified" for e in client.events)
+    assert "transcript could not be found" in (client.failed or "")
 
 
 # ── wiring: the agent-turn reuse path ──────────────────────────────────────
