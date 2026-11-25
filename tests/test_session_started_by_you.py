@@ -2,7 +2,9 @@
 
 A session is yours when you started it, or when it was found on your own box and
 is not an agent's own work: `access.sessions_of_q`, asked for one row by
-`access.is_own_session`. The two must agree. It is also yours when an agent you
+`access.is_own_session`. The two must agree. A task you typed straight into an
+agent's repo on your own box stays the agent's, but is yours to the filter
+(`access._typed_on_your_box`) unless a turn someone else started drives it. It is also yours when an agent you
 asked dispatched it from a conversation of yours (`parent_session`), however deep.
 """
 from __future__ import annotations
@@ -52,7 +54,8 @@ def test_started_by_you_marks_only_your_own_sessions(w):
     c = Client()
     c.force_login(w["jj"])
     listed = {s["title"]: s["started_by_you"] for s in c.get("/api/canopy-sessions/?state=all").json()}
-    assert listed == {"mine": True, "on-my-box": True, "bos": False, "agents-own": False}
+    # agents-own: a task typed into the agent's repo on jj's box, no canopy turn drove it.
+    assert listed == {"mine": True, "on-my-box": True, "bos": False, "agents-own": True}
 
 
 def test_one_row_agrees_with_the_query(w):
@@ -125,3 +128,49 @@ def test_a_session_your_schedule_fired_is_yours(w):
     assert not Session.objects.filter(access.sessions_of_q([w["jj"].pk]), pk=mine.pk).exists()
     assert access.started_by_you_among(w["jj"], [mine, theirs, not_scheduled, dispatched]) == {
         mine.pk, dispatched.pk}
+
+
+def _drive(s, *, by, origin="email"):
+    from apps.harness.models import Turn
+
+    return Turn.objects.create(agent=s.agent, origin=origin, prompt="/hal:turn", status=Turn.DONE,
+                               idempotency_key=f"d:{s.pk}:{origin}", canopy_session=s,
+                               initiator_user=by)
+
+
+def test_a_task_typed_into_an_agents_repo_on_your_box_is_yours(w):
+    """It stays the agent's session (read, filed, listed under the agent); only the
+    "Started by me" filter counts it as yours, and only while nobody else drove it."""
+    bo = User.objects.get(username="bo")
+    agents_own = w["agents_own"]
+    replied = Session.objects.create(workspace=agents_own.workspace, origin=Session.ORIGIN_RUNNER,
+                                     agent=agents_own.agent, title="replied-from-phone")
+    RunnerBinding.objects.create(session=replied, runner=agents_own.runner_binding.runner,
+                                 session_key="replied", host="jj@mbp", thread_key=str(replied.id))
+    _drive(replied, by=w["jj"], origin="api")
+    emailed = Session.objects.create(workspace=agents_own.workspace, origin=Session.ORIGIN_RUNNER,
+                                     agent=agents_own.agent, title="emailed")
+    RunnerBinding.objects.create(session=emailed, runner=agents_own.runner_binding.runner,
+                                 session_key="emailed", host="jj@mbp", thread_key=str(emailed.id))
+    _drive(emailed, by=None)
+    by_bo = Session.objects.create(workspace=agents_own.workspace, origin=Session.ORIGIN_RUNNER,
+                                   agent=agents_own.agent, title="by-bo")
+    RunnerBinding.objects.create(session=by_bo, runner=agents_own.runner_binding.runner,
+                                 session_key="by-bo", host="jj@mbp", thread_key=str(by_bo.id))
+    _drive(by_bo, by=bo, origin="api")
+    rows = [agents_own, replied, emailed, by_bo]
+    assert access.started_by_you_among(w["jj"], rows) == {agents_own.pk, replied.pk}
+    # Not on bo's box, so never bo's.
+    assert access.started_by_you_among(bo, rows) == set()
+    # Still the agent's work: the access rule is unchanged.
+    assert agents_own.agent_id is not None
+    assert not access.is_own_session(w["jj"], agents_own)
+    assert not Session.objects.filter(access.sessions_of_q([w["jj"].pk]), pk=agents_own.pk).exists()
+
+
+def test_a_session_dispatched_from_a_task_you_typed_is_yours(w):
+    hal = User.objects.get_or_create(username="halbot", defaults={"email": "hal@dimagi-ai.com"})[0]
+    child = Session.objects.create(workspace=w["agents_own"].workspace, created_by=hal,
+                                   agent=w["agents_own"].agent, title="child",
+                                   parent_session=w["agents_own"])
+    assert access.started_by_you_among(w["jj"], [child]) == {child.pk}

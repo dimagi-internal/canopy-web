@@ -434,9 +434,26 @@ def _scheduled_by(user, pks) -> set:
                .values_list("pk", flat=True))
 
 
+def _typed_on_your_box(user, pks) -> set:
+    """The pks among `pks` that `user` typed straight into an agent's repo on a box
+    they own: runner-discovered, filed as the agent's (`session_sync.session_home`
+    files a task in an agent's repo under that agent), started by no canopy login,
+    and driven by no turn anyone else started (a canopy turn fired by an email,
+    an alarm or another person). Nobody but the box's owner types into it, so it
+    is theirs to the "Started by me" filter while it stays the agent's to read."""
+    if not pks:
+        return set()
+    others = staleness.driving_turns().exclude(initiator_user=user)
+    return set(Session.objects.filter(
+        pk__in=pks, origin=Session.ORIGIN_RUNNER, created_by__isnull=True, agent__isnull=False,
+        runner_binding__runner__owner=user,
+    ).filter(~Exists(others)).values_list("pk", flat=True))
+
+
 def started_by_you_among(user, sessions) -> set:
     """The pks among `sessions` that `user` started: their own (`is_own_session`),
-    one a schedule of theirs fired (`_scheduled_by`), or one dispatched from either —
+    one they typed into an agent's repo on their own box (`_typed_on_your_box`),
+    one a schedule of theirs fired (`_scheduled_by`), or one dispatched from any —
     an agent created it under its own login, so `created_by` is the agent, but
     `parent_session` leads back to the chat they typed in or the scheduled run they
     set up. A few queries per level of nesting for the whole page.
@@ -447,6 +464,7 @@ def started_by_you_among(user, sessions) -> set:
     if not getattr(user, "is_authenticated", False):
         return set()
     mine = {s.pk for s in sessions if is_own_session(user, s)}
+    mine |= _typed_on_your_box(user, {s.pk for s in sessions} - mine)
     mine |= _scheduled_by(user, {s.pk for s in sessions} - mine)
     # frontier: row pk -> the ancestor we are asking about
     frontier = {s.pk: s.parent_session_id for s in sessions
@@ -457,6 +475,7 @@ def started_by_you_among(user, sessions) -> set:
         asked = set(frontier.values())
         own = set(Session.objects.filter(sessions_of_q([user.pk]), pk__in=asked)
                   .values_list("pk", flat=True))
+        own |= _typed_on_your_box(user, asked - own)
         own |= _scheduled_by(user, asked - own)
         parents = dict(Session.objects.filter(pk__in=asked - own, parent_session_id__isnull=False)
                        .values_list("pk", "parent_session_id"))
