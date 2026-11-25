@@ -658,6 +658,23 @@ def _link_for(spec: RunSpec):
     return server_mod.ServerLink(server_mod.RunnerServer(client, cfg.runner_id), spec.run_id)
 
 
+HEARTBEAT_ENV = "CANOPY_LOCAL_APP_HEARTBEAT_SECONDS"
+
+
+def limits_from_env(environ=None) -> Limits:
+    """`CANOPY_LOCAL_APP_HEARTBEAT_SECONDS` shortens the heartbeat, for tests that wait on one
+    (a revoke reaches a running copy only in a heartbeat's answer). Only shorter, and at least
+    1s: a longer gap would read as a dead run to the server, and a tiny one would flood it."""
+    environ = os.environ if environ is None else environ
+    limits = Limits()
+    try:
+        asked = float(environ.get(HEARTBEAT_ENV, ""))
+    except ValueError:
+        return limits
+    limits.heartbeat_every = min(limits.heartbeat_every, max(1.0, asked))
+    return limits
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="supervise one local app run")
     parser.add_argument("--spec", required=True)
@@ -666,7 +683,7 @@ def main(argv=None) -> int:
     spec = RunSpec.from_json(json.loads(path.read_text(encoding="utf-8")))
     # Holds settings the person typed; the run has what it needs once it is read.
     path.unlink(missing_ok=True)
-    host = Host(spec, _link_for(spec))
+    host = Host(spec, _link_for(spec), limits_from_env())
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: host.request_stop(STOPPED_BY_YOU))
     signal.signal(signal.SIGUSR1, lambda *_: host.request_end())

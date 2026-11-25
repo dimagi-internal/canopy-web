@@ -92,6 +92,30 @@ def _no_live_dns(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _requests_leave_the_tests_transaction_open(monkeypatch):
+    """A request served in-process on the test's own thread must not close the test's
+    connection. Django's `close_old_connections` runs at every request's start and end, and
+    inside a test's transaction it closes (autocommit is off). The test Client disconnects it
+    around its own requests; MCP tools that call the REST API through `api_tools._django_app`
+    (`async_to_sync` from the test, so on the test's thread) get no such care. On SQLite's
+    in-memory database close() is ignored, so only the PostgreSQL nightly saw it: every later
+    query in the test failed with "the connection is closed". A connection inside a
+    transaction is left alone; a live server's own thread is never in one, so it still
+    closes as in production."""
+    try:
+        from django.db.backends.base.base import BaseDatabaseWrapper
+    except Exception:  # a suite with no Django (runner/*) has nothing to patch
+        return
+    original = BaseDatabaseWrapper.close_if_unusable_or_obsolete
+
+    def close_unless_in_a_transaction(self):
+        if not self.in_atomic_block:
+            original(self)
+
+    monkeypatch.setattr(BaseDatabaseWrapper, "close_if_unusable_or_obsolete", close_unless_in_a_transaction)
+
+
+@pytest.fixture(autouse=True)
 def _no_stale_unclaimable_memo():
     """`alerts.unclaimable.stuck_by_agent` memoises its fleet-wide diagnosis per
     process for 30 s; a memo from the last test (whose rows were rolled back)

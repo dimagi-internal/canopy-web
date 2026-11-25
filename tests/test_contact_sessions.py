@@ -153,8 +153,8 @@ def test_a_contacts_client_id_over_100_chars_is_truncated():
     assert r.status_code == 200, r.content
 
     turn = Turn.objects.filter(chat_session_id=sid).latest("created_at")
-    assert turn.idempotency_key.endswith(f":{long_id[:100]}")
-    assert not turn.idempotency_key.endswith(f":{long_id}")
+    # Capped at 100, then the whole key cut to its 128-character column (PostgreSQL enforces it).
+    assert turn.idempotency_key == f"chat:{uuid.UUID(sid).hex}:{long_id[:100]}"[:128]
 
 
 def test_only_agents_the_site_was_allowed_to_offer():

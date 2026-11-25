@@ -29,8 +29,21 @@ async def close_thread_connections() -> None:
     Django connections are per thread. A plain `sync_to_async` ORM call (MCP uses many) leaves
     its connection open, and a thread that exits without closing it holds a socket on the
     shared RDS until garbage collection. Django's own handler closes at request end the same
-    way (`request_finished`)."""
-    await sync_to_async(connections.close_all, thread_sensitive=True)()
+    way (`request_finished`).
+
+    A connection inside an atomic block is left open: its transaction belongs to a caller
+    further out on the same thread, not to this request. That never happens on a request's own
+    thread; it happens when a sync caller runs the app through `async_to_sync` (every test that
+    calls an MCP tool in-process), where `thread_sensitive` runs this on the caller's thread.
+    Closing there killed the caller's transaction — on PostgreSQL every later query failed with
+    "the connection is closed" (SQLite's in-memory test database ignores close())."""
+    await sync_to_async(_close_idle_connections, thread_sensitive=True)()
+
+
+def _close_idle_connections() -> None:
+    for conn in connections.all(initialized_only=True):
+        if not conn.in_atomic_block:
+            conn.close()
 
 
 def enabled() -> bool:
