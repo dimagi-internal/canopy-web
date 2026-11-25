@@ -4,7 +4,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { DynamicViewFrame } from './DynamicViewFrame'
+import { DynamicViewFrame, type BrowserHost } from './DynamicViewFrame'
+import { BrowserGate } from '@/ext/extensionBridge'
+import { ModeStore } from '@/ext/modeStore'
 import { CHANNEL, type AppContext } from './protocol'
 
 const SCOPE = { workspace: { slug: 'w', name: 'W' }, project: null, view: { id: 0, slug: 'kanban', title: 'Kanban', version: 0 }, viewer: { email: 'a@example.org', name: 'A' } }
@@ -15,10 +17,10 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function setup() {
+function setup(browser?: BrowserHost) {
   const setParams = vi.fn()
   const app = { context: CONTEXT, load: async () => ({}), call: async () => null, go: vi.fn(), setParams, canopyReads: true, canConnect: true }
-  const view = render(<MemoryRouter><DynamicViewFrame view={{ code: '', sources: [] }} scope={SCOPE} app={app} /></MemoryRouter>)
+  const view = render(<MemoryRouter><DynamicViewFrame view={{ code: '', sources: [] }} scope={SCOPE} app={app} browser={browser} /></MemoryRouter>)
   const frame = view.container.querySelector('iframe')!
   const answers: unknown[] = []
   vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation((msg: unknown) => void answers.push(msg))
@@ -95,5 +97,82 @@ describe('DynamicViewFrame outside the frame', () => {
     await act(async () => { await Promise.resolve() })
     expect(writeText).toHaveBeenCalledWith('hi')
     expect(answer(2)).toMatchObject({ ok: true })
+  })
+})
+
+describe('canopy.browser in the extension panel', () => {
+  // The panel's real gate, over a link that has a Gmail tab in front and answers every request.
+  function panel() {
+    const sent: string[] = []
+    const link = {
+      context: { tab: { id: 7, url: 'https://mail.google.com/mail/u/0/', title: 'Inbox' }, adapters: [] },
+      request: vi.fn(async (_tab: number, _adapter: string, capability: string) => { sent.push(capability); return { ok: capability } }),
+      open: vi.fn(),
+    }
+    const gate = new BrowserGate({
+      adapter: 'gmail', capabilities: ['read_open_thread', 'fill_compose'], acts: ['fill_compose'], events: [],
+      matches: ['https://mail.google.com/*'],
+    }, link)
+    const host: BrowserHost = {
+      info: { adapter: 'gmail', capabilities: ['read_open_thread', 'fill_compose'], acts: ['fill_compose'], events: [] },
+      context: () => gate.context(),
+      request: (c, a, clicked) => gate.request(c, a, clicked),
+      open: (u) => gate.open(u),
+      subscribe: () => () => undefined,
+      mode: new ModeStore('test', null),
+    }
+    return { sent, link, host }
+  }
+  const settle = () => act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+  it('an act needs a click on this frame, read by the page; a read does not', async () => {
+    const { sent, link, host } = panel()
+    const { frame, send, answer } = setup(host)
+    click(frame, false)
+    await send({ type: 'browser', id: 1, request: { op: 'request', capability: 'fill_compose', args: { body: 'hi' } } })
+    await settle()
+    expect(answer(1)).toMatchObject({ ok: false, error: 'This needs a click.', code: 'needs_click' })
+    await send({ type: 'browser', id: 2, request: { op: 'request', capability: 'read_open_thread', args: {} } })
+    await settle()
+    expect(answer(2)).toMatchObject({ ok: true })
+    click(frame)
+    await send({ type: 'browser', id: 3, request: { op: 'request', capability: 'fill_compose', args: { body: 'hi' } } })
+    await settle()
+    expect(answer(3)).toMatchObject({ ok: true })
+    expect(sent).toEqual(['read_open_thread', 'fill_compose'])
+    expect(link.open).not.toHaveBeenCalled()
+  })
+
+  it('canopy.google runs in the person\'s mode, through the same gate, and says which', async () => {
+    const { sent, host } = panel()
+    const { frame, send, answer } = setup(host)
+    click(frame, false)
+    // Server mode (the default): a local-only operation is refused, and the tab is not touched.
+    await send({ type: 'google', id: 1, op: 'gmail.fill_compose', args: { bodyText: 'hi' } })
+    await settle()
+    expect(answer(1)).toMatchObject({ ok: false, code: 'not_in_mode' })
+    // Switching needs a click; then the same call goes to the tab, and still needs a click to act.
+    await send({ type: 'mode-set', id: 2, mode: 'local' })
+    expect(answer(2)).toMatchObject({ ok: false, code: 'needs_click' })
+    click(frame)
+    await send({ type: 'mode-set', id: 3, mode: 'local' })
+    expect(answer(3)).toMatchObject({ ok: true, data: { current: 'local', available: ['local', 'server'] } })
+    click(frame, false)
+    await send({ type: 'google', id: 4, op: 'gmail.fill_compose', args: { bodyText: 'hi' } })
+    await settle()
+    expect(answer(4)).toMatchObject({ ok: false, code: 'needs_click' })
+    click(frame)
+    await send({ type: 'google', id: 5, op: 'gmail.fill_compose', args: { bodyText: 'hi' } })
+    await settle()
+    expect(answer(5)).toMatchObject({ ok: true })
+    expect(sent).toEqual(['fill_compose'])
+  })
+
+  it('open() without a click is needs_click too', async () => {
+    const { host } = panel()
+    const { frame, send, answer } = setup(host)
+    click(frame, false)
+    await send({ type: 'browser', id: 1, request: { op: 'open', url: 'https://example.org/' } })
+    expect(answer(1)).toMatchObject({ ok: false, error: 'This needs a click.', code: 'needs_click' })
   })
 })

@@ -130,11 +130,12 @@ def test_the_shipped_settings_keep_the_old_name_and_fence_readwrite():
     roles = live.CANOPY_AWS_ROLES
     assert roles["labs-read"] == roles["labs-observe"] == ROLE_ARN
     assert roles["labs-readwrite"] == RW_ARN
-    assert "labs-readwrite" in live.CANOPY_AWS_ROLE_AGENTS
-    assert "labs-read" not in live.CANOPY_AWS_ROLE_AGENTS
-    # Every fenced role is request-only: no agent holds one standing, hal and ada included.
+    # Every role is fenced. labs-read (and its old name) is standing only for the devops agents;
+    # the write roles are request-only for every agent, hal and ada included.
     assert roles["labs-config"] == "arn:aws:iam::858923557655:role/labs-jj-agent-config"
-    assert live.CANOPY_AWS_ROLE_AGENTS == {"labs-readwrite": [], "labs-config": []}
+    assert set(live.CANOPY_AWS_ROLE_AGENTS) == set(roles)
+    assert live.CANOPY_AWS_ROLE_AGENTS == {"labs-read": ["ada", "hal"], "labs-observe": ["ada", "hal"],
+                                           "labs-readwrite": [], "labs-config": []}
     # An approver reads what each vended role can do.
     assert set(live.CANOPY_AWS_ROLE_SUMMARIES) >= set(roles)
     # Every role has the one line an approver reads.

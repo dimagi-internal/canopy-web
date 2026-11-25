@@ -1,17 +1,21 @@
 """What a screen may ask a connection to do: the allowlist, and where a call goes.
 
-A view or app page calls a person's Salesforce (or the viewer's own Google Drive)
-through canopy-web, which attaches the token. This module is the boundary: `match` says whether a method and path is
-on the list (and whether it is a read or a write), and `build_url` makes the one
-URL a call goes to. Both refuse anything that is not plainly a short path of
+A view or app page calls a person's Salesforce (or the viewer's own Google: Drive, Gmail,
+Calendar, Sheets, Docs) through canopy-web, which attaches the token. This module is the
+boundary: `match` says whether a method and path is on the list (and whether it is a read or
+a write), and `build_url` makes the one URL a call goes to. Both refuse anything that is not plainly a short path of
 ordinary names, before any token is read, so a path can never move the call to
 another host or another part of the API.
 
 `path` is relative to the API root: Salesforce's `services/data/<SF_API_VERSION>/`
-(for example `query` or `sobjects/Lead/00Q…`), Google's `DRIVE_API_ROOT` (for
-example `files` or `files/<id>/listLabels`). The host never comes from `path`:
-for Salesforce it is the connection's own sealed instance URL, checked by the
-provider's host rule; for Google it is fixed here.
+(for example `query` or `sobjects/Lead/00Q…`). For Google the first segment names the
+API and the rest is relative to that API's fixed root (`GOOGLE_API_ROOTS`): `gmail/messages`
+is `https://gmail.googleapis.com/gmail/v1/users/me/messages`, `calendar/calendars/primary/events`,
+`sheets/<id>/values:batchGet`, `docs/<id>`; a path naming no API is Drive's, at `DRIVE_API_ROOT`
+(`files`, `files/<id>/listLabels`), as it was before the other APIs. The host never comes from
+`path`: for Salesforce it is the connection's own sealed instance URL, checked by the provider's
+host rule; for Google it is fixed here. A Google custom method (`:batchGet`) is the one place a
+`:` may appear, at the end of a segment a rule spells out literally.
 """
 from __future__ import annotations
 
@@ -24,8 +28,16 @@ from .providers.salesforce import _instance_url
 
 # The API version the org uses (the extension's SF_API_VERSION). One place.
 SF_API_VERSION = "v65.0"
-# Google has one host for every account: the only root a screen's Google call can reach.
+# Google has one host per API for every account: the only roots a screen's Google call can reach.
 DRIVE_API_ROOT = "https://www.googleapis.com/drive/v3"
+#: The Google APIs a path may name in its first segment, and the fixed root each is relative to.
+#: Gmail's is the viewer's own mailbox (`users/me`): a screen can never name another one.
+GOOGLE_API_ROOTS = {
+    "gmail": "https://gmail.googleapis.com/gmail/v1/users/me",
+    "calendar": "https://www.googleapis.com/calendar/v3",
+    "sheets": "https://sheets.googleapis.com/v4/spreadsheets",
+    "docs": "https://docs.googleapis.com/v1/documents",
+}
 
 Kind = Literal["read", "write"]
 
@@ -56,6 +68,11 @@ class Rule:
 # meaning of a URL (`/ . ? # % \\ @ : ;` spaces, control characters, non-ASCII) is
 # outside it, so a decoded path is safe to join and to match segment by segment.
 _SEGMENT = re.compile(r"[A-Za-z0-9_\-]+")
+# A Google segment may end in a custom method (`values:batchGet`, `<id>:batchUpdate`), and a Sheets
+# range is A1 notation (`'Pathway Types'!A2:D`), so a Google segment may also hold a space and
+# `' ! : $`. Still no `/ . ? # % \\ @`, so nothing in it can move the host or the path; only a rule's
+# literal or its `{range}` placeholder can match one of these, and it is quoted when sent.
+_GOOGLE_SEGMENT = re.compile(r"[A-Za-z0-9_\-' !:$]{1,200}")
 
 _SF_ID = re.compile(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?")
 _SF_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
@@ -65,12 +82,18 @@ _SF_LOCATOR = re.compile(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?-[0-9]{1,9}")
 # A Drive file, folder or shared drive id (shared drives are 19 characters, files up to 44). The
 # lower bound also keeps Drive's own words under `files/` (`generateIds`, `trash`) from fitting.
 _DRIVE_ID = re.compile(r"[A-Za-z0-9_\-]{19,64}")
+# A Gmail message or thread id: lowercase hex (16 today). Gmail's own words under `messages/` and
+# `threads/` (`send`, `import`, `batchDelete`, `trash`) are not hex, so they never fit it.
+_GMAIL_ID = re.compile(r"[0-9a-f]{8,32}")
+# A Sheets range in A1 notation (`Pathways!A:K`, `'Pathway Types'!A2:D100`).
+_A1_RANGE = re.compile(r"[A-Za-z0-9_\-' !:$]{1,200}")
 
 # Placeholders in a pattern, per provider: a segment that must fit this expression.
 _PLACEHOLDERS = {
     "salesforce": {"{type}": _SF_TYPE, "{id}": _SF_ID, "{name}": _SF_NAME, "{locator}": _SF_LOCATOR},
-    "google": {"{id}": _DRIVE_ID},
+    "google": {"{id}": _DRIVE_ID, "{gid}": _GMAIL_ID, "{range}": _A1_RANGE},
 }
+# `{x}:verb` in a pattern: placeholder `{x}` followed by Google's custom method `:verb` (`{id}:batchUpdate`).
 # `...` as the last segment: zero or more further ordinary segments.
 _REST = "..."
 
@@ -113,14 +136,40 @@ SALESFORCE_RULES = _rules(
     ("DELETE", "composite/sobjects", "write", "composite"),
 )
 
-# Google: Drive v3 file metadata and labels, nothing else (no content, no sharing, no Gmail or
-# Calendar). Only the viewer's own account (`VIEWER_ONLY`), and only its short-lived access
-# (`TEMPORARY_ONLY`).
+# Google, the viewer's own account only (`VIEWER_ONLY`), on its short-lived access (`TEMPORARY_ONLY`):
+# Drive v3 file metadata and labels (no content, no sharing); reads of Gmail, Calendar, Sheets and
+# Docs; and the writes the Sales app's screens make (the chrome-sales port): a Gmail draft (a new
+# message or a reply; never a send), Sheets values written or appended and a spreadsheet's own
+# batchUpdate, a Doc's batchUpdate, and a new Drive file (Compose's outreach Doc). Every write is a
+# click and a lease, as any. Nothing sends mail, shares a file, deletes one or touches a calendar.
+# Each API's paths are relative to its root in `GOOGLE_API_ROOTS`.
 GOOGLE_RULES = _rules(
     ("GET", "files", "read", "files"),
     ("GET", "files/{id}", "read", "files"),
     ("GET", "files/{id}/listLabels", "read", "labels"),
     ("POST", "files/{id}/modifyLabels", "write", "labels"),
+    # A new file's metadata (an empty Doc: Compose's outreach drafts). Never content: no upload root.
+    ("POST", "files", "write", "files"),
+    # Gmail: the viewer's address, a search, one message, one thread.
+    ("GET", "gmail/profile", "read", "gmail"),
+    ("GET", "gmail/messages", "read", "gmail"),
+    ("GET", "gmail/messages/{gid}", "read", "gmail"),
+    ("GET", "gmail/threads/{gid}", "read", "gmail"),
+    # A draft (a reply when its message names a threadId). There is no rule to send one.
+    ("POST", "gmail/drafts", "write", "gmail"),
+    # Calendar: the viewer's primary calendar and its events, nobody else's.
+    ("GET", "calendar/calendars/primary", "read", "calendar"),
+    ("GET", "calendar/calendars/primary/events", "read", "calendar"),
+    # Sheets: a spreadsheet's properties and its values (ranges as a query, so no A1 notation is ever
+    # a path segment).
+    ("GET", "sheets/{id}", "read", "sheets"),
+    ("GET", "sheets/{id}/values:batchGet", "read", "sheets"),
+    ("POST", "sheets/{id}/values:batchUpdate", "write", "sheets"),
+    ("POST", "sheets/{id}/values/{range}:append", "write", "sheets"),
+    ("POST", "sheets/{id}:batchUpdate", "write", "sheets"),
+    # Docs: one document.
+    ("GET", "docs/{id}", "read", "docs"),
+    ("POST", "docs/{id}:batchUpdate", "write", "docs"),
 )
 
 _RULES = {"salesforce": SALESFORCE_RULES, "google": GOOGLE_RULES}
@@ -131,13 +180,30 @@ VIEWER_ONLY = frozenset({"google"})
 # (`temporary.for_screens`: no refresh token, about an hour), never on a stored connection.
 TEMPORARY_ONLY = frozenset({"google"})
 
-# The query names a Google call may carry, exactly as spelled. Everything else is refused: `alt`
-# (`alt=media` turns a metadata read into a download of the file), `uploadType`, `access_token`,
-# `oauth_token`, `key`, `callback`, `$.xgafv` and the like.
+# The query names a Google call may carry, per API, exactly as spelled. Everything else is refused:
+# `alt` (`alt=media` turns a metadata read into a download of the file), `uploadType`, `access_token`,
+# `oauth_token`, `key`, `callback`, `$.xgafv` and the like. `GOOGLE_QUERY_NAMES` is Drive's.
 GOOGLE_QUERY_NAMES = frozenset({
     "q", "pageSize", "pageToken", "fields", "orderBy", "spaces", "corpora", "driveId",
     "supportsAllDrives", "includeItemsFromAllDrives", "includeLabels", "maxResults",
 })
+GOOGLE_QUERY_NAMES_BY_API = {
+    "drive": GOOGLE_QUERY_NAMES,
+    "gmail": frozenset({"q", "maxResults", "pageToken", "labelIds", "includeSpamTrash", "format",
+                        "metadataHeaders", "fields"}),
+    "calendar": frozenset({"q", "timeMin", "timeMax", "singleEvents", "orderBy", "maxResults", "pageToken",
+                           "timeZone", "showDeleted", "updatedMin", "iCalUID", "fields"}),
+    "sheets": frozenset({"ranges", "majorDimension", "valueRenderOption", "dateTimeRenderOption", "fields",
+                         "valueInputOption", "insertDataOption", "includeValuesInResponse",
+                         "responseValueRenderOption", "responseDateTimeRenderOption"}),
+    "docs": frozenset({"fields", "suggestionsViewMode"}),
+}
+
+
+def google_api(path: object) -> str:
+    """Which Google API a path is for: its first segment when that names one, else Drive."""
+    first = path.split("/", 1)[0] if isinstance(path, str) else ""
+    return first if first in GOOGLE_API_ROOTS else "drive"
 
 
 # Objects a screen may read but never write, whatever a view declares: who people
@@ -160,7 +226,7 @@ class Match:
     path: str
 
 
-def _segments(path: object) -> list[str]:
+def _segments(path: object, provider: str = "salesforce") -> list[str]:
     """The path's decoded segments, or NotAllowed. An encoded slash is refused
     outright; the rest is decoded once, and what is left must be plain: no empty
     segment (so no leading, trailing or double slash, no `https://`), no `%` left
@@ -175,18 +241,20 @@ def _segments(path: object) -> list[str]:
     except UnicodeDecodeError:
         raise NotAllowed(_REFUSED_PATH) from None
     segments = decoded.split("/")
-    if len(segments) > MAX_SEGMENTS or "%" in decoded or not all(_SEGMENT.fullmatch(s) for s in segments):
+    plain = _GOOGLE_SEGMENT if provider == "google" else _SEGMENT
+    if len(segments) > MAX_SEGMENTS or "%" in decoded or not all(plain.fullmatch(s) for s in segments):
         raise NotAllowed("That is not a path this screen may call: paths are plain names "
                          "separated by slashes, with no dots, queries or encoded characters.")
     return segments
 
 
-def check_query(query: object, provider: str = "salesforce") -> dict[str, str | list[str]]:
+def check_query(query: object, provider: str = "salesforce", path: str | None = None) -> dict[str, str | list[str]]:
     """The query as a plain dict of str -> str | list[str], or NotAllowed.
     `_HttpMethod` is refused (any case): Salesforce honours it as a method
     override, which would turn a declared POST into a PATCH or DELETE. A Google
-    query may only use `GOOGLE_QUERY_NAMES`; its values are any text (a Drive `q`
-    such as `'<id>' in parents and trashed = false`), encoded into the query only."""
+    query may only use the names its API takes (`GOOGLE_QUERY_NAMES_BY_API`, by
+    `path`'s API; Drive's without one); its values are any text (a Drive `q` such as
+    `'<id>' in parents and trashed = false`), encoded into the query only."""
     if query is None:
         return {}
     if not isinstance(query, dict):
@@ -197,7 +265,7 @@ def check_query(query: object, provider: str = "salesforce") -> dict[str, str | 
             raise NotAllowed("The query must be a set of names and text values.")
         if key.strip().lower() == "_httpmethod":
             raise NotAllowed("Screens may not change the method of a call.")
-        if provider == "google" and key not in GOOGLE_QUERY_NAMES:
+        if provider == "google" and key not in GOOGLE_QUERY_NAMES_BY_API[google_api(path)]:
             raise NotAllowed(f"Screens may not send {key[:40]!r} to Google.")
     return dict(query)
 
@@ -210,10 +278,21 @@ def _fits(pattern: str, segments: list[str], placeholders: dict[str, re.Pattern]
     if len(segments) < len(want) or (not rest and len(segments) != len(want)):
         return False
     for token, seg in zip(want, segments):
-        expr = placeholders.get(token)
-        if not (expr.fullmatch(seg) if expr else token == seg):
+        if not _fits_one(token, seg, placeholders):
             return False
     return True
+
+
+def _fits_one(token: str, seg: str, placeholders: dict[str, re.Pattern]) -> bool:
+    expr = placeholders.get(token)
+    if expr is not None:
+        return bool(expr.fullmatch(seg))
+    name, colon, verb = token.partition("}:")
+    if colon and name.startswith("{"):  # `{id}:batchUpdate`: the placeholder, then exactly `:verb`
+        expr = placeholders.get(name + "}")
+        suffix = ":" + verb
+        return expr is not None and seg.endswith(suffix) and bool(expr.fullmatch(seg[:-len(suffix)]))
+    return token == seg
 
 
 def _rules_for(provider: object) -> tuple[Rule, ...]:
@@ -229,7 +308,7 @@ def match(provider: str, method: str, path: str) -> Match:
     """The allowed call (rule and decoded path), or NotAllowed with a sentence.
     `path` is refused unless it is plain, before any rule is looked at."""
     rules = _rules_for(provider)
-    segments = _segments(path)
+    segments = _segments(path, provider)
     if not (isinstance(method, str) and method.isascii()):
         raise NotAllowed("Screens may not use that method.")
     verb = method.upper()
@@ -247,21 +326,34 @@ def match(provider: str, method: str, path: str) -> Match:
     raise NotAllowed("Screens may not call that path.")
 
 
+def _quote_google(seg: str, token: str) -> str:
+    """One Google segment, quoted. A custom method the rule spells (`values:batchGet`, `{id}:batchUpdate`,
+    `{range}:append`) keeps its own `:`; every other `:` (one inside an A1 range) is encoded, as
+    Google's own clients send it."""
+    _, colon, verb = token.rpartition(":")
+    if colon and "/" not in verb and seg.endswith(":" + verb):
+        return quote(seg[:-len(verb) - 1], safe="") + ":" + verb
+    return quote(seg, safe="")
+
+
 def build_url(provider: str, instance_url: str, path: str, query: object, *, method: str) -> str:
     """The one URL the call goes to. The call must pass `match`; the host is the
     connection's own sealed instance URL, which must pass the provider's host
-    rule (Google: always `DRIVE_API_ROOT`, and the connection names none); the
-    decoded path is only ever appended, as quoted plain segments, and
-    `query` is checked and encoded."""
+    rule (Google: the named API's root in `GOOGLE_API_ROOTS`, else `DRIVE_API_ROOT`,
+    and the connection names none); the decoded path is only ever appended, as
+    quoted plain segments, and `query` is checked and encoded."""
     allowed = match(provider, method, path)
-    params = check_query(query, provider)
+    params = check_query(query, provider, allowed.path)
     segments = allowed.path.split("/")
     quoted = "/".join(quote(s, safe="") for s in segments)
     if provider == "google":
-        # Google's host is fixed; a connection naming one of its own is not a Google connection.
+        # Google's hosts are fixed; a connection naming one of its own is not a Google connection.
         if instance_url not in (None, ""):
             raise NotAllowed("This connection's Google address cannot be used.")
-        url = f"{DRIVE_API_ROOT}/{quoted}"
+        api = google_api(allowed.path)
+        root, rest = (DRIVE_API_ROOT, segments) if api == "drive" else (GOOGLE_API_ROOTS[api], segments[1:])
+        tokens = allowed.rule.pattern.split("/")[len(segments) - len(rest):]
+        url = f"{root}/" + "/".join(_quote_google(seg, tok) for seg, tok in zip(rest, tokens))
         return url + ("?" + urlencode(params, doseq=True) if params else "")
     base, _host = _instance_url(instance_url if isinstance(instance_url, str) else "")
     if not base:

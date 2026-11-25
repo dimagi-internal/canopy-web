@@ -64,6 +64,11 @@ public, ``set`` or mailed, and its history records that it changed, never its va
 ``browser`` says which member pages the browser extension's side panel shows, on
 which tab URLs, and what each may ask of the tab's adapter (`browser.py`).
 
+``ai`` (``{"purpose": "…"}``) lets the app's member pages ask canopy's model
+(`canopy.ai.complete`, `ai.py`): what they send leaves canopy for the model, so it is
+declared, shown in the store, and a version that adds or drops it is an admin's to
+publish (`template_diff`). TEMPLATE-ONLY: no overlay op reaches it.
+
 A template's manifest is the base; a workspace's changes are an overlay on it
 (`overlay.py`), and what runs is the two composed — validated here again, so a
 composition that breaks a rule is refused like a hand-written one.
@@ -111,6 +116,7 @@ MAX_FILE_MB = 10
 #: A `json` field's size cap, serialized: the default and the most a manifest may give.
 DEFAULT_JSON_KB, MAX_JSON_KB = 64, 256
 DEFAULT_PUBLIC_PER_HOUR = 10
+MAX_AI_PURPOSE = 300
 
 
 def _fail(where: str, why: str):
@@ -1103,6 +1109,21 @@ def _validate_connections(raw) -> list:
         _fail("connections", str(exc))
 
 
+def _validate_ai(raw) -> dict | None:
+    """The app's pages may ask canopy's model (`ai.py`); `purpose` is the sentence an admin
+    reads before installing it ("drafts replies and summarizes a contact's history")."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {"purpose"}:
+        _fail("ai", 'must be {"purpose": "<what the pages use the model for>"}')
+    purpose = str(raw.get("purpose") or "").strip()
+    if not purpose:
+        _fail("ai.purpose", "say what the app's pages use the model for")
+    if len(purpose) > MAX_AI_PURPOSE:
+        _fail("ai.purpose", f"at most {MAX_AI_PURPOSE} characters")
+    return {"purpose": purpose}
+
+
 def _validate_personal(collections: dict, actions: dict, links: dict) -> None:
     """A personal collection's records are their writers' alone (`services._own`), so nothing may reach
     them another way: no record of another collection points at one, no link opens one, and its actions
@@ -1180,6 +1201,9 @@ def validate(raw) -> dict:
         out["tasks"] = tasks
     if bundle is not None:  # likewise
         out["bundle"] = bundle
+    ai = _validate_ai(raw.get("ai"))
+    if ai is not None:  # likewise
+        out["ai"] = ai
     browser_entries = browser.validate(raw.get("browser"), pages)
     if browser_entries is not None:  # likewise: only when declared
         out["browser"] = browser_entries

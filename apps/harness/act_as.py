@@ -38,7 +38,14 @@ by `tests/test_act_as_you_on_canopy.py`:
 * **One list of what it never reaches** (`EXCLUDED_PREFIXES`, `EXCLUDED_PATTERNS`,
   `EXCLUDED_TOOLS`): minting or rotating tokens, the person's memory switches and grants,
   passkeys, vaults, keys and secrets, act-as and host-grant approvals, agent-login
-  acceptance, and the runner protocol. `route_refusal` is the one check both routes ask —
+  acceptance, and the runner protocol.
+* **One exception: a vault's STRUCTURE** (`VAULT_STRUCTURE`). Under `write` it may list a
+  workspace's vaults, make one (it starts with no key and no value), read one, and attach or
+  detach an agent, workspace or project — so an agent can set up a project's vault as its
+  person, who approved exactly that with their passkey. Never a vault's values, key, key
+  copies, pins, direct members or log, and never a runner attachment (a runner's Claude
+  credentials; `api_vaults.attach_workspace_vault` refuses it under act-as). The person still
+  types every value in their own browser: the vault is zero-knowledge. `route_refusal` is the one check both routes ask —
   REST (`tokens.middleware._authenticate_act_as_token`) and MCP (`mcp.act_as_scope`, and
   again inside the in-process request, `tokens.middleware._authenticate_mcp_call`).
 * **Attributed "<agent> as <person>".** Every request it makes is a row in the MCP call log
@@ -132,6 +139,21 @@ EXCLUDED_PATTERNS: dict[str, str] = {
 }
 _PATTERNS = tuple((re.compile(p), why) for p, why in EXCLUDED_PATTERNS.items())
 
+#: A vault's STRUCTURE, which a `write` grant MAY reach despite the vault exclusions above:
+#: list a workspace's vaults and make one, read one, attach or detach what it serves. Matched
+#: whole (`$`), so `/zk/…`, `/members…`, `/secrets/…` and `/log` stay excluded.
+VAULT_STRUCTURE: tuple[re.Pattern[str], ...] = tuple(re.compile(p) for p in (
+    r"^/api/workspaces/[^/]+/vaults$",
+    r"^/api/vaults/[^/]+$",
+    r"^/api/vaults/[^/]+/attachments(/[^/]+)?$",
+))
+
+
+def vault_structure(path: str) -> bool:
+    """Whether `path` is a vault-structure route (`VAULT_STRUCTURE`)."""
+    flat = flat_path(path).rstrip("/") or "/"
+    return any(p.match(flat) for p in VAULT_STRUCTURE)
+
 #: canopy's hand-written MCP tools (not routes) an act-as token never calls. Any other
 #: hand-written tool it may call only if it only reads (`mcp.act_as_scope`): what the
 #: permission covers is the routes MCP serves as tools.
@@ -152,6 +174,8 @@ def flat_path(path: str) -> str:
 
 def excluded(path: str) -> str | None:
     """Why an act-as token never reaches `path`, whatever its scope, or None."""
+    if vault_structure(path):
+        return None
     flat = flat_path(path)
     for prefix, why in EXCLUDED_PREFIXES.items():
         if flat.startswith(prefix) or flat == prefix.rstrip("/"):

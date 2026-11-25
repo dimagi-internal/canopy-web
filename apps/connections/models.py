@@ -52,7 +52,7 @@ class ConnectionApp(models.Model):
     options = models.JSONField(default=dict, blank=True)
     # Extra scopes chosen from the provider's `scope_choices`, space-separated, on
     # top of the ones the provider always asks for.
-    scopes = models.CharField(max_length=1000, blank=True, default="")
+    scopes = models.CharField(max_length=2000, blank=True, default="")
     configured_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
     )
@@ -144,7 +144,8 @@ class Connection(models.Model):
     instance_url = models.URLField(blank=True, default="")
     # What the provider GRANTED (its `scope`), space-separated; what was asked for
     # when it did not say.
-    scopes = models.CharField(max_length=500, blank=True, default="")
+    # Every scope a provider offers at once must fit (tests/test_connections_google.py).
+    scopes = models.CharField(max_length=2000, blank=True, default="")
     state = models.CharField(max_length=10, choices=STATES, default=UNSHARED)
 
     sealed = models.TextField(blank=True, default="")

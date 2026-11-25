@@ -180,7 +180,7 @@ def call(request, provider: str, payload) -> dict:
     _check_declared(surface, provider, payload, plan)
     matched, query = plan.matched, plan.query
     try:
-        if provider in calls.TEMPORARY_ONLY:
+        if _on_temporary(user, provider, surface):
             return _call_on_temporary(user, provider, surface, matched, query, payload)
         conn = (_shared_connection(user, provider, surface, payload.agent) if payload.as_ == "shared"
                 else _viewer_connection(user, provider, surface))
@@ -199,10 +199,30 @@ def call(request, provider: str, payload) -> dict:
         # Connecting their own account wouldn't bring an agent's back.
         if payload.as_ == "viewer" and (said.code == "not_connected" or getattr(said, "connect_again", False)):
             start = reverse("connections_start", args=[provider, surface.workspace])
-            if provider in calls.TEMPORARY_ONLY:  # an hour's access for this person's screens, nothing stored
+            if provider in calls.TEMPORARY_ONLY and not _server_calls(provider):  # an hour, nothing stored
                 start += "?temporary=1&for_screens=1"
             said.members = {"connect_url": f"{base_url()}{start}"}
         raise said from None
+
+
+def _server_calls(provider: str) -> bool:
+    """Whether canopy-web may call this provider with a person's stored connection (its `server_calls`)."""
+    return bool(getattr(providers.CLASSES.get(provider), "server_calls", False))
+
+
+def _on_temporary(user, provider: str, surface: declarations.Surface) -> bool:
+    """Whether a screen's call runs on the viewer's hour of access for screens (`temporary.for_screens`).
+
+    A `calls.TEMPORARY_ONLY` provider whose `server_calls` is off (Google today): always, never a stored
+    connection. The day its `server_calls` is turned on (one flag on the provider class), the same call
+    runs on the viewer's hour while they have one, and otherwise on their stored connection with
+    "canopy-web can use this" on (`_viewer_connection`, `server_tokens`), as Salesforce's does; the rules,
+    declarations, leases and audit are the same either way, so nothing else changes."""
+    if provider not in calls.TEMPORARY_ONLY:
+        return False
+    if not _server_calls(provider):
+        return True
+    return temporary.for_screens(user, provider, surface.workspace) is not None
 
 
 def _call_on_temporary(user, provider: str, surface: declarations.Surface, matched: calls.Match, query: dict,
@@ -215,6 +235,13 @@ def _call_on_temporary(user, provider: str, surface: declarations.Surface, match
     row = temporary.for_screens(user, provider, surface.workspace)
     if row is None:
         raise services.NotConnected(f"This page needs your {title} for the next hour. Allow it, then try again.")
+    # An hour allowed before the app's admin ticked another permission: the provider would refuse what
+    # needs it, so ask again now rather than spend a write on a call bound to be refused.
+    if providers.for_app(row.app).missing_scopes(tuple(row.scopes.split())):
+        again = services.ConnectionError("scope_added", f"This page now needs more of your {title} than you "
+                                                        "allowed. Allow it again, then try again.")
+        again.connect_again = True
+        raise again
     if matched.rule.kind == "write":
         _spend_write(user, payload.operation_id, surface)
     sent = _Sent()
@@ -324,7 +351,7 @@ def _allowed(provider: str, payload) -> _Planned:
         raise services.ConnectionError("not_allowed", f"A screen can only use your own {_title(provider)} account.")
     try:
         matched = calls.match(provider, payload.method, payload.path)
-        query = calls.check_query(payload.query, provider)
+        query = calls.check_query(payload.query, provider, matched.path)
         if payload.body is not None and matched.rule.method in ("GET", "DELETE"):
             raise calls.NotAllowed(f"A {matched.rule.method} call can't carry a body.")
         headers = _duplicates_header(provider, matched, getattr(payload, "allow_duplicates", False))

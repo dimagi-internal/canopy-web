@@ -126,12 +126,18 @@ def turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *, own_turn_ok: bool =
 def turn_content_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     """A turn whose CONTENT (ledger, transcript, caller context) the caller may
     read (`turn_access.can_read_turn_content`) — a log, the admin's unless you
-    started or run it. Same uniform 404 as a turn you cannot see at all."""
+    started or run it. A turn you cannot see at all is a uniform 404; one you can see
+    but not read is a 403 that says why."""
     from . import turn_access
 
     turn = turn_or_404(request, turn_id)
     if not turn_access.can_read_turn_content(request.user, turn):
-        raise HttpError(404, "turn not found")
+        # The caller already sees THAT the turn exists (tenant membership passed above),
+        # so say why its content is closed to them. A private CHAT stays a 404: the
+        # chat's own ACL hides the conversation, existence included.
+        if turn.chat_session_id and not turn_access.can_read_turn_log(request.user, turn):
+            raise HttpError(404, "turn not found")
+        raise HttpError(403, turn_access.refusal_reason(request.user, turn))
     return turn
 
 
@@ -278,7 +284,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *,
 #: Capabilities a box REPORTS on heartbeat and never declares at pairing.
 # `jobs` is the box's own word that it can run plain jobs; only its own credential may say it
 # (`api_runners_fleet.update_runner_capabilities`), so a pairing person cannot declare it.
-REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn", "isolated", "stored_projects", "data_mode",
+REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn", "isolated", "stored_projects", "sync", "data_mode",
                          "data_mode_hash",
                          "claude_model", "jobs")
 

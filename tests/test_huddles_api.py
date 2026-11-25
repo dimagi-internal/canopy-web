@@ -278,7 +278,7 @@ def test_hidden_content_viewer_gets_status_only(ws, agents):
     editor = User.objects.create_user("ed", "ed@example.org", "pw")
     WorkspaceMembership.objects.create(user=editor, workspace=ws, role=WorkspaceMembership.EDITOR)
     c = _client(editor)
-    assert c.get(f"/api/harness/turns/{r1.id}/messages").status_code == 404  # the line we mirror
+    assert c.get(f"/api/harness/turns/{r1.id}/messages").status_code == 403  # the line we mirror
     d = c.get("/api/huddles/h1").json()
     cell = d["cells"][0]
     assert cell["content_hidden"] is True and cell["status"] == "done"

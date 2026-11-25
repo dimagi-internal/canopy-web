@@ -278,7 +278,7 @@ async def test_the_control_channel_forwards_listen_start():
     await consumer.runner_listen_start({"type": "runner.listen_start", "session_id": "s1", "kind": "pair",
                                         "hello": {"phone_eph": EPH, "phone_key": None, "label": ""}})
     assert sent == [{"type": "listen_start", "session_id": "s1", "kind": "pair",
-                     "hello": {"phone_eph": EPH, "phone_key": None, "label": ""}}]
+                     "hello": {"phone_eph": EPH, "phone_key": None, "label": ""}, "v": 0}]
 
 
 # -- the sweep ------------------------------------------------------------------

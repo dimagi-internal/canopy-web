@@ -91,9 +91,19 @@ def test_mcp_messages_each_get_a_thread(monkeypatch, no_db_close):
     assert res == ["ok", "ok"] and elapsed < 0.75 and a[0] != b[0]
 
 
-def test_close_thread_connections_closes_django_connections(monkeypatch):
-
+def test_close_thread_connections_closes_idle_connections_and_not_a_callers_transaction(monkeypatch):
+    """An idle connection is closed; one inside an atomic block belongs to a caller further out
+    on the same thread (a test calling a tool through async_to_sync) and is left open."""
     closed = []
-    monkeypatch.setattr(thread_context.connections, "close_all", lambda: closed.append(threading.get_ident()))
+
+    class Conn:
+        def __init__(self, name, in_atomic_block):
+            self.name, self.in_atomic_block = name, in_atomic_block
+
+        def close(self):
+            closed.append((self.name, threading.get_ident()))
+
+    conns = [Conn("idle", False), Conn("in-a-transaction", True)]
+    monkeypatch.setattr(thread_context.connections, "all", lambda initialized_only=False: conns)
     asyncio.run(thread_context.close_thread_connections())
-    assert len(closed) == 1
+    assert [name for name, _ in closed] == ["idle"]

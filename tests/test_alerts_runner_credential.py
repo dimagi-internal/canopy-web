@@ -175,6 +175,31 @@ def test_probe_passing_resolves(fleet):
     assert a.status == Alert.RESOLVED and a.resolved_reason == Alert.REASON_SOURCE
 
 
+def test_a_laptop_login_probe_raises_a_sign_in_alert_that_its_next_probe_resolves(fleet):
+    """A laptop publishes `claude.probe.local` while marked signed out
+    (runner/canopy_runner/canopy_runner/login_probe.py). It is the machine's own
+    login, on no credential list: the alert says to sign in there, offers no
+    remove, and closes once the box's next probe answers."""
+    runner = fleet["runner"]
+    detail = "not signed in — sign in with `claude /login` on this machine · probed 2026-11-20T22:30:00Z"
+    _set_checks(runner, _check("local", detail=detail))
+    (r,) = src.reconcile(timezone.now())
+    assert r.title == "Claude is not signed in on cloud-ec2-2"
+    assert "claude /login" in r.body and "2 minutes" in r.body
+    assert [a.id for a in src.actions(SimpleAlert(r.subject_key, r.scopes), fleet["jj"])] == ["replace"]
+    t0 = timezone.now()
+    alerts.tick(t0)
+    assert _alert().status == Alert.OPEN
+    _set_checks(runner, _check("local", status="ok", detail="answered a prompt · probed 2026-11-20T22:31:00Z"))
+    alerts.tick(t0 + dt.timedelta(minutes=1))
+    assert _alert().status == Alert.RESOLVED
+
+
+class SimpleAlert:
+    def __init__(self, subject_key, scopes):
+        self.subject_key, self.scopes = subject_key, list(scopes)
+
+
 # --- labels -------------------------------------------------------------------
 
 

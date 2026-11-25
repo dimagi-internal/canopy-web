@@ -259,16 +259,13 @@ function UserMenu() {
 
           {/* Personal pages: yours in every workspace, so they sit with your
               account rather than in the workspace nav. Supervisor is the phone
-              and menubar view of Home; IDE is desktop only. */}
-          {ACCOUNT_ITEMS.map(({ path, label, desktopOnly }) => (
+              and menubar view of Home. Every entry shows at every width. */}
+          {ACCOUNT_ITEMS.map(({ path, label }) => (
             <Link
               key={path}
               to={path}
               onClick={() => setOpen(false)}
-              className={clsx(
-                'px-3 py-2 text-sm text-foreground-secondary hover:bg-muted',
-                desktopOnly ? 'hidden md:block' : 'block',
-              )}
+              className="block px-3 py-2 text-sm text-foreground-secondary hover:bg-muted"
             >
               {label}
             </Link>

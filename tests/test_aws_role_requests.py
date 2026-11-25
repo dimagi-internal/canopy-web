@@ -287,9 +287,11 @@ def test_an_agent_listed_for_a_role_needs_no_request(w, sts, settings):
     assert _creds(pat_client(w.ace_login), role="labs-readwrite").status_code == 403
 
 
-def test_the_shipped_settings_fence_every_write_role_with_no_standing_agent():
+def test_the_shipped_settings_fence_every_role_and_write_roles_have_no_standing_agent():
     from django.conf import settings as live
 
-    assert live.CANOPY_AWS_ROLE_AGENTS == {"labs-readwrite": [], "labs-config": []}
+    assert set(live.CANOPY_AWS_ROLE_AGENTS) == set(live.CANOPY_AWS_ROLES)
+    assert live.CANOPY_AWS_ROLE_AGENTS["labs-readwrite"] == live.CANOPY_AWS_ROLE_AGENTS["labs-config"] == []
+    assert live.CANOPY_AWS_ROLE_AGENTS["labs-read"] == ["ada", "hal"]
     for role in live.CANOPY_AWS_ROLES:
         assert live.CANOPY_AWS_ROLE_SUMMARIES.get(role), f"{role} has no summary for its approver"

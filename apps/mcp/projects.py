@@ -185,7 +185,7 @@ project_mcp = _build()
 
 
 def build_http_app():
-    return project_mcp.http_app(path="/", transport="streamable-http")
+    return project_mcp.http_app(path="/", transport="streamable-http", stateless_http=True)
 
 
 class ProjectMcpDispatch:

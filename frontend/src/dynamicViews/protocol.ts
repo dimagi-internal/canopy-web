@@ -81,6 +81,40 @@ export type AppOp =
   | { op: 'tasks_query'; filters?: AppTaskFilters }
   /** One of the app's declared task actions, as the viewer (`app.tasks.act`). Never starts a turn. */
   | { op: 'tasks_act'; name: string; key?: string | null; input?: Record<string, unknown> }
+  /** canopy's AI model (`canopy.ai.complete`), for a member page of an app that declares `ai`. */
+  | { op: 'ai'; request: AiRequest }
+
+/**
+ * `canopy.ai.complete(request)` (docs/architecture/app-ai.md; checked by apps/workspace_apps/ai.py).
+ * `model` is an alias, never a model id. A message's content is text or blocks: `text`,
+ * `tool_use` (assistant; carry its `signature` back unread) and `tool_result` (user).
+ */
+export interface AiRequest {
+  model?: 'fast' | 'smart'
+  system?: string
+  messages: { role: 'user' | 'assistant'; content: string | AiBlock[] }[]
+  max_tokens?: number
+  json_schema?: Record<string, unknown>
+  tools?: { name: string; description?: string; input_schema?: Record<string, unknown> }[]
+  web_search?: boolean
+  /** The page's own label for the call, kept in canopy's log ("record-summary"). */
+  feature?: string
+}
+
+export type AiBlock =
+  | { type: 'text'; text: string; signature?: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown>; signature?: string }
+  | { type: 'tool_result'; tool_use_id: string; content: unknown }
+
+export interface AiAnswer {
+  text: string
+  content: AiBlock[]
+  stop_reason: 'end_turn' | 'tool_use' | 'max_tokens' | 'refusal'
+  model: 'fast' | 'smart'
+  usage: { input_tokens: number; output_tokens: number }
+  /** The parsed answer, when `json_schema` was asked (null if it did not parse). */
+  json?: unknown
+}
 
 /** `app.tasks.query`'s filters (`GET /api/workspace-apps/{ws}/{key}/tasks`). */
 export interface AppTaskFilters {
@@ -103,8 +137,23 @@ export interface AppTaskFilters {
 export interface BrowserInfo {
   adapter: string
   capabilities: string[]
+  /** Which of `capabilities` change the page: callable only straight from a click (else `needs_click`). */
+  acts: string[]
   events: string[]
 }
+
+/**
+ * The page's mode (docs/architecture/local-and-server-modes.md): `canopy.google` runs `local` (the tab,
+ * through its adapter) or `server` (the viewer's Google through canopy-web), as the person chose.
+ * `available` is ['server'] anywhere but the extension's panel.
+ */
+export type Mode = 'local' | 'server'
+export interface ModeInfo {
+  current: Mode
+  available: Mode[]
+}
+/** `canopy.google.ops`: each operation's modes, whether it changes something, and what it does. */
+export type GoogleCatalogue = Record<string, { modes: Mode[]; act: boolean; args: string[]; summary: string }>
 
 /** A `canopy.browser` call out of the frame, answered by `read-result`. */
 export type BrowserOp =
@@ -123,9 +172,11 @@ export interface BundleInfo {
 
 /** Page → frame. */
 export type HostMessage =
-  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext; browser?: BrowserInfo; bundle?: BundleInfo }
+  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext; browser?: BrowserInfo; bundle?: BundleInfo; mode?: ModeInfo; google?: GoogleCatalogue }
   // A declared adapter event on the tab in front of the person, or `context` when that tab changed.
   | { channel: typeof CHANNEL; type: 'browser-event'; event: string; data: unknown }
+  // The person switched the page's mode (the panel's switch, or `canopy.mode.set`).
+  | { channel: typeof CHANNEL; type: 'mode'; mode: ModeInfo }
   | { channel: typeof CHANNEL; type: 'data'; data: Record<string, unknown> }
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: true; data: unknown }
   // `code` and `connect_url` come with a refused call to a connected account (`ConnectionRefusal`).
@@ -173,6 +224,10 @@ export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'download'; id: number; name: string; mime: string; data: unknown }
   // `canopy.browser` in the extension's panel: the tab's context, an adapter capability, opening a tab.
   | { channel: typeof CHANNEL; type: 'browser'; id: number; request: BrowserOp }
+  // `canopy.google.run(op, args)`: an operation in the page's mode. Answered by a `read-result`.
+  | { channel: typeof CHANNEL; type: 'google'; id: number; op: string; args?: Record<string, unknown> }
+  // `canopy.mode.set(mode)`: from a click, in the extension's panel. Answered by a `read-result`.
+  | { channel: typeof CHANNEL; type: 'mode-set'; id: number; mode: string }
   // canopy's panel (pagePanel.ts): what the view shows, the actions it offers the agent,
   // its answers, and a question for the panel (only on a click on the view).
   | { channel: typeof CHANNEL; type: 'page-state'; state: unknown }

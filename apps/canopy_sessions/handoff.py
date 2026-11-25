@@ -40,7 +40,7 @@ from django.utils import timezone
 
 from apps.harness import clis
 from apps.harness import initiator as who
-from apps.harness import sensitivity
+from apps.harness import runner_sync, sensitivity
 from apps.harness import services as harness_services
 from apps.harness.models import Runner, Turn
 
@@ -439,7 +439,11 @@ def record_restore(h: SessionHandoff, report: dict) -> SessionHandoff:
                          f"could not restore its work exactly "
                          f"({report.get('error') or report.get('mismatch')})")[:500]
         fields += ["close_status", "close_error"]
-    h.save(update_fields=fields)
+    with transaction.atomic():
+        h.save(update_fields=fields)
+        if ok:
+            # The source may close its task now (`due_for`).
+            runner_sync.bump(h.source_runner_id)
     return h
 
 

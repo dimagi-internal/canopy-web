@@ -168,6 +168,23 @@ def test_a_pat_cannot_mint_the_panels_token_either(user):
     assert resp.status_code == 403
 
 
+def test_a_token_minted_session_is_not_offered_the_panel(user):
+    """The Runner app's panel signs in through `/api/debug/mint-session/`. That
+    session can never mint the panel's token, so the button must not show there:
+    shown, every click would be a 403."""
+    _shown_app()
+    minted = bearer_client(PersonalToken.create_for_user(user=user, label="runner")[0]).post(
+        "/api/debug/mint-session/").json()
+    panel = Client()
+    panel.cookies[minted["cookie_name"]] = minted["cookie_value"]
+    assert panel.get("/api/embed/self").json()["enabled"] is False
+    assert panel.post("/api/embed/token", data={}, content_type="application/json").status_code == 403
+
+    browser = Client()
+    browser.force_login(user)
+    assert browser.get("/api/embed/self").json()["enabled"] is True
+
+
 def test_the_panel_still_mints_with_its_session(user):
     _shown_app()
     browser = Client()

@@ -11,7 +11,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from apps.harness import clis, routing, sensitivity
+from apps.harness import clis, routing, runner_sync, sensitivity
 from apps.harness.models import Runner, Turn
 
 from . import activity as session_activity
@@ -342,6 +342,8 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
             "pending_answer", "close_requested", "agent_status",
             "agent_status_stale", "tail", "updated_at",
         ])
+        # The source owes a pack (`/handoffs`) and the target holds a new binding.
+        runner_sync.bump(source, target)
 
         # So a LATER send on a still-unbound session re-pins here too, instead of
         # falling back to open routing and landing on whichever box polls first.

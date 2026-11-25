@@ -34,10 +34,13 @@ class FakeSocket {
 beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket)
   vi.useFakeTimers()
+  // The middle of the ±50% jitter band: each wait is exactly its ladder step.
+  vi.spyOn(Math, 'random').mockReturnValue(0.5)
   FakeSocket.created = 0
 })
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   FakeSocket.last = null
 })

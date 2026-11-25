@@ -46,6 +46,7 @@ from .routing_orders import (  # noqa: F401
     _transfers_in_progress,
     agent_tenant_q,
     agents_following_runner,
+    agents_following_runners,
     agents_with_own_order,
     assignment_allows,
     assignment_allows_for_agent,
@@ -94,5 +95,6 @@ from .routing_projects import (  # noqa: F401
 from .routing_serving import (  # noqa: F401
     ServingFacts,
     agents_routed_to,
+    agents_routed_to_of,
     runner_routes_agent,
 )

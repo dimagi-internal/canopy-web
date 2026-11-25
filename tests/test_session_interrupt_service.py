@@ -100,6 +100,7 @@ def test_the_frame_reaching_the_runner_says_which_stop_and_which_project(seeded,
         "session_key": "hal-canopy-sweep-1",
         "project": "canopy-web",
         "interrupt_id": session.runner_binding.pending_interrupt["id"],
+        "v": 0,  # this consumer never connected, so it names no runner's version
     }]
 
 

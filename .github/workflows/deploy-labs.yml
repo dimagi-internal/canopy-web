@@ -33,9 +33,21 @@ name: Deploy to Labs (AWS)
 #   LABS_SUBNET          — a labs VPC subnet id (for the one-off migration task)
 #   LABS_SECURITY_GROUP  — the labs security group id
 
+# Every session deploys as the same GitHub user, so the run's name carries who
+# dispatched it and why: the Actions list is where a bad deploy gets traced.
+run-name: "Deploy canopy-web: ${{ inputs.reason }} [${{ inputs.session }}]"
+
 on:
   workflow_dispatch:
     inputs:
+      reason:
+        description: 'Why this deploy (what is shipping, e.g. "ship the pool-size fix").'
+        type: string
+        required: true
+      session:
+        description: 'Who or what is deploying (agent + session/run id, or a person).'
+        type: string
+        required: true
       skip_migrations:
         description: 'EMERGENCY ONLY: skip migrations. They run automatically by default.'
         type: boolean
@@ -86,6 +98,20 @@ jobs:
             echo "::error::Deploys must run from main. Got ref=${{ github.ref }}. Merge to main, then re-run from branch=main."
             exit 1
           fi
+
+      # `required: true` does not stop an empty string, and a blank reason or
+      # session is the anonymous deploy these inputs exist to prevent.
+      - name: Require a reason and a session
+        env:
+          REASON: ${{ inputs.reason }}
+          SESSION: ${{ inputs.session }}
+        run: |
+          if [ -z "${REASON// /}" ] || [ -z "${SESSION// /}" ]; then
+            echo "::error::Dispatch with -f reason='<why>' -f session='<who or what is deploying>'. Both are required."
+            exit 1
+          fi
+          echo "Deploy requested by: $SESSION"
+          echo "Reason: $REASON"
 
       # A workflow_dispatch pins github.sha to main's tip AT DISPATCH TIME, and
       # the image is tagged with it — so "merge a PR and kick a deploy" in one
@@ -235,7 +261,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+      - uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
 
       # The Dockerfile's base images come from public.ecr.aws. Pulled anonymously
       # they share a per-IP data quota with every other GitHub-hosted runner, and
@@ -245,7 +271,7 @@ jobs:
       # (deploy/aws/deploy_roles.py `PublicEcrLoginTakesNoResource`, applied by
       # hand), the build falls back to today's anonymous pull rather than stopping.
       - name: Log in to public ECR (higher pull limit)
-        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+        uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
         continue-on-error: true
         with:
           registry-type: public
@@ -286,7 +312,8 @@ jobs:
     name: Deploy to Fargate
     needs: [guard, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Rollout (~11 min) + the post-deploy watch (~6 min) + a rollback if it trips (~10 min).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -297,6 +324,22 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      # The task definition serving NOW, before migrations or the rollout touch
+      # anything: what the post-deploy watch rolls the service back to if the new
+      # release trips it. Empty if unreadable; the watch then reports but cannot
+      # roll back.
+      - name: Record the rollback target
+        id: prev
+        run: |
+          TD=$(aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" --services "${{ env.ECS_SERVICE }}" \
+            --query 'services[0].deployments[?status==`PRIMARY`].taskDefinition | [0]' --output text 2>/dev/null) || true
+          if [ -z "$TD" ] || [ "$TD" = "None" ]; then
+            echo "::warning::Could not read the live task definition; a tripped post-deploy watch will not be able to roll back."
+            TD=""
+          fi
+          echo "task_def=$TD" >> "$GITHUB_OUTPUT"
+          echo "Rollback target: ${TD:-<none>}"
 
       # The migrate task is a cold Fargate start (~1 min) even when nothing is
       # pending. Skip it only when NO migration file and no dependency pin changed
@@ -558,6 +601,69 @@ jobs:
           fi
           echo "Rollout complete — new tasks running and healthy."
 
+      # A release can pass the target-group health check and still be broken: a
+      # DB-pool change that starves every request of a connection serves /health/
+      # fine while the API and the chat websockets fail. So watch the service for
+      # five minutes at steady state (deploy/aws/post_deploy_watch.py: error lines
+      # in its log group, target health, /health/) and roll back on a trip.
+      # Runs before the held-back drops, so a rollback lands on a schema the
+      # previous code still reads.
+      - name: Post-deploy watch
+        id: watch
+        env:
+          PREV: ${{ steps.prev.outputs.task_def }}
+        run: |
+          NOW=$(aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" --services "${{ env.ECS_SERVICE }}" \
+            --query 'services[0].deployments[?status==`PRIMARY`].taskDefinition | [0]' --output text 2>/dev/null) || true
+          if [ -n "$PREV" ] && [ "$NOW" = "$PREV" ]; then
+            echo "The service is still on $PREV: nothing was rolled, nothing to watch."
+            exit 0
+          fi
+          echo "Watching $NOW (rollback target ${PREV:-<none>})."
+          aws ecs wait services-stable --cluster "${{ env.ECS_CLUSTER }}" --services "${{ env.ECS_SERVICE }}" \
+            || echo "::warning::The service did not report stable; watching anyway."
+          set +e
+          python3 -m deploy.aws.post_deploy_watch --seconds 300 --interval 30
+          RC=$?
+          set -e
+          if [ $RC -eq 3 ]; then
+            echo "tripped=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Post-deploy watch tripped on $NOW. Rolling back to ${PREV:-<none>}."
+          elif [ $RC -ne 0 ]; then
+            echo "::warning::Post-deploy watch could not run (exit $RC); not rolling back."
+          fi
+
+      # The rollback is the one ecs update-service outside CloudFormation: it
+      # leaves the stack's ImageTag on the release that tripped, and the next
+      # deploy's change set moves the service on from there as usual.
+      - name: Roll back to the recorded task definition
+        if: ${{ steps.watch.outputs.tripped == 'true' }}
+        env:
+          PREV: ${{ steps.prev.outputs.task_def }}
+        run: |
+          if [ -z "$PREV" ]; then
+            echo "::error::The watch tripped but no rollback target was recorded. Roll back by hand: redeploy the last good commit."
+            echo "**No rollback target was recorded: roll back by hand.**" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          aws ecs update-service --cluster "${{ env.ECS_CLUSTER }}" --service "${{ env.ECS_SERVICE }}" \
+            --task-definition "$PREV" --query 'service.serviceName' --output text
+          if aws ecs wait services-stable --cluster "${{ env.ECS_CLUSTER }}" --services "${{ env.ECS_SERVICE }}"; then
+            STATE="stable on the previous task definition"
+          else
+            STATE="NOT stable after the wait: check the service by hand"
+          fi
+          {
+            echo "### Rolled back"
+            echo ""
+            echo "The post-deploy watch tripped on \`${{ needs.guard.outputs.sha }}\` (details above)."
+            echo "The service was rolled back to \`$PREV\` (live commit before this deploy: \`${{ needs.guard.outputs.live_sha || 'unknown' }}\`) and is $STATE."
+            echo ""
+            echo "Migrations this deploy ran stay applied. The next deploy rolls forward through CloudFormation as usual; fix forward with a new commit."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Rolled back to $PREV ($STATE). The deploy of ${{ needs.guard.outputs.sha }} failed its post-deploy watch."
+          exit 1
+
       - name: Apply the drops held back from before the rollout
         # migrate_for_rollout held these back so the old task kept its columns while
         # it drained. Runs only after a rollout that succeeded: a failed one
@@ -639,12 +745,17 @@ jobs:
           PY
 
       - name: Deployment summary
+        env:
+          REASON: ${{ inputs.reason }}
+          SESSION: ${{ inputs.session }}
         run: |
           {
             echo "## Deploy to Labs — canopy-web"
             echo ""
             echo "| Field | Value |"
             echo "|---|---|"
+            echo "| Reason | $REASON |"
+            echo "| Deployed by | $SESSION |"
             echo "| Ref | \`${{ github.ref_name }}\` @ \`${{ needs.guard.outputs.sha }}\` (dispatched at \`${{ github.sha }}\`) |"
             echo "| Image | \`${{ env.ECR_REPO }}:${{ needs.guard.outputs.sha }}\` |"
             echo "| Migration task definition | \`${{ steps.register-task.outputs.task-def-arn || 'none (not migrating)' }}\` |"

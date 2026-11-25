@@ -28,10 +28,46 @@ _MODULE_PATH = pathlib.Path(__file__).resolve().parent.parent / "cloud_runner.py
 # in every xdist worker. A test wanting CLI behaviour fakes subprocess.run, as they do.
 _STANDIN_DIR = tempfile.mkdtemp(prefix="no-real-canopy-")
 atexit.register(shutil.rmtree, _STANDIN_DIR, ignore_errors=True)
+
+# An agent's turn on a runner box runs as the runner's user with the runner's own
+# environment (`runner_env`: CANOPY_RUNNER_INSTANCE, IN_FLIGHT_FILE, STATE_FILE,
+# RUNNER_TOKEN_FILE, CANOPY_RUNNER_SUPERVISED …). A turn that runs this suite there
+# would load cloud_runner with the LIVE runner's paths: tests then rewrite its in-flight
+# marker and runner token and delete every running turn's relay state under
+# `<home>/.canopy-runner/turns`, which cuts off every turn on the box at once. So the
+# runner's identity is dropped and every box path points into a throwaway directory,
+# before any test or collection loads the module, in every xdist worker. A test that
+# needs one of these sets it itself (monkeypatch + `load_cloud_runner`).
+LIVE_RUNNER_ENV = (
+    "CANOPY_RUNNER_INSTANCE", "CANOPY_RUNNER_SUPERVISED", "CANOPY_SERVES_KIND", "CANOPY_SERVES_AGENT",
+    "RUNNER_NAME", "RUNNER_HOST", "RUNNER_WORKSPACE", "RUNNER_AGENTS", "AGENT_SLUGS", "RUNNER_PROJECTS",
+    "RUNNER_SESSIONS", "RUNNER_EXECUTOR", "RUNNER_DATA_MODE", "RUNNER_EGRESS", "CANOPY_EGRESS_PORT",
+    "WORK_DIR", "AGENT_ROOT", "RUNNER_TOKEN_FILE", "IN_FLIGHT_FILE", "RUNNER_SRC_DIR",
+    "CANOPY_WEB_REPO_DIR", "CANOPY_BASE_URL_OVERRIDE_FILE", "CANOPY_DEVICE_KEY_KIND", "CANOPY_ECDH_BROKER",
+    "CANOPY_GOG_SECRET_FILE", "CANOPY_TURN_ENV_ROOT", "TURN_STATE_ROOT", "SUPERVISOR_FILE",
+    "UPDATE_DECISION_FILE", "BUILD_INFO_FILE", "DISK_USAGE_FILE", "CANOPY_RUNNER_ETC",
+)
+_BOX_DIR = tempfile.mkdtemp(prefix="no-live-runner-")
+atexit.register(shutil.rmtree, _BOX_DIR, ignore_errors=True)
+for _name in LIVE_RUNNER_ENV:
+    os.environ.pop(_name, None)
+os.environ["RUNNER_HOME"] = os.path.join(_BOX_DIR, "runner-home")
+os.environ["STATE_FILE"] = os.path.join(_BOX_DIR, "home", ".canopy-cloud-runner.json")
 CANOPY_STANDIN = os.path.join(_STANDIN_DIR, "canopy")
 with open(CANOPY_STANDIN, "w") as _fh:
     _fh.write('#!/bin/sh\necho "the real canopy CLI is not reachable from the runner tests" >&2\nexit 1\n')
 os.chmod(CANOPY_STANDIN, 0o755)
+# Agents run this suite on the runner box itself, beside live turns, as a user whose
+# sudoers line lets the runner restart its own unit and start its updater. A test that
+# reached the real `sudo` or `systemctl` there would restart canopy-runner and cut
+# every turn in flight. Both names resolve to refusing stand-ins, like `canopy`; a test
+# wanting their behaviour fakes subprocess.run.
+HOST_STANDINS = {}
+for _name in ("sudo", "systemctl"):
+    HOST_STANDINS[_name] = os.path.join(_STANDIN_DIR, _name)
+    with open(HOST_STANDINS[_name], "w") as _fh:
+        _fh.write(f'#!/bin/sh\necho "the runner tests may not run the real {_name}" >&2\nexit 1\n')
+    os.chmod(HOST_STANDINS[_name], 0o755)
 os.environ["PATH"] = f"{_STANDIN_DIR}{os.pathsep}{os.environ.get('PATH', '')}"
 
 

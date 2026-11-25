@@ -102,6 +102,18 @@ def _no_real_mailbox_probe():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_login_probe(monkeypatch, request):
+    """A signed-out box re-tests its login by running the real Claude Code CLI
+    (`login_probe.run_probe`). Any test that marks a box signed out and computes
+    readiness would spend a real prompt on the developer's login. Answer
+    "unknown" instead; the probe's own tests inject the answer they need."""
+    if request.module.__name__.endswith("test_login_probe"):
+        return
+    from canopy_runner import login_probe
+    monkeypatch.setattr(login_probe, "run_probe", lambda cli: ("unknown", "probe stubbed in tests"))
+
+
+@pytest.fixture(autouse=True)
 def _fresh_typed_turns():
     """execute._TYPED_TURNS remembers, per process, every turn whose message was
     typed — so a re-claimed turn is never typed twice. Tests reuse turn ids ("t1"),
@@ -157,3 +169,15 @@ def _isolate_device_proof(monkeypatch, tmp_path):
     touch the developer's real key: point the key dir at tmp and the helper at nothing."""
     monkeypatch.setenv("CANOPY_DEVICE_KEY_DIR", str(tmp_path / "device-key"))
     monkeypatch.setenv("CANOPY_DEVICE_KEY_BIN", str(tmp_path / "no-helper"))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_heartbeat_state():
+    """run_once reuses its last heartbeat reply for `heartbeat_seconds`; every test
+    starts with none sent, so its first tick beats."""
+    from canopy_runner import main
+    main._reset_heartbeat_state()
+    main._control = None
+    yield
+    main._reset_heartbeat_state()
+    main._control = None

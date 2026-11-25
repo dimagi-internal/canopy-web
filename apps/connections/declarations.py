@@ -1,6 +1,6 @@
 """What a view or app page declares it may ask a connection to do.
 
-A screen that calls Salesforce or Google Drive through canopy-web says so up front, in a
+A screen that calls Salesforce or Google through canopy-web says so up front, in a
 `connections` declaration saved with the view (or in an app manifest):
 
     [{"provider": "salesforce", "as": "viewer" | "shared", "agent": "<slug>",
@@ -50,9 +50,12 @@ AS_VALUES = ("viewer", "shared")
 AGENT_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
 # One id-shaped segment standing in for `*` when a pattern is checked: for Salesforce it fits an
-# id and an object name both, so a read's `*` may be either; for Google, a Drive id.
-_PLACEHOLDER = {"salesforce": "A00000000000000", "google": "A000000000000000000000000000"}
+# id and an object name both, so a read's `*` may be either; for Google, a Drive id and a Gmail id
+# both (lowercase hex of a Drive id's length).
+_PLACEHOLDER = {"salesforce": "A00000000000000", "google": "a000000000000000000000000000"}
 _ENTRY_KEYS = {"provider", "as", "agent", "reads", "writes"}
+#: What a `*` may stand for in a write: a record or file id, a Gmail id, a Sheets range. Never a name.
+_WRITE_STARS = frozenset({"{id}", "{gid}", "{range}"})
 
 
 @dataclass(frozen=True)
@@ -195,7 +198,8 @@ def _check_line(entry_provider: str, line: dict) -> dict:
     shown, kind, method, path = line["shown"], line["kind"], line["method"], line["path"]
     segments = path.split("/")
     stand_in = _PLACEHOLDER.get(entry_provider, _PLACEHOLDER["salesforce"])
-    probe = "/".join(stand_in if s == "*" else s for s in segments)
+    # `*` stands for one segment; `*:verb` for one that ends in Google's custom method (`*:batchUpdate`).
+    probe = "/".join(stand_in if s == "*" else stand_in + s[1:] if s.startswith("*:") else s for s in segments)
     try:
         found = calls.match(entry_provider, method, probe)
     except calls.NotAllowed as exc:
@@ -215,7 +219,8 @@ def _check_line(entry_provider: str, line: dict) -> dict:
     if kind == "write":
         tokens = rule.pattern.split("/")
         for i, seg in enumerate(segments):
-            if seg == "*" and not (i < len(tokens) and tokens[i] == "{id}"):
+            token = tokens[i].partition(":")[0] if i < len(tokens) else ""
+            if (seg == "*" or seg.startswith("*:")) and token not in _WRITE_STARS:
                 raise ValueError(f"{shown}: a write names its object, flow or class exactly: "
                                  "only a record id may be *")
     return {"method": method, "path": path}
@@ -319,6 +324,11 @@ def allows(declared: list[dict], provider: str, as_: str, agent_slug: str | None
         if line.get("method") != rule.method:
             continue
         want = str(line.get("path")).split("/")
-        if len(want) == len(segments) and all(w in ("*", s) for w, s in zip(want, segments)):
+        if len(want) == len(segments) and all(_line_fits(w, s) for w, s in zip(want, segments)):
             return True
     return False
+
+
+def _line_fits(want: str, seg: str) -> bool:
+    """One declared segment against one called: `*` is any one, `*:verb` any one ending in `:verb`."""
+    return want in ("*", seg) or (want.startswith("*:") and seg.endswith(want[1:]) and len(seg) > len(want) - 1)

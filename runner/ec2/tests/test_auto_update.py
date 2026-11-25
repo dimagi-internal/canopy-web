@@ -138,3 +138,8 @@ def test_every_heartbeat_call_site_goes_through_the_one_stamping_point():
         assert "_heartbeat_body" in window, (
             f"heartbeat call site builds its own payload and will erase provenance: {site}"
         )
+
+
+def test_heartbeat_body_asks_for_the_slim_reply(runner):
+    # A REST beat's reply is RunnerHeartbeatSlimOut: what this box reads off it.
+    assert runner._heartbeat_body([])["slim_reply"] == 1

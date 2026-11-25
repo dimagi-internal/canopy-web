@@ -117,11 +117,11 @@ export const HELP_ITEMS: NavItem[] = [
 /** The account menu: pages about you, the same in every workspace. Settings is
  *  one entry: your profile, your account's sections and your memory are down its
  *  rail. */
-export const ACCOUNT_ITEMS: (NavItem & { desktopOnly?: boolean })[] = [
+export const ACCOUNT_ITEMS: NavItem[] = [
   { path: '/settings', label: 'Settings', tenant: false },
   { path: '/sessions', label: 'Shared transcripts', tenant: false },
   { path: '/supervisor', label: 'Supervisor', tenant: false },
-  { path: '/ide', label: 'IDE', tenant: false, desktopOnly: true },
+  { path: '/ide', label: 'IDE', tenant: false },
 ]
 
 /** A destination with its href already resolved against the active tenant. */

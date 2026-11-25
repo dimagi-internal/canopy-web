@@ -226,6 +226,23 @@ GOOGLE DRIVE CALLS
     "reads": [{"method": "GET", "path": "files"}, {"method": "GET", "path": "files/*"},
               {"method": "GET", "path": "files/*/listLabels"}],
     "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
+- Gmail, Calendar, Sheets and Docs, reads only, on the same account: the path's first segment names
+  the API and the rest is under its root.
+    gmail/profile, gmail/messages (q, maxResults, pageToken, labelIds, includeSpamTrash, fields),
+    gmail/messages/<id>, gmail/threads/<id> (format, metadataHeaders, fields) — the viewer's mailbox
+    calendar/calendars/primary, calendar/calendars/primary/events (q, timeMin, timeMax, singleEvents,
+    orderBy, maxResults, pageToken, timeZone, showDeleted, updatedMin, iCalUID, fields)
+    sheets/<id> (fields), sheets/<id>/values:batchGet (ranges — repeat it as a list —, majorDimension,
+    valueRenderOption, dateTimeRenderOption, fields)
+    docs/<id> (fields, suggestionsViewMode)
+  Declare each as a read with * for the id (gmail/messages/*, sheets/*/values:batchGet).
+- Writes (each a click, as any): POST gmail/drafts (body {message: {raw, threadId?}}; a draft or a
+  reply, never a send), POST sheets/<id>/values:batchUpdate (query valueInputOption...), POST
+  sheets/<id>/values/<A1 range>:append (valueInputOption, insertDataOption), POST
+  sheets/<id>:batchUpdate, POST docs/<id>:batchUpdate, POST files (a new file's metadata). Declare a
+  custom method with *:verb: sheets/*/values/*:append, docs/*:batchUpdate, sheets/*:batchUpdate.
+  The workspace's Google app must ask for each API's scope (Read mail, Write drafts, Read calendars,
+  Read files in Drive, Read and change spreadsheets, Read and change documents, Create files in Drive).
 - It never uses a stored Google connection: only an hour of access the viewer grants for their own
   screens. Without one (or once it ends) the call rejects with code "not_connected" (or
   "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url) in

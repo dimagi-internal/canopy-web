@@ -27,6 +27,7 @@ import { connectReturnTo, resolveNavigation, resolveRead, type CatalogModel, typ
 import { ViewPagePanel } from './pagePanel'
 import { runTaskAction, type TaskAction } from './taskActions'
 import { Gestures } from './gestures'
+import { OpError, opsCatalogue, runGoogleOp } from './googleOps'
 import { checkDownload, cleanParams, externalUrl, MAX_CLIPBOARD_CHARS, type Download } from './frameOut'
 import { currentAssistant } from '@/widget/assistant'
 import {
@@ -39,6 +40,8 @@ import {
   type BundleInfo,
   type FrameMessage,
   type HostMessage,
+  type Mode,
+  type ModeInfo,
   type ReadRequest,
   type ViewScope,
 } from './protocol'
@@ -85,10 +88,18 @@ function message(e: unknown): string {
 export interface BrowserHost {
   info: BrowserInfo
   context(): { tab: { url: string; title: string } } | null
-  request(capability: unknown, args: unknown): Promise<unknown>
+  /** `clicked`: a click on this frame, read by the page when the call arrived (an act needs one). */
+  request(capability: unknown, args: unknown, clicked: boolean): Promise<unknown>
   open(url: unknown): void
   /** Admitted adapter events, and `context` when the tab changes; returns an unsubscribe. */
   subscribe(listener: (event: string, data: unknown) => void): () => void
+  /** The person's mode for this app (`ext/modeStore.ts`): what `canopy.google` runs in. */
+  mode: { get(): Mode; set(mode: Mode): void; subscribe(listener: (mode: Mode) => void): () => void }
+}
+
+/** The page's mode as the frame is told it: only `server` anywhere but the extension's panel. */
+function modeInfo(browser: BrowserHost | undefined): ModeInfo {
+  return browser ? { current: browser.mode.get(), available: ['local', 'server'] } : { current: 'server', available: ['server'] }
 }
 
 interface Props {
@@ -262,7 +273,8 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
   const draw = useCallback(async () => {
     const data = await load()
     const bundle = view.bundle ? { pages: view.bundle.pages } : undefined
-    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context, browser: browser?.info, bundle })
+    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context, browser: browser?.info, bundle,
+      mode: modeInfo(browser), google: opsCatalogue() })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [post, load, view.code, view.bundle, ctxKey, scope.view.version, app?.context, browser])
 
@@ -271,6 +283,14 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
     if (!browser) return
     return browser.subscribe((event, data) => {
       if (!gone) post({ channel: CHANNEL, type: 'browser-event', event, data })
+    })
+  }, [browser, post, gone])
+
+  // A switch of mode reaches the frame as it happens; the next `canopy.google` call runs in it.
+  useEffect(() => {
+    if (!browser) return
+    return browser.mode.subscribe(() => {
+      if (!gone) post({ channel: CHANNEL, type: 'mode', mode: modeInfo(browser) })
     })
   }, [browser, post, gone])
 
@@ -375,7 +395,7 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
           }
           if (req.op === 'open') {
             // Read the click NOW, before any await: a page may open a tab only from a click on it.
-            if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK)
+            if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK, 'needs_click')
             try {
               browser.open(req.url)
               post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: null })
@@ -385,12 +405,42 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
             return
           }
           if (req.op === 'request') {
-            browser.request(req.capability, req.args)
+            // The click too is read NOW, by this page: the gate relays an act only with one.
+            browser.request(req.capability, req.args, pageClickedFrame(frame.current))
               .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
               .catch((e) => fail(message(e), (e as { code?: string }).code ?? 'adapter_error'))
             return
           }
           return fail('unknown canopy.browser call')
+        }
+        case 'google': {
+          const id = msg.id
+          // The click is read NOW, in the message event: a local act and a server write both need it.
+          const clicked = pageClickedFrame(frame.current)
+          const calls = connectionCalls.current!
+          runGoogleOp(msg.op, msg.args, {
+            mode: browser ? browser.mode.get() : 'server',
+            local: browser ? { request: (capability, args, c) => browser.request(capability, args, c) } : undefined,
+            server: { call: (r) => calls.handle(r), begin: () => calls.begin() },
+            clicked,
+            viewerEmail: scope.viewer.email,
+          })
+            .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
+            .catch((e) => post({
+              channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e),
+              ...refusalMembers(e), ...(e instanceof OpError ? { code: e.code } : (e as { code?: string })?.code ? { code: (e as { code: string }).code } : {}),
+            }))
+          return
+        }
+        case 'mode-set': {
+          const id = msg.id
+          const fail = (error: string, code = 'bad_request') => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error, code })
+          if (!browser) return fail('Only server mode is available outside the Dimagi Canopy extension\'s panel.', 'not_in_mode')
+          if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK, 'needs_click')
+          if (msg.mode !== 'local' && msg.mode !== 'server') return fail('A mode is "local" or "server".')
+          browser.mode.set(msg.mode)
+          post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: modeInfo(browser) })
+          return
         }
         case 'read': {
           if (app && !app.canopyReads) {

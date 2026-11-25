@@ -332,4 +332,4 @@ gateway_mcp = _build()
 
 
 def build_http_app():
-    return gateway_mcp.http_app(path="/", transport="streamable-http")
+    return gateway_mcp.http_app(path="/", transport="streamable-http", stateless_http=True)

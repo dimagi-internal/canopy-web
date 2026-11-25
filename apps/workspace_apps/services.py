@@ -168,7 +168,8 @@ def store_detail(workspace_id: str, key: str) -> dict:
             "emails": _store_emails(m),
             "versions": [{"version": x.version, "released_at": x.released_at.isoformat(), "changelog": x.changelog}
                          for x in versions[:10]],
-            "installed": AppInstallation.objects.filter(workspace_id=workspace_id, template=t).exists()}
+            "installed": AppInstallation.objects.filter(workspace_id=workspace_id, template=t).exists(),
+            "ai": (m.get("ai") or {}).get("purpose")}
 
 
 def setup_status(inst: AppInstallation) -> dict:

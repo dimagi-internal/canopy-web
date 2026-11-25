@@ -4,8 +4,8 @@
   counterpart to install-runner.sh's launchd path.
 
 .DESCRIPTION
-  The runner's Python is platform-neutral with two exceptions: the producers
-  (inbox.py, schedules.py) shell out to `gog` and do date math, cdp_control drives
+  The runner's Python is platform-neutral with two exceptions: the producer
+  (inbox.py) shells out to `gog` and does date math, cdp_control drives
   emdash through `node`, and the transcript layer is pure pathlib. What made the
   daemon macOS-only was its SUPERVISION -- two launchd jobs and a `launchctl
   kickstart`. This script provides the other half of that split (see

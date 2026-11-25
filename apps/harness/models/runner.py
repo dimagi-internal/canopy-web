@@ -251,6 +251,11 @@ class Runner(models.Model):
     # today's direction-less "different" rather than going quiet, since a runner
     # too old to report this is the one most likely to be genuinely behind.
     code_committed_at = models.BigIntegerField(default=0)
+    # Moves whenever canopy-web records work this box owes (`apps/harness/runner_sync.py`):
+    # the ETag of `GET /runners/{id}/sync` and the `v` on its heartbeat reply and
+    # doorbell frames. Only `runner_sync.bump` writes it (an F() increment); `save`
+    # leaves it out, so a stale in-memory row never writes an older value back.
+    sync_version = models.BigIntegerField(default=0)
     # What the box REPORTS about its own features, one named check each —
     # `{"checks": [{"name", "status": ok|warn|fail, "detail"}], "checked_at",
     # "bootstrapped_at", "received_at"}`. OBSERVED, never typed, like `projects`.
@@ -391,6 +396,11 @@ class Runner(models.Model):
         creating = self._state.adding
         if creating and not self.paired_as:
             self.paired_as = self.name
+        if not creating and kwargs.get("update_fields") is None and not args:
+            kwargs["update_fields"] = [f.attname for f in self._meta.concrete_fields
+                                       if not f.primary_key and f.attname != "sync_version"]
+        elif kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = [f for f in kwargs["update_fields"] if f != "sync_version"]
         super().save(*args, **kwargs)
         if creating and self.workspace_id:
             RunnerEnrollment.objects.get_or_create(

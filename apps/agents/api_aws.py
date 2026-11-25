@@ -6,11 +6,11 @@ person approving a device code on their phone (`canopy aws login`). A turn on a 
 or a cloud runner asks canopy-web instead, for a role that can do one bounded thing. What
 each role can do is one line in `settings.CANOPY_AWS_ROLE_SUMMARIES`, the line an approver
 reads: `labs-read` (alias `labs-observe`) is `labs-jj-observe-readonly` (connect-labs
-`infra/labs-observe-readonly.yml`), NON-SENSITIVE reads only — metrics, alarms, resource and
-RDS metadata, with explicit denies on log events, object bodies, secrets, task commands and
-environments, and database content; `labs-readwrite` is `labs-jj-agent-readwrite`
-(`infra/labs-agent-readwrite.yml`): agent-named RDS copies of production and one psql client
-task, production source-only, IAM changes denied; `labs-config` is `labs-jj-agent-config`
+`infra/labs-observe-readonly.yml`): AWS ReadOnlyAccess (raw logs, objects, task definitions,
+CloudTrail) with denies on secret values, KMS decrypt and exec; `labs-readwrite` is
+`labs-jj-agent-readwrite` (`infra/labs-agent-readwrite.yml`): AdministratorAccess minus
+guardrails (no org/SSO/IAM-user changes, no edits to the access roles, no audit tampering,
+production database and backups not deletable); `labs-config` is `labs-jj-agent-config`
 (`infra/labs-agent-config.yml`): create and update the labs app secrets named `labs-jj-app-*`,
 never read a value, no deletes, no IAM.
 
@@ -26,15 +26,15 @@ settings change a person reviews. The role's own trust policy must also name
 canopy-web-task-role, so canopy-web cannot vend a role its owner did not agree to.
 
 Fenced roles are requested when needed and approved by a person. A role named in
-`settings.CANOPY_AWS_ROLE_AGENTS` is fenced (`labs-readwrite`, `labs-config`). The agents
-listed beside it would get it with no approval, and every list is empty, so no agent holds a
-fenced role standing: an agent gets one only while it holds a LIVE GRANT (`AgentAwsRoleRequest`,
-`apps/agents/aws_grants.py`). `labs-read` is not fenced and goes to any agent on ask:
+`settings.CANOPY_AWS_ROLE_AGENTS` is fenced, and every role is. The agents listed beside a
+role get it with no approval (labs-read: the devops agents, Ada and Hal; the write roles: none);
+any other agent gets it only while it holds a LIVE GRANT (`AgentAwsRoleRequest`,
+`apps/agents/aws_grants.py`):
 
 1. The agent (its own login or turn, or a member who may work it) asks:
    `POST /api/agents/{slug}/aws-role-requests {role, reason, minutes}` (15 to 480 minutes,
-   default 60; `apps/approvals/api_aws_roles.py`, `canopy aws request`). A role vended on ask
-   (`labs-read`) is refused there, since it needs no approval.
+   default 60; `apps/approvals/api_aws_roles.py`, `canopy aws request`). An agent standing for
+   the role is refused there, since it needs no approval.
 2. That files an approval of kind `agent.aws_role` (`apps/approvals/kinds/agent_aws_role.py`,
    `step_up`): its preview names the agent, the role and its ARN, the role's summary line and
    the duration, beside the reason as the requester's own words. It waits 24 hours.
@@ -51,8 +51,8 @@ fenced role standing: an agent gets one only while it holds a LIVE GRANT (`Agent
    who approved it, a workspace owner or a superuser — or withdraws a pending request (also by
    whoever asked). Keys already handed out last until their own expiry.
 
-canopy-web is the ONLY source of a fenced role; a cloud runner's box broker never vends one,
-because it cannot verify which agent is asking.
+canopy-web is the ONLY source of every role; a cloud runner's box broker vends none, because it
+cannot verify which agent is asking and so cannot honour an approval.
 
 Who. The agent's own canopy login (what a turn and a laptop agent session hold), or a
 member who may work the agent (`agent.work`), with a TOKEN: a browser session is refused,
@@ -129,7 +129,7 @@ def _sts_name(text: str) -> str:
       step_up="token callers only: a browser session is refused, the keys go to a CLI's cache")
 def agent_aws_credentials(request: HttpRequest, slug: str, payload: AwsCredentialsIn) -> AwsCredentialsOut:
     """Short-lived AWS keys for ONE role named in canopy-web's settings (`labs-read` = read-only,
-    non-sensitive labs observability, on ask; `labs-readwrite` and `labs-config` are fenced), with
+    `labs-readwrite` = admin minus guardrails, `labs-config` = app secrets; all fenced), with
     the agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). A fenced role goes to
     the agents listed for it, and to another agent only while it holds a live grant a person
     approved (`POST /api/agents/{slug}/aws-role-requests`), for at most the grant's remaining time.

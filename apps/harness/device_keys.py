@@ -193,7 +193,7 @@ def runner_serves_agent(runner, agent, facts=None) -> bool:
         # an agent they administer, or one they hold an active license for.
         return runner.owner is not None and (
             (facts.is_admin(runner.owner, agent) if facts else agent.is_admin(runner.owner))
-            or private_runner_licensed(runner, agent))
+            or private_runner_licensed(runner, agent, facts))
     facts = facts or ServingFacts([runner], [agent])
     if runner_routes_agent(runner, agent, facts):
         return True
@@ -202,18 +202,24 @@ def runner_serves_agent(runner, agent, facts=None) -> bool:
     if (runner.kind != Runner.CLOUD and bool(agent.owner_id)
             and runner.owner_id == agent.owner_id):
         return True
-    return private_runner_licensed(runner, agent)
+    return private_runner_licensed(runner, agent, facts)
 
 
-def private_runner_licensed(runner, agent) -> bool:
+def private_runner_licensed(runner, agent, facts=None) -> bool:
     """A PRIVATE runner whose owner holds an ACTIVE license for `agent`:
     the person uses the agent on their own machine, and its secrets are read there only
-    during their own turns (`licenses.credential_principal`)."""
+    during their own turns (`licenses.credential_principal`). With `facts`, each
+    (agent, owner) license is read once however many of the owner's boxes ask."""
     if not runner.private or runner.owner is None:
         return False
     from apps.agents.credentials import licenses
 
-    return licenses.active(agent, runner.owner) is not None
+    def read() -> bool:
+        return licenses.active(agent, runner.owner) is not None
+
+    if facts is None:
+        return read()
+    return facts.once(("license", agent.pk, runner.owner_id), read)
 
 
 def agents_served(runner):

@@ -1,0 +1,96 @@
+name: Exhaustive walks (nightly)
+
+# The tests marked `nightly` (pyproject.toml): exhaustive walks that compare the
+# access resolver with the frozen code it replaced, over every combination of
+# asker, conversation and profile (tests/test_turn_context_equivalence.py,
+# tests/test_answering_settings_equivalence.py). They took about a third of the
+# backend suite's CPU and all fell on one merge-queue shard, so ci.yml leaves
+# them out. The specific session and refusal cases in those files still run in
+# the queue.
+#
+# Kept apart from pg-nightly.yml so that this run fails only when a walk does:
+# a failure here means someone's access to an agent changed. It files ONE
+# tracking issue (label `nightly-walks`), comments on it each failing night, and
+# closes it on the first green one.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # the tracking issue, via `gh issue` with GITHUB_TOKEN
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  walks:
+    name: Exhaustive walks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Run the walks
+        run: |
+          set -o pipefail
+          uv run pytest -n auto --nomigrations -m "nightly and not needs_migrations" \
+            -q -rfE -p no:cacheprovider --durations=10 2>&1 | tee /tmp/pytest.log
+
+      - name: Report failures in the tracking issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create nightly-walks --color B60205 \
+            --description "An exhaustive access walk failing (nightly-walks.yml)" 2>/dev/null || true
+          {
+            echo "The nightly exhaustive walks failed: $RUN_URL"
+            echo "(ref \`$GITHUB_REF_NAME\`, commit \`$GITHUB_SHA\`)"
+            echo
+            echo "A difference means someone's access to an agent would change. Fix the resolver, or, if the change is"
+            echo "intended, say so in the test that names the changed cases."
+            echo
+            if [ -s /tmp/pytest.log ]; then
+              echo "Last summary line: \`$(tail -n 1 /tmp/pytest.log)\`"
+              echo
+              echo '```'
+              grep -E '^(FAILED|ERROR) ' /tmp/pytest.log | cut -c1-300 | head -n 50
+              echo '```'
+            else
+              echo "The suite never ran: a setup step failed. See the run."
+            fi
+          } > /tmp/issue.md
+          issue=$(gh issue list --label nightly-walks --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body-file /tmp/issue.md
+          else
+            gh issue create --label nightly-walks \
+              --title "An exhaustive access walk fails (nightly)" --body-file /tmp/issue.md
+          fi
+
+      - name: Close the tracking issue on a green night
+        if: success() && github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          issue=$(gh issue list --label nightly-walks --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "The walks passed: $RUN_URL"
+          fi

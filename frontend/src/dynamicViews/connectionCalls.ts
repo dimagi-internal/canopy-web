@@ -22,6 +22,9 @@
  * - Calls wait their turn in one first-come queue for the page, at most 8 at once across
  *   its frames: a dashboard's load outnumbers what the server takes from one person.
  *   A write's lease is checked when its turn comes, not when it joined.
+ * - The same GET asked again within `READ_REUSE_MS` gets the answer the last one got (and one in flight is
+ *   shared), unless it comes with a click on the screen: a screen that re-reads on a timer reaches the
+ *   provider at most that often. A write through this screen forgets every answer kept.
  * - A line the screen did not declare is refused here as well, as a courtesy. This is
  *   a declared-line match and nothing more: the server is the authority (allowlist,
  *   revision, whose connection), and refuses in a sentence the frame is shown as is.
@@ -101,6 +104,11 @@ export interface CallContext {
   draft?: boolean
 }
 
+/** How long the same GET is answered from the last one's answer (see the header). */
+export const READ_REUSE_MS = 30_000
+/** The most answers kept per screen. */
+const READ_REUSE_MAX = 100
+
 const METHODS = new Set(['GET', 'POST', 'PATCH', 'DELETE'])
 /** A lease covers at most this many writes (the server's bound). */
 const MAX_WRITES = 500
@@ -140,7 +148,9 @@ const matches = (line: DeclaredLine, method: string, path: string) => {
   const want = String(line.path).split('/')
   // A query's next page is covered by the query (the server's `Rule.declared_as`).
   const got = method === 'GET' && /^query\/[^/]+$/.test(path) ? ['query'] : path.split('/')
-  return want.length === got.length && want.every((w, i) => w === '*' || w === got[i])
+  // `*:verb` stands for one segment ending in Google's custom method (`sheets/*/values/*:append`).
+  return want.length === got.length && want.every((w, i) => w === '*' || w === got[i] ||
+    (w.startsWith('*:') && got[i].length > w.length - 1 && got[i].endsWith(w.slice(1))))
 }
 
 const COMPOSITE = /^composite\/(batch|sobjects)(\/[^/]+)?$/
@@ -257,6 +267,7 @@ export interface CallOptions {
 
 export class ConnectionCalls {
   private lease: Lease | null = null
+  private reads = new Map<string, { at: number; answer: Promise<CallResult> }>()
   private opening: { key: string; promise: Promise<Lease> } | null = null
   private inflight = new Set<AbortController>()
   private client: ConnectionClient
@@ -355,7 +366,8 @@ export class ConnectionCalls {
       ...(agent ? { agent } : {}),
       ...(r.allowDuplicates === true || r.allow_duplicates === true ? { allow_duplicates: true } : {}),
     }
-    if (isRead) return this.send(provider, base)
+    if (isRead) return method === 'GET' ? this.read(provider, base, clicked) : this.send(provider, base)
+    this.reads.clear()
 
     const key = surfaceKey(surface)
     if (this.liveLease(key, writes)) return this.send(provider, base, key, writes)
@@ -365,6 +377,23 @@ export class ConnectionCalls {
       opening = this.open(surface, key)
     }
     return opening.then(() => this.send(provider, base, key, writes))
+  }
+
+  /** A GET: the answer the same GET got within `READ_REUSE_MS` (or the one in flight), unless clicked. */
+  private read(provider: string, body: CallBody, clicked: boolean): Promise<CallResult> {
+    const key = JSON.stringify([provider, body])
+    const t = this.now()
+    const kept = this.reads.get(key)
+    if (!clicked && kept && t - kept.at < READ_REUSE_MS) return kept.answer
+    const answer = this.send(provider, body)
+    this.reads.delete(key)
+    this.reads.set(key, { at: t, answer })
+    // A refusal is not kept: the next ask tries again.
+    answer.catch(() => {
+      if (this.reads.get(key)?.answer === answer) this.reads.delete(key)
+    })
+    while (this.reads.size > READ_REUSE_MAX) this.reads.delete(this.reads.keys().next().value as string)
+    return answer
   }
 
   /** The live lease on this surface with room for `writes` more. */
@@ -432,6 +461,7 @@ export class ConnectionCalls {
     this.queue.drop(this)
     this.lease = null
     this.opening = null
+    this.reads.clear()
   }
 }
 

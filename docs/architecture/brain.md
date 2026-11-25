@@ -2,8 +2,7 @@
 
 One foundation every learning capability uses: what canopy may learn from, who agreed, who sees
 the result, and how a removal reaches what was derived. Capabilities (coaching, personal memory,
-project learning, system learning) sit on top and are added over time. The build's plan and its
-open questions are the epic, issue 2728; this doc is what the code does now.
+project learning, system learning) sit on top.
 
 ## What is stored (`apps/brain/models.py`)
 
@@ -145,15 +144,14 @@ their consent allows coaching (`eligibility.coaching_allows`): the workspaces it
 rule denies the `individual` class or the `coaching` learner for either of its purposes. The two are kept the same in
 both directions: coaching's own opt-in or out mirrors into the `individual` class
 (`consent.mirror_coaching`, called by `session_reviewers`), and setting or dropping `individual` through
-the learning routes writes the opt-in (`consent._sync_coaching`). Migration `0002_copy_coaching_opt_ins`
-carried every live opt-in over; the old table stays until a later release drops it.
+the learning routes writes the opt-in (`consent._sync_coaching`).
 
 ## Which project a source belongs to (`apps/brain/associate.py`)
 
 `SourceLink` ties a source to a subject (a project today), one row per pair, in four layers where the
 strongest wins (`associate.rank`): **dispatched** (a turn raised from a task of the project ran in the
 session: certain), **signals** (the project's `ProjectSignature` matched against the session's recorded
-`activity`; `associate.classify` is canopy's `project_history.classify`, ported), **judged** (a judge
+`activity`; `associate.classify` applies the same rules as canopy's `project_history.classify`), **judged** (a judge
 run's ruling, below) and **declared** (an agent at close-out, or a person). A link is metadata and
 confers no read by itself; only a `core` link opens the project leg.
 
@@ -376,7 +374,7 @@ content deletion, `signals._cascade_content_deletion`). It is idempotent.
   the cascade, and a seal (a sensitive session, a contact's) deletes nothing for someone who never agreed.
 - **A tombstone, not a toggle.** `consent.include` restores eligibility only; a withdrawn output stays
   withdrawn, a replay cannot cite a removed source (`cascade.emit_allowed`), and a runner re-ship of deleted
-  words is refused as before (`transcript_ingest.refuses_ship`).
+  words is refused (`transcript_ingest.refuses_ship`).
 - The one other store that writes `OutputLineage`, personal memory, is swept by name (`hcp_store.sweep`); a new
   store is added to `cascade.sweep` beside it. The sweep skips withdrawn outputs.
 
@@ -516,16 +514,14 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
 
 ## Every reader is placed
 
-The learners canopy has today and will have are registered, dark, by migration `0007` (coaching, personal memory, the project
-link judge, project learning, system learning): none has an operator or is enabled, so registering them changes nothing, and
-coaching keeps reading through its own leg until it moves. `tests/test_message_readers_are_registered.py` lists every server
+Every learner is registered, dark, by `registry.LEARNERS` (migration `0007` seeds the same rows): it reads nothing until
+someone gives it an operator and enables it, and coaching reads through its own leg (§ Coaching is `individual`). `tests/test_message_readers_are_registered.py` lists every server
 module that reads a session's transcript rows and why it may (the chat itself, ingest, plumbing, a person sharing their own
 session, a notification); a new reader fails it until it is placed (calling the core read
 `transcript_read.read` counts), and a learning read belongs in `brain.reading`, which is the one module marked as such. The agent-side readers (`ada:session-review`, `canopy:agent-review`, the
 stall classifier, `canopy analyze/improve`, the contributor pages and check-in runs) read through the API, not through a
-server module; moving them to runs of a registered learner is work in the canopy plugin and the agents' repos. Ada's
-`canopy-run-review` (the sweep of the fleet's scheduled and event turns) is now the `system-learning` learner's
-workspace target: a second learner over the same sessions would only find the same things twice.
+server module. The fleet's sweep of scheduled and event turns is the `system-learning` learner's workspace target: do
+not add a second learner over the same sessions, it would only find the same things twice.
 
 ## Adding a learner
 
@@ -533,9 +529,10 @@ What is new decides where it goes. Never add a scheduler, a cursor, a read path 
 schedule, `brain_read`, the learned set and `brain_emit`'s fold by key are those, for every learner.
 
 - **New judgment for a lens that exists** (a signal to look for, a sharper "don't emit when", a report shape): edit the
-  lens paragraph in the canopy plugin's `brain-learn` skill, or, for one organisation's detail, a skill in its support
-  project (Dimagi: the `review-*` skills of `dimagi/canopy-support`, which the operator names in its own procedure). No
-  new learner, no code.
+  lens paragraph in the canopy plugin's `brain-learn` skill. A run loads no other skill, so that paragraph is the only
+  place a run's judgment lives. An organisation's own review skills (Dimagi: the `review-*` skills of
+  `dimagi/canopy-support`) refine its classes for reviews outside a run and for whoever routes a finding. No new
+  learner, no code.
 - **The same lens somewhere new** (another workspace or a project): `POST /api/brain/targets` (`add_learning_target`),
   with its own schedule and budget. Run now to check it.
 - **A new lens** (a new subject, purpose or output kind): a canopy admin registers a `BrainCapability` (`POST
@@ -545,7 +542,7 @@ schedule, `brain_read`, the learned set and `brain_emit`'s fold by key are those
   now. The scorecard's precision is how it earns its keep.
 
 
-## Not built yet
+## Limits
 
-A per-person scheduler for `individual` and `memory` features, and the capability leg's other readers (coach and manager
-reading of transcripts stays on the existing coaching leg). No workspace reads a transcript through the brain until its owners or admins turn "Learning reads" on.
+The `individual` and `memory` learners have no scheduler and take no target (`targets.kind_refusal`); coach and manager
+reading of transcripts is the coaching leg, not a brain read. No workspace reads a transcript through the brain until its owners or admins turn "Learning reads" on.

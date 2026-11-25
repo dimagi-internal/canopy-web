@@ -92,8 +92,8 @@ def request_aws_role(request: HttpRequest, slug: str, payload: AwsRoleRequestIn)
     reason and how long it should last. It files an approval (kind `agent.aws_role`) that an owner of
     the agent's workspace or a canopy superuser approves on its page (`approval_url`) with a passkey;
     then `POST aws-credentials` vends the role to this agent until the grant ends. 404 for a role
-    canopy-web does not vend; 422 for a role vended on ask (`labs-read`) or one this agent already
-    gets with no approval. While a request for the same role is pending, asking again returns it (200)."""
+    canopy-web does not vend; 422 for a role vended on ask (none today: every role is fenced) or one
+    this agent already gets with no approval. While a request for the same role is pending, asking again returns it (200)."""
     agent = agent_for_work(request, slug, allow_own_login=True,
                            forbidden=f"asking for an AWS role for {slug} needs the editor role or above, "
                                      "or the agent's own login")

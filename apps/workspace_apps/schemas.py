@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from ninja import Schema
+from pydantic import Field
 
 
 class StoreAppOut(Schema):
@@ -84,6 +85,8 @@ class StoreAppDetailOut(Schema):
     emails: list[StoreEmailOut]
     versions: list[StoreVersionOut]
     installed: bool
+    #: The manifest's `ai.purpose`: the app's pages send what they show to canopy's model for this.
+    ai: str | None = None
 
 
 class InstallationSummaryOut(Schema):
@@ -373,6 +376,22 @@ class BrowserAppOut(Schema):
     page_title: str
     adapter: str
     capabilities: list[str]
+    #: Which of `capabilities` change the page (the registry's `acts`): the panel relays one only from a click.
+    acts: list[str]
     events: list[str]
     #: The page's match patterns: the panel checks the tab against them again before every call.
     matches: list[str]
+
+
+class AiCompleteIn(Schema):
+    # Checked again, block by block, in ai.clean (the shapes are documented there and in
+    # docs/architecture/app-ai.md); typed loosely here so a page's request reaches that one check.
+    model: Literal["fast", "smart"] = "fast"
+    system: str = ""
+    messages: list[dict[str, Any]]
+    max_tokens: int | None = None
+    # Named in the request as `json_schema` (a field of that name would shadow Schema's own).
+    answer_schema: dict[str, Any] | None = Field(None, alias="json_schema")
+    tools: list[dict[str, Any]] = []
+    web_search: bool = False
+    feature: str = ""

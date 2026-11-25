@@ -451,7 +451,8 @@ export interface paths {
          *     whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
          *     `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
          *     `rate_limited`, `provider_rate_limited` (Salesforce is limiting calls: `retry_after` and `limits` when it
-         *     said them), `session_ended`, `request_too_large`, `response_too_large`, `response_unreadable`,
+         *     said them), `session_ended`, `scope_added` (the app now asks for a permission the viewer's hour lacks),
+         *     `request_too_large`, `response_too_large`, `response_unreadable`,
          *     `provider_unavailable`. Salesforce's own count of the org's API use comes back as `limits`.
          *
          *     `GET query/<locator>` is a query's next page (the locator from its `nextRecordsUrl`), covered by the
@@ -4340,6 +4341,29 @@ export interface paths {
          *     not declared; 403 without the action's role; 409 in a draft or on a task in the wrong state.
          */
         readonly post: operations["act_workspace_app_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/ai/complete": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask canopy's AI model, from a page of an app that declares AI use
+         * @description `canopy.ai.complete` from a member page: the app's manifest must declare `ai`. `model` is
+         *     an alias (`fast`, `smart`), never a model id. Answers `{text, content, stop_reason, model,
+         *     usage}` (plus `json` when `json_schema` was asked). 403 without the declaration, 429 over
+         *     the per-viewer limit, 502/503 when the model fails or AI is off.
+         */
+        readonly post: operations["ai_complete_workspace_app"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -8637,7 +8661,7 @@ export interface paths {
         /**
          * At most an hour of a named AWS role, as this agent
          * @description Short-lived AWS keys for ONE role named in canopy-web's settings (`labs-read` = read-only,
-         *     non-sensitive labs observability, on ask; `labs-readwrite` and `labs-config` are fenced), with
+         *     `labs-readwrite` = admin minus guardrails, `labs-config` = app secrets; all fenced), with
          *     the agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). A fenced role goes to
          *     the agents listed for it, and to another agent only while it holds a live grant a person
          *     approved (`POST /api/agents/{slug}/aws-role-requests`), for at most the grant's remaining time.
@@ -8671,8 +8695,8 @@ export interface paths {
          *     reason and how long it should last. It files an approval (kind `agent.aws_role`) that an owner of
          *     the agent's workspace or a canopy superuser approves on its page (`approval_url`) with a passkey;
          *     then `POST aws-credentials` vends the role to this agent until the grant ends. 404 for a role
-         *     canopy-web does not vend; 422 for a role vended on ask (`labs-read`) or one this agent already
-         *     gets with no approval. While a request for the same role is pending, asking again returns it (200).
+         *     canopy-web does not vend; 422 for a role vended on ask (none today: every role is fenced) or one
+         *     this agent already gets with no approval. While a request for the same role is pending, asking again returns it (200).
          */
         readonly post: operations["request_aws_role"];
         readonly delete?: never;
@@ -15989,6 +16013,29 @@ export interface paths {
          *     once and clears the request. Runner-owned-binding gated.
          */
         readonly post: operations["post_session_backfill"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every piece of work this runner owes, behind an ETag
+         * @description The drains in one read. `ETag` is the runner's sync version; send it back as
+         *     `If-None-Match` and an unchanged version answers 304 with nothing else read.
+         *     Every list is whole (never a diff since the last read), so a box that missed a
+         *     doorbell, or a bump, finds the work on its next read.
+         */
+        readonly get: operations["get_runner_sync"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -28591,6 +28638,8 @@ export interface components {
             readonly versions: readonly components["schemas"]["StoreVersionOut"][];
             /** Installed */
             readonly installed: boolean;
+            /** Ai */
+            readonly ai?: string | null;
         };
         /** StoreEmailOut */
         readonly StoreEmailOut: {
@@ -29146,6 +29195,47 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /** AiCompleteIn */
+        readonly AiCompleteIn: {
+            /**
+             * Model
+             * @default fast
+             * @enum {string}
+             */
+            readonly model: "fast" | "smart";
+            /**
+             * System
+             * @default
+             */
+            readonly system: string;
+            /** Messages */
+            readonly messages: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Max Tokens */
+            readonly max_tokens?: number | null;
+            /** Json Schema */
+            readonly json_schema?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Web Search
+             * @default false
+             */
+            readonly web_search: boolean;
+            /**
+             * Feature
+             * @default
+             */
+            readonly feature: string;
+        };
         /** FileOut */
         readonly FileOut: {
             /** Id */
@@ -29282,6 +29372,8 @@ export interface components {
             readonly adapter: string;
             /** Capabilities */
             readonly capabilities: readonly string[];
+            /** Acts */
+            readonly acts: readonly string[];
             /** Events */
             readonly events: readonly string[];
             /** Matches */
@@ -41341,6 +41433,10 @@ export interface components {
             readonly messages: number;
             /** Active Users */
             readonly active_users: number;
+            /** Active Agents */
+            readonly active_agents: number;
+            /** Built Agents */
+            readonly built_agents: number;
             /** Done */
             readonly done: number;
             /** Failed */
@@ -45328,6 +45424,11 @@ export interface components {
              * @default
              */
             readonly expected_canopy_version: string;
+            /**
+             * Sync Version
+             * @default 0
+             */
+            readonly sync_version: number;
             /** Workspace */
             readonly workspace: string | null;
             /** Owner Email */
@@ -46552,6 +46653,77 @@ export interface components {
              */
             readonly can_control: boolean;
         };
+        /**
+         * RunnerHeartbeatSlimOut
+         * @description The heartbeat reply a runner that sends `slim_reply: 1` gets: only what the
+         *     laptop (`runner/canopy_runner`) and the cloud box (`runner/ec2`) read off it.
+         *     Each field means what it means on `RunnerOut`, and is read by the same
+         *     resolver; none of the fleet-page fields (health checks, roots, open sessions)
+         *     is computed.
+         */
+        readonly RunnerHeartbeatSlimOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Host */
+            readonly host: string;
+            /**
+             * Engine
+             * @default emdash
+             */
+            readonly engine: string;
+            /** Status */
+            readonly status: string;
+            /** Status Note */
+            readonly status_note: string;
+            /** Ready */
+            readonly ready: boolean;
+            /** Ready Note */
+            readonly ready_note: string;
+            /**
+             * Remedy
+             * @default
+             */
+            readonly remedy: string;
+            /** Paused */
+            readonly paused: boolean;
+            /** Paused Note */
+            readonly paused_note: string;
+            /**
+             * Private
+             * @default false
+             */
+            readonly private: boolean;
+            /** Private Runner Id */
+            readonly private_runner_id?: string | null;
+            /**
+             * Key Waiting
+             * @default
+             */
+            readonly key_waiting: string;
+            /** Report Projects */
+            readonly report_projects?: readonly string[] | null;
+            /** Refresh Pending */
+            readonly refresh_pending?: boolean | null;
+            /** Cancel Turn Ids */
+            readonly cancel_turn_ids?: readonly string[] | null;
+            /** Add Projects */
+            readonly add_projects?: readonly components["schemas"]["RunnerProjectAskOut"][] | null;
+            /**
+             * Expected Canopy Version
+             * @default
+             */
+            readonly expected_canopy_version: string;
+            /**
+             * Sync Version
+             * @default 0
+             */
+            readonly sync_version: number;
+        };
         /** HeartbeatIn */
         readonly HeartbeatIn: {
             /**
@@ -46634,6 +46806,16 @@ export interface components {
              * @default 0
              */
             readonly stored_projects: number;
+            /**
+             * Slim Reply
+             * @default 0
+             */
+            readonly slim_reply: number;
+            /**
+             * Sync
+             * @default 0
+             */
+            readonly sync: number;
             /** Clis */
             readonly clis?: {
                 readonly [key: string]: unknown;
@@ -47705,6 +47887,74 @@ export interface components {
              * @default
              */
             readonly transcript_id: string;
+        };
+        /**
+         * RunnerSyncOut
+         * @description `GET /runners/{id}/sync`: every piece of work this box owes, in one read.
+         *
+         *     Each list is the same rows its own drain route answers (`/session-interrupts`,
+         *     `/menu-answers`, `/closes`, `/backfills`, `/handoffs`, `/streams`); `sections`
+         *     holds what other apps register (`runner_sync.register_section`, e.g. `listen`).
+         *     `mint_due` says `/mint/claim` has something (claiming it consumes a code, so it
+         *     stays its own call). `version` is the ETag's number.
+         */
+        readonly RunnerSyncOut: {
+            /** Version */
+            readonly version: number;
+            /**
+             * Interrupts
+             * @default []
+             */
+            readonly interrupts: readonly components["schemas"]["SessionInterruptOut"][];
+            /**
+             * Answers
+             * @default []
+             */
+            readonly answers: readonly components["schemas"]["MenuAnswerOut"][];
+            /**
+             * Closes
+             * @default []
+             */
+            readonly closes: readonly components["schemas"]["CloseOut"][];
+            /**
+             * Backfills
+             * @default []
+             */
+            readonly backfills: readonly components["schemas"]["BackfillDescriptorOut"][];
+            /**
+             * Handoffs
+             * @default []
+             */
+            readonly handoffs: readonly components["schemas"]["HandoffDueOut"][];
+            /**
+             * Streams
+             * @default []
+             */
+            readonly streams: readonly components["schemas"]["StreamDescriptorOut"][];
+            /**
+             * Cancel Turn Ids
+             * @default []
+             */
+            readonly cancel_turn_ids: readonly string[];
+            /**
+             * Add Projects
+             * @default []
+             */
+            readonly add_projects: readonly components["schemas"]["RunnerProjectAskOut"][];
+            /**
+             * Mint Due
+             * @default false
+             */
+            readonly mint_due: boolean;
+            /**
+             * Sections
+             * @default {}
+             */
+            readonly sections: {
+                readonly [key: string]: readonly {
+                    readonly [key: string]: unknown;
+                }[];
+            };
         };
         /**
          * UnclaimableTurnOut
@@ -61978,6 +62228,37 @@ export interface operations {
             };
             /** @description Created */
             readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly ai_complete_workspace_app: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AiCompleteIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -76821,7 +77102,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["RunnerOut"];
+                    readonly "application/json": components["schemas"]["RunnerOut"] | components["schemas"]["RunnerHeartbeatSlimOut"];
                 };
             };
         };
@@ -77527,6 +77808,35 @@ export interface operations {
             };
         };
     };
+    readonly get_runner_sync: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerSyncOut"];
+                };
+            };
+            /** @description Not Modified */
+            readonly 304: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly list_unclaimable_turns: {
         readonly parameters: {
             readonly query?: never;
@@ -77555,6 +77865,9 @@ export interface operations {
                 readonly limit?: number;
                 readonly huddle?: string | null;
                 readonly parent_turn?: string | null;
+                readonly before?: string | null;
+                readonly since?: string | null;
+                readonly runner?: string | null;
             };
             readonly header?: never;
             readonly path?: never;

@@ -1,4 +1,15 @@
 """The deployed database connection: a psycopg pool per process, decided in one tested place.
+Off unless the deployment sets `DB_POOL=1`.
+
+A pool bounds how many threads hold a connection at once, so it is only safe while no thread
+holds one idle for long. A request's thread keeps whatever connection it opened until Django
+or `apps/common/thread_context.py` closes it at the request's end, so a request that queries
+early and then streams for minutes holds a slot the whole time: MCP sign-in did exactly that
+under a stateful Streamable-HTTP GET stream, and a few dozen agent sessions exhausted the pool.
+Sign-in now closes its connection when it returns (`apps/mcp/auth.py`,
+`apps/mcp/delegation.py`; `tests/test_db_pool_exhaustion_pg.py` reproduces the exhaustion).
+Before turning it on, check what the process holds: `pg_stat_activity` for this database,
+idle connections with an old `state_change`, should be few.
 
 Under ASGI every request, WebSocket and MCP message runs its sync code on a thread of its own
 (`ThreadSensitiveContext`), and Django connections are per thread. A persistent connection
@@ -13,15 +24,15 @@ message, each off-request tick), so a request no longer pays a fresh TLS + SCRAM
 Sizing: the RDS instance is shared with connect-labs and ace-web. `max_size` bounds what one
 web process can hold (a deploy briefly runs old and new tasks side by side, and a scaled
 service runs several); a thread waiting longer than `timeout` for a free connection gets an
-error instead of queueing forever. `DB_POOL=0` turns pooling off (a fresh connection per
-thread, closed at request end).
+error instead of queueing forever. Without `DB_POOL=1` each thread opens its own connection
+and closes it at request end.
 """
 from __future__ import annotations
 
 
 def pool_options(env) -> dict | None:
     """The `OPTIONS["pool"]` for the default database, or None for no pool."""
-    if not env.bool("DB_POOL", default=True):
+    if not env.bool("DB_POOL", default=False):
         return None
     from psycopg_pool import ConnectionPool  # noqa: PLC0415 — only a pooled deployment needs psycopg_pool
 

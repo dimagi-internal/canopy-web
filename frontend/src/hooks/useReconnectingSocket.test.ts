@@ -30,12 +30,15 @@ const last = () => FakeSocket.all[FakeSocket.all.length - 1]
 describe('useReconnectingSocket', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    // The middle of the ±50% jitter band: each wait is exactly its ladder step.
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
     FakeSocket.all = []
     vi.stubGlobal('WebSocket', FakeSocket)
   })
   afterEach(() => {
     cleanup()
     vi.useRealTimers()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -111,5 +114,29 @@ describe('useReconnectingSocket', () => {
     rerender({ url: 'ws://x/2' })
     expect(first.closed).toBe(true)
     expect(last().url).toBe('ws://x/2')
+  })
+})
+
+describe('reconnect jitter', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    FakeSocket.all = []
+    vi.stubGlobal('WebSocket', FakeSocket)
+  })
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('spreads the first retry over 0.5-1.5 s', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    renderHook(() => useReconnectingSocket('ws://x/a', () => {}))
+    act(() => last().drop())
+    act(() => { vi.advanceTimersByTime(499) })
+    expect(FakeSocket.all).toHaveLength(1)
+    act(() => { vi.advanceTimersByTime(1) })
+    expect(FakeSocket.all).toHaveLength(2)
   })
 })
