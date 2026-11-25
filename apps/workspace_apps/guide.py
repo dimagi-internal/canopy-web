@@ -111,8 +111,8 @@ LOCAL AND SERVER MODES: prefer canopy.google to calling the adapter or the Googl
 runs a named operation in the page's MODE, which the person chooses with the panel's Local/Server
 switch (or canopy.mode.set(mode) from a click): "local" is the tab beside the panel, through the
 adapter; "server" is their Google through canopy-web. canopy.mode.current, canopy.mode.available
-(['server'] outside the panel), canopy.mode.on(handler). Operations (canopy.google.ops lists each
-one's modes): gmail.thread({threadId?}) [local, server] -> {mode, threadId, subject, gmailUrl,
+(['server'] outside the panel), canopy.mode.on(handler). Operations (canopy.google.ops lists each one's modes and args):
+gmail.thread({threadId?}) [local, server] -> {mode, threadId, subject, gmailUrl,
 messages: [{emailId, from, to, cc, date, incoming, bodyText, bodyComplete}]}; gmail.draft({kind:
 "new"|"reply"|"reply_all", threadId?, to?, cc?, bcc?, subject?, bodyText or bodyHtml}) [local, server],
 from a click -> {mode, where: "compose" (open on screen, unsaved) | "drafts" (saved), format: "text" |

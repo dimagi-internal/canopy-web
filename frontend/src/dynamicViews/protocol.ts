@@ -153,7 +153,7 @@ export interface ModeInfo {
   available: Mode[]
 }
 /** `canopy.google.ops`: each operation's modes, whether it changes something, and what it does. */
-export type GoogleCatalogue = Record<string, { modes: Mode[]; act: boolean; summary: string }>
+export type GoogleCatalogue = Record<string, { modes: Mode[]; act: boolean; args: string[]; summary: string }>
 
 /** A `canopy.browser` call out of the frame, answered by `read-result`. */
 export type BrowserOp =

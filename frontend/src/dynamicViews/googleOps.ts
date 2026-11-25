@@ -26,6 +26,8 @@ export interface OpSpec {
   modes: readonly Mode[]
   /** Whether it changes something (the page, or the mailbox): it needs a click either way. */
   act: boolean
+  /** The arguments it takes, so a page can feature-check one (`'bodyHtml' in ops['gmail.draft'].args`). */
+  args: readonly string[]
   /** Local: the adapter and capability it uses (the page must declare it). */
   local?: { adapter: string; capability: string }
   /** Server: the Google call(s) it makes (the page must declare them). */
@@ -36,37 +38,37 @@ export interface OpSpec {
 /** The catalogue. Adding a mode to an operation is adding its implementation below, never a fallback. */
 export const GOOGLE_OPS: Readonly<Record<string, OpSpec>> = {
   'gmail.thread': {
-    modes: ['local', 'server'], act: false,
+    modes: ['local', 'server'], act: false, args: ['threadId'],
     local: { adapter: 'gmail', capability: 'read_open_thread' },
     server: ['GET gmail/threads/*'],
     summary: 'Every message of a thread, oldest first. Local: the thread open on screen.',
   },
   'gmail.draft': {
-    modes: ['local', 'server'], act: true,
+    modes: ['local', 'server'], act: true, args: ['kind', 'threadId', 'to', 'cc', 'bcc', 'subject', 'bodyText', 'bodyHtml'],
     local: { adapter: 'gmail', capability: 'start_compose' },
     server: ['GET gmail/threads/*', 'POST gmail/drafts'],
     summary: 'A new email or a reply, never sent. Local: an open compose window on screen. Server: a saved draft.',
   },
   'gmail.open_email': {
-    modes: ['local'], act: false,
+    modes: ['local'], act: false, args: [],
     local: { adapter: 'gmail', capability: 'read_open_email' },
     summary: 'The email open on screen.',
   },
   'gmail.fill_compose': {
-    modes: ['local'], act: true,
+    modes: ['local'], act: true, args: ['bodyText', 'mode', 'subject'],
     local: { adapter: 'gmail', capability: 'fill_compose' },
     summary: 'Write into the compose window on screen.',
   },
   'gmail.compose_recipients': {
-    modes: ['local'], act: false,
+    modes: ['local'], act: false, args: [],
     local: { adapter: 'gmail', capability: 'compose_recipients' },
     summary: 'Who the compose window on screen is addressed to.',
   },
 }
 
 /** What the page may see of the catalogue: each operation's modes, whether it acts, what it says. */
-export function opsCatalogue(): Record<string, { modes: Mode[]; act: boolean; summary: string }> {
-  return Object.fromEntries(Object.entries(GOOGLE_OPS).map(([k, v]) => [k, { modes: [...v.modes], act: v.act, summary: v.summary }]))
+export function opsCatalogue(): Record<string, { modes: Mode[]; act: boolean; args: string[]; summary: string }> {
+  return Object.fromEntries(Object.entries(GOOGLE_OPS).map(([k, v]) => [k, { modes: [...v.modes], act: v.act, args: [...v.args], summary: v.summary }]))
 }
 
 export class OpError extends Error {
