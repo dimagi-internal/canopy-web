@@ -12,6 +12,7 @@ import {
 } from '@/api/vault'
 import { Button } from 'canopy-ui/ui'
 import { VaultMembers } from '@/components/vault/VaultMembers'
+import { EncryptedBadge, VaultEditor, type VaultEntry } from '@/components/vault/VaultEditor'
 import { storePlace } from '@/components/settings/machineText'
 import { runnerHref } from '@/lib/scopedLinks'
 import {
@@ -28,8 +29,6 @@ import { Td, Th, Tr } from '@/components/DataTable'
 // Machines) and Encryption key — drawn by VaultPage inside the shared VaultView. Who may change what is the server's rule
 // for each route; a control is offered only to someone who manages the vault.
 
-const inputClass =
-  'min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0 sm:w-56'
 const buttonClass =
   'min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary disabled:opacity-40 sm:min-h-0'
 const quietClass =
@@ -335,58 +334,31 @@ export function machineCount(v: WorkspaceVaultOut): number {
   return new Set([...v.attachments.filter((a) => a.runner).map((a) => a.runner_name ?? a.runner), ...v.holders.keepers]).size
 }
 
-/** The names it holds (never a value); add or replace one, sealed in this browser. */
+/** The names it holds (never a value), in the same table an agent's vault uses: Add secret,
+ *  Change, Upload file (a service-account JSON, a PEM), Delete — each value sealed in this browser. */
 export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
-  const { busy, run, errorLine } = useRun(onChange)
   const manages = managesVault(v)
-  const [name, setName] = useState('')
-  const [value, setValue] = useState('')
+  const entries: VaultEntry[] = v.secrets.map((name) => ({ name, set: true }))
   return (
     <Sub id="vault-secrets">
-      {v.secrets.length === 0 && <p className="text-[12px] text-muted-foreground">None yet.</p>}
-      {v.secrets.length > 0 && (
-        <table className="w-full text-[12px]" data-testid="ws-vault-secrets">
-          <tbody className="divide-y divide-border">
-            {v.secrets.map((s) => (
-              <tr key={s}>
-                <Td density="cozy" tone="foreground" mono>{s}</Td>
-                <Td density="cozy" align="right">
-                  {manages && (
-                    <button type="button" disabled={busy} className={quietClass} data-testid={`ws-vault-delete-${s}`}
-                      onClick={() => window.confirm(`Delete ${s} from ${v.name}?`)
-                        && void run(() => deleteWorkspaceVaultSecret(v.vault_id, s))}>
-                      Delete
-                    </button>
-                  )}
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {manages && v.kv > 0 && (
-        <form className="mt-3 flex flex-wrap items-center gap-2" data-testid="ws-vault-seal"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void run(async () => {
-              await sealWorkspaceVaultValue(v.vault_id, name.trim(), value, await unlock())
-              reload()
-            }).then((ok) => { if (ok) { setName(''); setValue('') } })
-          }}>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="NAME" aria-label="Secret name"
-            className={inputClass} />
-          <input value={value} onChange={(e) => setValue(e.target.value)} type="password" autoComplete="off"
-            placeholder="value" aria-label="Secret value" className={inputClass} />
-          <button type="submit" disabled={busy || !name.trim() || !value} className={buttonClass}>Seal it in</button>
-        </form>
-      )}
+      <VaultEditor
+        entries={entries}
+        canEdit={manages && v.kv > 0}
+        onSave={async (name, value) => {
+          await sealWorkspaceVaultValue(v.vault_id, name, value, await unlock())
+          reload()
+        }}
+        onDelete={manages ? async (name) => onChange(await deleteWorkspaceVaultSecret(v.vault_id, name)) : undefined}
+        // The page knows names only: no timestamps, no read history to show.
+        usage={() => ''}
+        badge={<EncryptedBadge />}
+      />
       {manages && v.kv === 0 && (
         <p className="mt-2 text-[12px] text-muted-foreground">Make the vault&rsquo;s key (at the top of this page) before anything can go in.</p>
       )}
       <p className="mt-2 text-[11px] text-muted-foreground">
         A value is encrypted in this browser under the vault&rsquo;s key; canopy-web stores only ciphertext and shows only names.
       </p>
-      {errorLine}
     </Sub>
   )
 }
