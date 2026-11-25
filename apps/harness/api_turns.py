@@ -5,6 +5,8 @@ Registered on the harness router (`api.router`), in the order api.py imports
 this module, so the schema and the MCP tool names are unchanged."""
 from __future__ import annotations
 
+import datetime as dt
+
 import logging
 import uuid
 
@@ -158,7 +160,14 @@ def list_turns(
     limit: int = 100,
     huddle: str | None = None,
     parent_turn: uuid.UUID | None = None,
+    before: dt.datetime | None = None,
+    since: dt.datetime | None = None,
+    runner: str | None = None,
 ):
+    # Paging: the list is newest first and clamped to 200, so a window longer than
+    # 200 turns is read by passing the last row's `created_at` back as `?before=`.
+    # `?since=` bounds the window from below; `?runner=` (a runner's name) keeps the
+    # turns that runner claimed — what a box's occupancy is measured from.
     # `?agent=` names one agent, so the list cannot mix organisations: read it
     # within that agent's tenant tree and need no pin (fleet surveys — Ada's
     # `conduct`, `canopy agent health` — ask this per agent, unpinned). Without
@@ -198,6 +207,12 @@ def list_turns(
         qs = qs.filter(origin_ref__huddle=huddle)
     if parent_turn:
         qs = qs.filter(parent_turn_id=parent_turn)
+    if before:
+        qs = qs.filter(created_at__lt=before)
+    if since:
+        qs = qs.filter(created_at__gte=since)
+    if runner:
+        qs = qs.filter(claimed_by__name=runner)
     limit = max(1, min(limit, 200))  # clamp; default 100 keeps existing callers unchanged
     from . import turn_access
 
