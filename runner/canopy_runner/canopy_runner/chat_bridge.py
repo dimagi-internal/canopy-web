@@ -21,6 +21,8 @@ heartbeating and claiming while an agent works. The step function stays pure
 """
 from __future__ import annotations
 
+import fnmatch
+import json
 from dataclasses import dataclass, field
 
 # The transcript core lives in canopy_transcript so the cloud runner shares it
@@ -154,6 +156,53 @@ def received_prompt(rec: dict) -> str | None:
     return text
 
 
+def required_mcp_tools(profile: dict | None) -> tuple[str, ...]:
+    """The MCP tool patterns a confined profile works through (`mcp__*canopy-web__site_call`, ...).
+
+    Empty for a full-profile turn and for a profile that names no MCP tool: nothing
+    to require, so the bridge streams exactly as it always has."""
+    tools = (profile or {}).get("tools") or []
+    return tuple(t for t in tools if isinstance(t, str) and t.startswith("mcp__"))
+
+
+def apply_tools_delta(seen: set[str], rec: dict) -> bool:
+    """Fold one `deferred_tools_delta` attachment into `seen`; True when `rec` was one.
+
+    Claude Code writes one whenever the session's deferred tool list changes: at
+    startup, and again when a still-connecting MCP server lands. A server that
+    did not authenticate shows up as only `<server>__authenticate` and
+    `__complete_authentication`, never its real tools."""
+    if rec.get("type") != "attachment":
+        return False
+    att = rec.get("attachment") or {}
+    if att.get("type") != "deferred_tools_delta":
+        return False
+    seen.update(n for n in att.get("addedNames") or [] if isinstance(n, str))
+    seen.difference_update(n for n in att.get("removedNames") or [] if isinstance(n, str))
+    return True
+
+
+def tools_in_transcript(path: str, upto: int) -> tuple[set[str], int]:
+    """The deferred tools a session had by byte `upto` of its transcript, and how many
+    deltas said so. Seeds a bridge that starts mid-session (a reused chat session),
+    whose reader never sees the startup deltas. Unreadable lines are skipped."""
+    seen: set[str] = set()
+    deltas = 0
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(max(0, upto))
+    except OSError:
+        return seen, 0
+    for raw in data.splitlines():
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and apply_tools_delta(seen, rec):
+            deltas += 1
+    return seen, deltas
+
+
 @dataclass
 class Rider:
     """A follow-up typed into this bridge's session while its turn was running.
@@ -201,6 +250,16 @@ class LiveBridge:
     project: str = ""
     # Follow-ups delivered into this turn (`add_rider`), in delivery order.
     riders: list[Rider] = field(default_factory=list)
+    # A CONFINED turn's profile MCP tools (`required_mcp_tools`). While the session
+    # has none of them, its text is HELD, not streamed; a hand-back without one
+    # fails the turn (`missing_tools`) and the held text is never relayed, because
+    # an answer written without the caller's data tools is an answer from nothing.
+    required_tools: tuple[str, ...] = ()
+    # The session's deferred tools so far, and whether any delta was ever seen:
+    # a session that never reports its tools is not gated (we cannot tell).
+    tools_seen: set[str] = field(default_factory=set)
+    tools_reported: bool = False
+    held: list[str] = field(default_factory=list)
 
     def add_rider(self, turn_id: str, prompt: str) -> None:
         """A follow-up was typed into this session mid-turn. The turn now runs
@@ -253,23 +312,42 @@ class LiveBridge:
             self.idle_ticks = 0
         else:
             self.idle_ticks += 1
-        texts = new_assistant_texts(new_records, 0)
-        self.pending.extend(texts)
-        self.collected.extend(texts)
         # In ORDER: a hand-back only ends the turn once every rider has been
         # received — one taken after this `end_turn` gets its own reply, which
-        # ends with its own hand-back.
+        # ends with its own hand-back. Tool deltas are folded in order too, so
+        # text written before the caller's tools landed is held, not streamed.
         for rec in new_records:
+            if self.required_tools and apply_tools_delta(self.tools_seen, rec):
+                self.tools_reported = True
+            texts = new_assistant_texts([rec], 0)
+            if texts:
+                self.collected.extend(texts)
+                (self.pending if self.tools_ready else self.held).extend(texts)
+            if self.held and self.tools_ready:
+                self.pending.extend(self.held)
+                self.held.clear()
             text = received_prompt(rec) if self.riders else None
             if text is not None:
                 self._note_received(text)
             if hands_back_to_human(rec) and not self.awaiting_riders:
-                self.done_reason = "end_turn"
+                self.done_reason = "end_turn" if self.tools_ready else "missing_tools"
+        if self.done_reason == "missing_tools":
+            self.held.clear()   # never relayed: it was written without the caller's tools
+            return
         if self.done_reason != "end_turn":
             if self.idle_ticks >= IDLE_TICKS and not blocked:
                 self.done_reason = "idle"
             elif self.ticks >= MAX_TICKS:
                 self.done_reason = "max_ticks"
+
+    @property
+    def tools_ready(self) -> bool:
+        """The session has a tool its confined profile works through, or there is
+        nothing to check (a full-profile turn, or no tool list reported yet)."""
+        if not self.required_tools or not self.tools_reported:
+            return True
+        return any(fnmatch.fnmatchcase(name, pat)
+                   for name in self.tools_seen for pat in self.required_tools)
 
     @property
     def finished(self) -> bool:
@@ -287,6 +365,13 @@ class LiveBridge:
     def note(self) -> str:
         chars = len("\n\n".join(self.collected))
         rode = f"; {len(self.riders)} follow-up(s) delivered mid-turn" if self.riders else ""
+        if self.done_reason == "missing_tools":
+            mcp = sorted(n for n in self.tools_seen if n.startswith("mcp__"))
+            return ("chat: the confined session has none of its profile's tools ("
+                    + ", ".join(self.required_tools) + "); its MCP tools were: "
+                    + (", ".join(mcp) or "none")
+                    + ". The canopy-web MCP did not authenticate as the caller; "
+                    f"reply ({chars} chars) withheld, not relayed")
         if self.done_reason == "end_turn":
             return f"chat reply bridged ({chars} chars{rode})"
         return f"chat reply bridged ({chars} chars; ended on {self.done_reason}{rode})"
