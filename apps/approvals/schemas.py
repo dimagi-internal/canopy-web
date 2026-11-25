@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -34,6 +34,12 @@ class ApprovalFileIn(StrictModel):
 
 class ApprovalDecideIn(StrictModel):
     decision: Literal["approve", "decline"]
+    comment: str = Field(default="", max_length=2000)
+
+
+class ApprovalPasskeyIn(StrictModel):
+    #: The WebAuthn assertion made for this request (`approve/begin`'s options).
+    credential: dict[str, Any]
     comment: str = Field(default="", max_length=2000)
 
 

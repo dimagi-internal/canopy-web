@@ -21,6 +21,7 @@ from apps.agents.models import Agent, AgentAdmin, AgentAwsRoleRequest
 from apps.approvals import kinds, services
 from apps.approvals.models import ApprovalRequest
 from apps.passkeys.testing import grant_step_up
+from tests.fixtures.passkey_confirm import approve_approval
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member, a_workspace
 from tests.token_helpers import pat_client
@@ -88,10 +89,13 @@ def _creds(c, slug="ace", role="labs-config"):
 
 
 def _decide(user, approval_id, *, step_up=True, decision="approve"):
+    """Approve with a passkey touch made for this request (its page's ceremony), or — `step_up=False` —
+    through `decide` with only a fresh step-up window, which a passkey kind refuses; decline there."""
+    if decision == "approve" and step_up:
+        return approve_approval(user, approval_id)
     c = Client()
     c.force_login(user)
-    if step_up:
-        grant_step_up(c)
+    grant_step_up(c)
     return c.post(f"/api/approvals/{approval_id}/decide", {"decision": decision}, content_type=J)
 
 
@@ -123,8 +127,10 @@ def test_request_then_passkey_approval_then_vend(w, sts):
     assert approval.reason == "rotate the labs app's Stripe key"
     # Still pending: no keys.
     assert _creds(pat_client(w.ace_login)).status_code == 403
-    # Approving without a fresh passkey is refused.
-    assert _decide(w.owner, approval.pk, step_up=False).status_code == 403
+    # Approving with only a recent passkey touch (the 5-minute window) is refused: the touch must be
+    # made for this request.
+    refused = _decide(w.owner, approval.pk, step_up=False)
+    assert refused.status_code == 403 and refused.json()["error"] == "passkey_for_this_request"
     r = _decide(w.owner, approval.pk)
     assert r.status_code == 200 and r.json()["status"] == "done", r.content
     row = AgentAwsRoleRequest.objects.get(pk=card["id"])

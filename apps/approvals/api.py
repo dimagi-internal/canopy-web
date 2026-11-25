@@ -13,14 +13,16 @@ from ninja.errors import HttpError
 from apps.agents.gates import visible_agent_workspaces
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
-from apps.api.errors import refusals
+from apps.api.errors import TYPE_CONFLICT, TYPE_FORBIDDEN, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
+from apps.passkeys import services as passkeys
 from apps.passkeys import stepup
+from apps.passkeys.schemas import PasskeyOptionsOut
 from apps.workspaces import permissions as perms
 
 from . import authority, cards, kinds, services
 from .models import ApprovalRequest
-from .schemas import ApprovalCardOut, ApprovalDecideIn, ApprovalFileIn, ApprovalKindOut
+from .schemas import ApprovalCardOut, ApprovalDecideIn, ApprovalFileIn, ApprovalKindOut, ApprovalPasskeyIn
 
 router = Router(auth=session_auth, tags=["approvals"])
 
@@ -111,7 +113,7 @@ def get_approval(request: HttpRequest, approval_id: int) -> dict:
 
 @router.post("/{approval_id}/decide", response=ApprovalCardOut, summary="Approve or decline a request")
 # the route takes any member; the kind's own authority check (members.manage, agent owner, …) decides
-@gate("member", setting=True, step_up=True, viewer_write="The route accepts any member of the workspace, but "
+@gate("member", setting=True, viewer_write="The route accepts any member of the workspace, but "
       "services.decide refuses anyone who does not hold the authority the request's kind needs "
       "(e.g. members.manage for adding a member), so a viewer is refused there")
 def decide_approval(request: HttpRequest, approval_id: int, payload: ApprovalDecideIn) -> dict:
@@ -119,18 +121,83 @@ def decide_approval(request: HttpRequest, approval_id: int, payload: ApprovalDec
     decided once: a second decision is a 409 naming who got there first. 403 when you do not hold
     the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason.
     A request whose card says `step_up` is approved only from its page (`page_url`) in a browser, with
-    the approver's passkey (a browser without a fresh one gets 403 `step_up_required`; a token is always
-    refused): send the person that link. Declining needs no passkey."""
+    a passkey touch made for that request (`approve/begin` + `approve/finish`); here it is 403
+    `passkey_for_this_request`. Declining needs no passkey."""
     seen = _visible(request, approval_id)
-    # A kind that stands in for a route that needs a passkey asks for one here, before it runs; the
-    # web client answers the 403 with its passkey dialog and retries (`frontend/src/auth/stepUp.ts`).
-    stepped_up = False
+    # A passkey kind is never approved here, however recently this browser touched a passkey: the
+    # touch must be made for THIS request (`approve/finish`), as an act-as-you approval's is.
     if payload.decision == "approve" and seen.is_pending and kinds.needs_step_up(seen.kind):
-        stepup.require_recent_step_up(request)
-        stepped_up = True
+        raise ProblemError(
+            403, "Approve this with your passkey", type_=TYPE_FORBIDDEN,
+            detail=f"Approving this needs a passkey touch made for this request, on its page: "
+                   f"{cards.page_url(seen)}",
+            members={"error": PASSKEY_FOR_THIS_REQUEST,
+                     "approve_with": f"POST /api/approvals/{seen.pk}/approve/begin"})
     try:
-        req = services.decide(approval_id, request.user, payload.decision, comment=payload.comment, via="web",
-                              stepped_up=stepped_up)
+        req = services.decide(approval_id, request.user, payload.decision, comment=payload.comment, via="web")
+    except services.ApprovalError as exc:
+        _raise(exc)
+    return cards.build(_visible(request, req.pk), viewer=request.user)
+
+
+#: The 403 `error` for approving a passkey kind any way but its own ceremony.
+PASSKEY_FOR_THIS_REQUEST = "passkey_for_this_request"
+
+
+def _slot(req: ApprovalRequest, user) -> str:
+    # One ceremony per request and approver: a challenge begun for one request cannot approve another.
+    return f"approval:{req.pk}:{user.pk}"
+
+
+def _passkey_kind_i_may_approve(request: HttpRequest, approval_id: int) -> ApprovalRequest:
+    stepup.require_browser(request, "approving with a passkey")
+    stepup.require_a_person(request, "approving with a passkey")
+    req = _visible(request, approval_id)
+    if not kinds.needs_step_up(req.kind):
+        raise ProblemError(422, "No passkey needed", type_=TYPE_VALIDATION,
+                           detail="this request is approved with POST …/decide")
+    if not req.is_pending:
+        raise ProblemError(409, "Conflict", type_=TYPE_CONFLICT, detail=services.already_decided(req))
+    if not authority.may_approve(req, request.user):
+        k = kinds.get(req.kind)
+        raise ProblemError(403, "Not allowed", type_=TYPE_FORBIDDEN,
+                           detail=f"You can't approve this: {k.label.lower()} needs {k.needs}.")
+    return req
+
+
+@router.post("/{approval_id}/approve/begin", response=PasskeyOptionsOut,
+             summary="Start approving a request with my passkey")
+# a ceremony's challenge for one request; only someone who may approve it, in a browser, gets one
+@gate("member", kind="ephemeral-credential", viewer_write="A challenge changes nothing; only someone "
+      "holding the kind's authority gets one, and approving is finish's")
+def begin_approve_approval(request: HttpRequest, approval_id: int) -> PasskeyOptionsOut:
+    """Options for navigator.credentials.get(), to approve THIS request (one whose card says
+    `step_up`) with one of your passkeys. A browser session only; no token can. 409 when it is no
+    longer waiting, or you have no passkey (`no_passkey`, with where to register one)."""
+    req = _passkey_kind_i_may_approve(request, approval_id)
+    options = passkeys.begin_assertion(request, slot=_slot(req, request.user))
+    if options is None:
+        raise ProblemError(409, "No passkey registered", type_=TYPE_CONFLICT,
+                           detail="Register a passkey (Settings → Passkeys), then approve.",
+                           members={"error": "no_passkey", "register_url": stepup.REGISTER_PATH})
+    return PasskeyOptionsOut(options=options)
+
+
+@router.post("/{approval_id}/approve/finish", response=ApprovalCardOut,
+             summary="Approve a request with my passkey")
+@gate("member", setting=True, viewer_write="Only someone holding the kind's authority gets past "
+      "_passkey_kind_i_may_approve, and services.decide asks again")
+def finish_approve_approval(request: HttpRequest, approval_id: int, payload: ApprovalPasskeyIn) -> dict:
+    """Verify the passkey assertion begun for this request, then approve it: the kind's handler runs
+    as you, once. A browser session only; no token can. 400 when the passkey does not verify."""
+    req = _passkey_kind_i_may_approve(request, approval_id)
+    try:
+        passkeys.finish_assertion(request, payload.credential, slot=_slot(req, request.user))
+    except passkeys.CeremonyError as exc:
+        raise ProblemError(400, "Passkey verification failed", type_=TYPE_VALIDATION, detail=str(exc)) from exc
+    try:
+        req = services.decide(approval_id, request.user, "approve", comment=payload.comment, via="web",
+                              stepped_up=True)
     except services.ApprovalError as exc:
         _raise(exc)
     return cards.build(_visible(request, req.pk), viewer=request.user)

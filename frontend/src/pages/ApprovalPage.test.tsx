@@ -5,9 +5,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const get = vi.fn()
 const decide = vi.fn()
+const withPasskey = vi.fn()
 vi.mock('@/api/approvals', () => ({
   getApproval: (k: string) => get(k),
   decideApproval: (id: number, d: string, c: string) => decide(id, d, c),
+  approveWithPasskey: (id: number, c: string) => withPasskey(id, c),
+}))
+const here = { passkeys: true }
+const opened = vi.fn()
+vi.mock('@/auth/passkeyHere', () => ({
+  PASSKEY_IN_BROWSER: 'Passkeys work in your browser, not in this app.',
+  passkeysWorkHere: () => here.passkeys,
+  openInBrowser: (t: string) => opened(t),
+  useWhileAway: () => undefined,
 }))
 
 import { ApprovalPage } from './ApprovalPage'
@@ -15,6 +25,7 @@ import { ApprovalPage } from './ApprovalPage'
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  here.passkeys = true
 })
 
 const CARD = {
@@ -119,5 +130,36 @@ describe('ApprovalPage', () => {
     fireEvent.click(await screen.findByTestId('approval-approve'))
     await waitFor(() => expect(screen.getByTestId('approval-outcome').textContent).toContain('Declined'))
     expect(screen.getByTestId('approval-outcome').textContent).toContain('Already decided')
+  })
+
+  it('approves a passkey kind with a touch made for this request, and declines it without one', async () => {
+    get.mockResolvedValue({ ...CARD, step_up: true })
+    withPasskey.mockResolvedValue({ ...CARD, step_up: true, status: 'done', can_decide: false,
+      outcome: 'Approved by you.', history: [{ kind: 'executed', by: 'you', at: null }] })
+    open()
+    fireEvent.click(await screen.findByTestId('approval-approve'))
+    await waitFor(() => expect(screen.getByTestId('approval-outcome').textContent).toContain('Approved and done'))
+    expect(withPasskey).toHaveBeenCalledWith(7, '')
+    expect(decide).not.toHaveBeenCalled()
+  })
+
+  it('declines a passkey kind with no passkey', async () => {
+    get.mockResolvedValue({ ...CARD, step_up: true })
+    decide.mockResolvedValue({ ...CARD, step_up: true, status: 'declined', can_decide: false })
+    open()
+    fireEvent.click(await screen.findByTestId('approval-decline'))
+    await waitFor(() => expect(decide).toHaveBeenCalledWith(7, 'decline', ''))
+    expect(withPasskey).not.toHaveBeenCalled()
+  })
+
+  it('in the Runner app, where no passkey works, sends a passkey kind to the browser to approve', async () => {
+    here.passkeys = false
+    get.mockResolvedValue({ ...CARD, step_up: true })
+    open()
+    fireEvent.click(await screen.findByTestId('approval-approve'))
+    expect(opened).toHaveBeenCalledWith('/w/connect/approvals/7')
+    expect(screen.getByTestId('approval-in-browser').textContent).toContain('Waiting for you to approve')
+    expect(withPasskey).not.toHaveBeenCalled()
+    expect(decide).not.toHaveBeenCalled()
   })
 })

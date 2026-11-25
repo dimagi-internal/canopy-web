@@ -27,6 +27,8 @@ from apps.slack import approvals as slack_cards
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership, WorkspaceInvite
 from apps.workspaces.testing import a_user, a_workspace
+from apps.passkeys.testing import grant_step_up
+from tests.fixtures.passkey_confirm import approve_approval, give_passkey
 from tests.fixtures.slack import ALICE, click
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
@@ -459,6 +461,41 @@ def test_a_passkey_kinds_alert_links_its_page_instead_of_approve_and_can_be_decl
 def test_a_passkey_kind_is_declined_on_the_web_without_one_and_approved_only_with_one(world, pushes, step_up):
     card = file(world)
     refused = _post(_client(world["admin"]), f"/api/approvals/{card['id']}/decide", {"decision": "approve"})
-    assert refused.status_code == 403 and refused.json()["error"] == "step_up_required"
+    assert refused.status_code == 403 and refused.json()["error"] == "passkey_for_this_request"
     declined = _post(_client(world["admin"]), f"/api/approvals/{card['id']}/decide", {"decision": "decline"})
     assert declined.status_code == 200 and declined.json()["status"] == "declined"
+
+
+def test_a_recent_passkey_touch_is_not_enough_only_one_made_for_this_request(world, pushes, step_up):
+    card = file(world)
+    stepped = _client(world["admin"])
+    grant_step_up(stepped)  # touched a passkey a minute ago, for something else
+    refused = _post(stepped, f"/api/approvals/{card['id']}/decide", {"decision": "approve"})
+    assert refused.status_code == 403 and refused.json()["error"] == "passkey_for_this_request"
+    assert ApprovalRequest.objects.get(pk=card["id"]).status == "pending"
+    done = approve_approval(world["admin"], card["id"], comment="yes")
+    assert done.status_code == 200 and done.json()["status"] == "done", done.content
+    assert ApprovalRequest.objects.get(pk=card["id"]).via == "web"
+
+
+def test_a_challenge_begun_for_one_request_cannot_approve_another(world, pushes, step_up):
+    first = file(world, {**ADD, "idempotency_key": "one"})
+    second = file(world, {**ADD, "params": {**ADD["params"], "email": "zed@dimagi.com"}, "idempotency_key": "two"})
+    auth = give_passkey(world["admin"])
+    browser = _client(world["admin"])
+    options = browser.post(f"/api/approvals/{first['id']}/approve/begin").json()["options"]
+    r = _post(browser, f"/api/approvals/{second['id']}/approve/finish", {"credential": auth.get(options)})
+    assert r.status_code == 400
+    assert ApprovalRequest.objects.get(pk=second["id"]).status == "pending"
+
+
+def test_the_passkey_ceremony_is_only_for_who_may_approve_a_passkey_kind_in_a_browser(world, pushes, step_up):
+    card = file(world)
+    give_passkey(world["viewer"])
+    assert _client(world["viewer"]).post(f"/api/approvals/{card['id']}/approve/begin").status_code == 403
+    assert approve_approval(world["viewer"], card["id"]).status_code == 403
+    with mock.patch.object(type(kinds.get("workspace.member.add")), "step_up", False):
+        assert _client(world["admin"]).post(f"/api/approvals/{card['id']}/approve/begin").status_code == 422
+    no_key = _client(world["admin"]).post(f"/api/approvals/{card['id']}/approve/begin")
+    assert no_key.status_code == 409 and no_key.json()["error"] == "no_passkey"
+    assert ApprovalRequest.objects.get(pk=card["id"]).status == "pending"

@@ -15,6 +15,7 @@ from apps.agents.models import Agent, VaultAttachment
 from apps.approvals import kinds, services
 from apps.approvals.models import ApprovalRequest
 from apps.passkeys.testing import grant_step_up
+from tests.fixtures.passkey_confirm import approve_approval
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -51,10 +52,13 @@ def _file(vault, agent, by):
 
 
 def _decide(user, req, *, step_up, decision="approve"):
+    """Approve with a passkey touch made for this request (its page's ceremony), or — `step_up=False` —
+    through `decide` with only a fresh step-up window, which a passkey kind refuses; decline there."""
+    if decision == "approve" and step_up:
+        return approve_approval(user, req.pk)
     c = Client()
     c.force_login(user)
-    if step_up:
-        grant_step_up(c)
+    grant_step_up(c)
     return c.post(f"/api/approvals/{req.pk}/decide", {"decision": decision}, content_type=J)
 
 
@@ -72,17 +76,17 @@ def test_only_a_manager_of_the_vault_who_also_administers_the_agent_may_approve(
     assert not k.may_approve(w.beth, p, d)    # owns budgy, but only a member of the vault
 
 
-def test_approving_attaches_the_agent_when_the_web_page_has_a_fresh_passkey(w):
+def test_approving_attaches_the_agent_with_a_passkey_touch_made_for_the_request(w):
     req = _file(w.vault, w.budgy, w.beth)
     r = _decide(w.jj, req, step_up=True)
     assert r.status_code == 200 and r.json()["status"] == "done"
     assert VaultAttachment.objects.filter(vault=w.vault, agent=w.budgy).exists()
 
 
-def test_approving_without_a_passkey_is_refused_and_changes_nothing(w):
+def test_approving_with_only_a_recent_passkey_touch_is_refused_and_changes_nothing(w):
     req = _file(w.vault, w.budgy, w.beth)
     r = _decide(w.jj, req, step_up=False)
-    assert r.status_code == 403 and r.json().get("error") == "step_up_required"
+    assert r.status_code == 403 and r.json().get("error") == "passkey_for_this_request"
     req.refresh_from_db()
     assert req.status == ApprovalRequest.PENDING and not VaultAttachment.objects.exists()
 
