@@ -743,7 +743,7 @@ MCP_APPS_BACKGROUND_REFRESH = True
 # manifest's public key pins; the Web Store listing's id is added here once it exists.
 # A Chrome id is 32 letters a-p; anything else fails at boot, not on a framed page.
 # Google site-verification files served at the root (apps/common/site_verification.py).
-GOOGLE_SITE_VERIFICATION_FILES = env.list("GOOGLE_SITE_VERIFICATION_FILES", default=["google06fef3ccb718fb65.html"])
+GOOGLE_SITE_VERIFICATION_FILES = env.list("GOOGLE_SITE_VERIFICATION_FILES", default=[])
 BROWSER_EXTENSION_IDS = env.list("BROWSER_EXTENSION_IDS", default=["lkbpnpoflndilnhefmhjpmdibdcopcfo"])
 _bad_extension_ids = [i for i in BROWSER_EXTENSION_IDS if not re.fullmatch(r"[a-p]{32}", i)]
 if _bad_extension_ids:
