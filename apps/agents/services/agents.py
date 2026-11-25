@@ -183,6 +183,15 @@ def agent_token_ttl_days() -> int:
     return int(getattr(settings, "PAT_DEFAULT_TTL_DAYS", 180))
 
 
+def _first_address(agent) -> str:
+    """An agent with no email of its own may still have an address: a hosted domain's
+    automatic `<slug>@<domain>` (`apps/mail/auto_addresses.py`). Its first one names the login."""
+    from .. import mailbox  # noqa: PLC0415 — the framework seam, resolved at call time
+
+    found = mailbox.addresses(agent)
+    return found[0]["address"] if found else ""
+
+
 def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str = ""):
     """Mint a PAT for the agent's OWN canopy login (`Agent.user`), creating that login
     first when the agent has none (`agent_login.create_agent_login`). Returns
@@ -208,7 +217,7 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
     created = False
     user = agent.user
     if user is None:
-        address = (agent.email or email or "").strip().lower()
+        address = (agent.email or email or _first_address(agent)).strip().lower()
         if "@" not in address:
             raise AgentTokenRefused(
                 f"{agent.slug} has no mailbox address to name its canopy login — set the "
