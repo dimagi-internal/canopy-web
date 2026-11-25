@@ -407,22 +407,40 @@ describe('ShareConnectionPage: project screens and apps', () => {
   it("the locked state says what the button does, and asks for no passkey by itself", async () => {
     open()
     expect(await screen.findByRole('button', { name: BUTTON })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Who can use Server Label' })).toBeTruthy()
-    expect(screen.getByText('To choose who can use this account, unlock it with your passkey. '
-      + 'You pick the agents and computers on the next screen. Nothing changes until you press Share.')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Who can use your Salesforce account (Server Label)' })).toBeTruthy()
+    expect(screen.getByText('To choose who can use this account, unlock it with your passkey. On the next screen you pick: '
+      + 'project screens and apps (Used by canopy-web), your agents, and your computers. Nothing changes until you press Share.')).toBeTruthy()
     expect(unlock).not.toHaveBeenCalled()
+  })
+
+  it('from "Used by canopy-web → Turn on": says the steps and starts with the box ticked', async () => {
+    withServer()
+    open('?return_to=%2Fsettings%2Fconnections&turn_on=canopy-web')
+    expect((await screen.findByTestId('turn-on-steps')).textContent).toMatch(/keep Project screens and apps ticked, then press Share/)
+    fireEvent.click(screen.getByRole('button', { name: BUTTON }))
+    await screen.findByText(/Connected as/)
+    expect(box()?.checked).toBe(true)
+  })
+
+  it('without turn_on the box starts from what was signed, and no steps line shows', async () => {
+    withServer()
+    open()
+    fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
+    await screen.findByText(/Connected as/)
+    expect(screen.queryByTestId('turn-on-steps')).toBeNull()
+    expect(box()?.checked).toBe(false)
   })
 
   it('names the connection in general when it has no label', async () => {
     getShareState.mockResolvedValue({ ...STATE, account_label: '' })
     open()
-    expect(await screen.findByRole('heading', { name: 'Who can use this connection' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Who can use your Salesforce account' })).toBeTruthy()
   })
 
   it('one click, one passkey prompt, and sharing asks for no other', async () => {
     await unlocked()
     expect(screen.queryByRole('button', { name: BUTTON })).toBeNull()
-    expect(screen.getByRole('heading', { name: 'Share this connection' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Share your Salesforce account (Server Label)' })).toBeTruthy()
     fireEvent.click(screen.getByLabelText('Eva'))
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(putShare).toHaveBeenCalledTimes(1))

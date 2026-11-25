@@ -379,7 +379,7 @@ describe('ConnectionsPanel: Used by canopy-web', () => {
     expect(sw()).toBeNull()
     expect(screen.getByText(PASSKEY)).toBeTruthy()
     const a = screen.getByRole('link', { name: 'Turn on Used by canopy-web' })
-    expect(a.getAttribute('href')).toBe('/w/w/connections/7/share?return_to=%2Fsettings%2Fconnections')
+    expect(a.getAttribute('href')).toBe('/w/w/connections/7/share?return_to=%2Fsettings%2Fconnections&turn_on=canopy-web')
     expect(turnOffServerUse).not.toHaveBeenCalled()
   })
 
