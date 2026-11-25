@@ -226,12 +226,35 @@ describe('vault page', () => {
   it('seals a secret in the browser, by name only', async () => {
     const c = ctx()
     render(<VaultSecretsTab {...c} />)
-    expect(screen.getByTestId('ws-vault-secrets').textContent).toContain('gog-oauth-client')
-    fireEvent.change(screen.getByLabelText('Secret name'), { target: { value: 'OCS_TOKEN' } })
-    fireEvent.change(screen.getByLabelText('Secret value'), { target: { value: 's3cret' } })
-    fireEvent.submit(screen.getByTestId('ws-vault-seal'))
+    expect(screen.getByTestId('vault-editor').textContent).toContain('gog-oauth-client')
+    fireEvent.click(screen.getByTestId('vault-add'))
+    fireEvent.change(screen.getByLabelText('New secret name'), { target: { value: 'OCS_TOKEN' } })
+    fireEvent.change(screen.getByLabelText('New secret value'), { target: { value: 's3cret' } })
+    fireEvent.submit(screen.getByLabelText('New secret name').closest('form')!)
     await waitFor(() => expect(ops.sealWorkspaceVaultValue).toHaveBeenCalledWith('v1', 'OCS_TOKEN', 's3cret', ME))
     expect(c.reload).toHaveBeenCalled()
+  })
+
+  it('loads a key file as a secret’s value, and changes an existing one', async () => {
+    render(<VaultSecretsTab {...ctx()} />)
+    fireEvent.click(screen.getByTestId('vault-add'))
+    fireEvent.change(screen.getByLabelText('New secret name'), { target: { value: 'CWS_SERVICE_ACCOUNT_JSON' } })
+    const json = '{\n  "type": "service_account"\n}\n'
+    fireEvent.change(screen.getByTestId('upload-new'), { target: { files: [new File([json], 'key.json')] } })
+    await waitFor(() => expect((screen.getByLabelText('New secret value') as HTMLTextAreaElement).value)
+      .toBe('{\n  "type": "service_account"\n}'))
+    fireEvent.submit(screen.getByLabelText('New secret name').closest('form')!)
+    await waitFor(() => expect(ops.sealWorkspaceVaultValue)
+      .toHaveBeenCalledWith('v1', 'CWS_SERVICE_ACCOUNT_JSON', '{\n  "type": "service_account"\n}', ME))
+  })
+
+  it('deletes a secret through the shared table', async () => {
+    api.deleteWorkspaceVaultSecret.mockResolvedValue({ ...SHARED, secrets: [] })
+    const c = ctx()
+    render(<VaultSecretsTab {...c} />)
+    fireEvent.click(screen.getByRole('button', { name: /delete/i }))
+    await waitFor(() => expect(api.deleteWorkspaceVaultSecret).toHaveBeenCalledWith('v1', 'gog-oauth-client'))
+    await waitFor(() => expect(c.onChange).toHaveBeenCalled())
   })
 
   it('shows no controls to someone who only uses a vault', () => {
@@ -243,6 +266,7 @@ describe('vault page', () => {
     expect(screen.queryByTestId('ws-vault-add-member')).toBeNull()
     cleanup()
     render(<VaultSecretsTab {...ctx({ you: 'member' })} />)
-    expect(screen.queryByTestId('ws-vault-seal')).toBeNull()
+    expect(screen.queryByTestId('vault-add')).toBeNull()
+    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull()
   })
 })
