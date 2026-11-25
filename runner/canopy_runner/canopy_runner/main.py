@@ -172,18 +172,22 @@ def _reset_cdp_health_state() -> None:
 
 def _laptop_health(cfg: Config) -> dict | None:
     """The heartbeat's `health`: refresh's report (refresh.py) plus the updater's last
-    answer (update.health_check). None while neither has anything to say, so the
+    answer (update.health_check) and the login probe's (login_probe.health_check). None while neither has anything to say, so the
     server keeps what it last had. `bootstrapped_at` is refresh's alone — 0 until
     one finishes, and the server never lets it go backwards."""
+    from . import login_probe
     from . import update as update_mod
 
     report = refresh.health()
-    check = update_mod.health_check(cfg)
-    if check is None:
+    # The updater's answer, and when this box's Claude login was last proven
+    # (login_probe.py — only once a signed-out box has probed).
+    extra = [c for c in (update_mod.health_check(cfg), login_probe.health_check(cfg)) if c]
+    if not extra:
         return report
+    names = {c["name"] for c in extra}
     base = report or {"checks": [], "bootstrapped_at": 0}
     return {**base, "checked_at": time.time(),
-            "checks": [c for c in base.get("checks") or [] if c.get("name") != "update"] + [check]}
+            "checks": [c for c in base.get("checks") or [] if c.get("name") not in names] + extra}
 
 
 def _pause_paths(cfg: Config) -> tuple[Path, Path]:
