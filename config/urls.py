@@ -20,6 +20,7 @@ from apps.tokens.mint_session import mint_session
 from apps.connections.views import connections_callback, connections_start
 from apps.github_connect.views import github_connect_callback, github_connect_start
 from apps.embedding.extension import ext_panel
+from apps.common.site_verification import google_site_verification
 from apps.embedding.views_embed import embed_chat, embed_sign_off, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.oauth_server import views as views_mcp_oauth
@@ -63,6 +64,8 @@ urlpatterns = [
     # names. Bare views because the URL is the identifier a host allowlists;
     # public (a host must read them before trusting anything) and carrying
     # public keys only. See apps/oauth_server/views_oauth.py.
+    # Google site verification for canopy's domain (apps/common/site_verification.py).
+    re_path(r"^(?P<name>google[0-9a-f]{16}\.html)$", google_site_verification, name="google-site-verification"),
     path("oauth/client.json", oauth_client_metadata, name="oauth-client-metadata"),
     path("oauth/jwks.json", oauth_jwks, name="oauth-jwks"),
     # canopy-web as a HOST of its own MCP (apps/host_grants/self_host.py): the

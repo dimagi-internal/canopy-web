@@ -15,6 +15,7 @@ from apps.api.errors import TYPE_AUTH
 from apps.common.script_prefix import self_full_path
 from config import public_site
 from config.views import FLAT_ARTIFACT_PATH
+from apps.common.site_verification import is_verification_path
 
 PUBLIC_PATH_PREFIXES = (
     "/accounts/",            # allauth login/logout/callback
@@ -271,6 +272,7 @@ def _is_ddd_release_link(request) -> bool:
     return request.method == "GET" and request.path.startswith("/api/ddd/release/")
 
 
+
 class LoginRequiredMiddleware:
     """Require authentication for every request except the allowlist.
 
@@ -298,6 +300,7 @@ class LoginRequiredMiddleware:
                 and request.path.startswith("/api/hcp/v1/"))
             or _is_public(request.path)
             or _is_public_page(request.path)
+            or is_verification_path(request.path)
             or public_site.is_public_path(request.path)
             or _is_artifact_api(request)
             or _is_scoped_viewer(request.path)
