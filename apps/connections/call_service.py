@@ -232,6 +232,9 @@ def _call_on_temporary(user, provider: str, surface: declarations.Surface, match
     ever behind it. None, or one the provider no longer takes, is `not_connected` / `session_ended` with a
     `connect_url` that grants a new one. The same order of checks, limits and audit as any other call."""
     title = _title(provider)
+    # No app here means no hour can ever be granted: say so, without the link that grants one, or the
+    # page loops through a start that lands straight back on it.
+    services.app_for(surface.workspace, provider)
     row = temporary.for_screens(user, provider, surface.workspace)
     if row is None:
         raise services.NotConnected(f"This page needs your {title} for the next hour. Allow it, then try again.")
