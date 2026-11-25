@@ -181,8 +181,8 @@ def call(request, provider: str, payload) -> dict:
     _check_declared(surface, provider, payload, plan)
     matched, query = plan.matched, plan.query
     try:
-        if _on_temporary(user, provider, surface):
-            return _call_on_temporary(user, provider, surface, matched, query, payload)
+        if _on_temporary(user, provider, surface, payload.as_):
+            return _call_on_temporary(user, provider, surface, plan, payload)
         conn = (_shared_connection(user, provider, surface, payload.agent) if payload.as_ == "shared"
                 else _viewer_connection(user, provider, surface))
         if plan.writes:
@@ -198,12 +198,41 @@ def call(request, provider: str, payload) -> dict:
     except services.ConnectionError as exc:
         said = _said_to_this_caller(exc, provider, payload.as_, payload.agent)
         # Connecting their own account wouldn't bring an agent's back.
+        # Google's hour (while canopy-web may not use a stored Google), or a grant that renews (Salesforce).
+        grant = payload.as_ == "viewer" and (temporary.renews(provider) or (
+            provider in calls.TEMPORARY_ONLY and temporary.supported(provider) and not _server_calls(provider)))
+        if grant and temporary.renews(provider):
+            said = _ask_for_a_grant(said, provider)
         if payload.as_ == "viewer" and (said.code == "not_connected" or getattr(said, "connect_again", False)):
             start = reverse("connections_start", args=[provider, surface.workspace])
-            if provider in calls.TEMPORARY_ONLY and not _server_calls(provider):  # an hour, nothing stored
+            if grant:  # a grant for this person's screens, for a while: nothing stored, no passkey
                 start += "?temporary=1&for_screens=1"
             said.members = {"connect_url": f"{base_url()}{start}"}
         raise said from None
+
+
+#: What a viewer is told when a call can't run on their own account and a grant for screens would fix it:
+#: no grant and no stored connection canopy-web may use (`not_connected`, `server_use_off`), or one that
+#: ended (`session_ended`, and a stored one the provider no longer takes).
+_GRANT_ANSWERS = frozenset({"not_connected", "server_use_off", "session_ended", "needs_reconnect", "server_refused"})
+
+
+def _ask_for_a_grant(said: services.ConnectionError, provider: str) -> services.ConnectionError:
+    """For a provider whose grants renew: the refusal, reworded as the one thing the viewer can do, allow
+    `provider` for their screens for as long as they choose (the `connect_url` starts that). The code is
+    kept, so a page that reads it as signed out still does."""
+    if said.code not in _GRANT_ANSWERS:
+        return said
+    title = _title(provider)
+    ended = said.code == "session_ended" or (said.code != "server_use_off" and getattr(said, "connect_again", False))
+    if ended:
+        sentence = f"Your {title} access for this page has ended. Click Allow {title} to allow it again."
+    else:
+        sentence = (f"This page reads your {title} account, and you haven't allowed that right now. Click Allow "
+                    f"{title} and choose for how long.")
+    out = services.ConnectionError(said.code, sentence)
+    out.connect_again = True
+    return out
 
 
 def _server_calls(provider: str) -> bool:
@@ -211,29 +240,32 @@ def _server_calls(provider: str) -> bool:
     return bool(getattr(providers.CLASSES.get(provider), "server_calls", False))
 
 
-def _on_temporary(user, provider: str, surface: declarations.Surface) -> bool:
-    """Whether a screen's call runs on the viewer's hour of access for screens (`temporary.for_screens`).
+def _on_temporary(user, provider: str, surface: declarations.Surface, as_: str = "viewer") -> bool:
+    """Whether a screen's call runs on the viewer's own grant for screens (`temporary.for_screens`).
 
+    Only a call `as: viewer`: an agent's account shared with the screen is never the viewer's grant.
     A `calls.TEMPORARY_ONLY` provider whose `server_calls` is off (Google today): always, never a stored
-    connection. The day its `server_calls` is turned on (one flag on the provider class), the same call
-    runs on the viewer's hour while they have one, and otherwise on their stored connection with
-    "canopy-web can use this" on (`_viewer_connection`, `server_tokens`), as Salesforce's does; the rules,
-    declarations, leases and audit are the same either way, so nothing else changes."""
-    if provider not in calls.TEMPORARY_ONLY:
+    connection. Any other provider that can be granted (`temporary.supported`: Salesforce, for as long as
+    the person chose) runs on the viewer's grant while they have one, and otherwise on their stored
+    connection with "canopy-web can use this" on (`_viewer_connection`, `server_tokens`), which agents'
+    own screens and older set-ups rely on. The rules, declarations, leases and audit are the same either
+    way, so nothing else changes."""
+    if as_ != "viewer" or not temporary.supported(provider):
         return False
-    if not _server_calls(provider):
+    if provider in calls.TEMPORARY_ONLY and not _server_calls(provider):
         return True
     return temporary.for_screens(user, provider, surface.workspace) is not None
 
 
-def _call_on_temporary(user, provider: str, surface: declarations.Surface, matched: calls.Match, query: dict,
-                       payload) -> dict:
+def _call_on_temporary(user, provider: str, surface: declarations.Surface, plan: _Planned, payload) -> dict:
     """A call for a `calls.TEMPORARY_ONLY` provider: on the viewer's own short-lived access for screens in
-    the surface's workspace (`temporary.for_screens`), never a stored connection, so no refresh token is
-    ever behind it. None, or one the provider no longer takes, is `not_connected` / `session_ended` with a
-    `connect_url` that grants a new one. The same order of checks, limits and audit as any other call."""
+    the surface's workspace (`temporary.for_screens`), never a stored connection. None, or one the provider
+    no longer takes, is `not_connected` / `session_ended` with a `connect_url` that grants a new one. A grant
+    that renews (Salesforce) is renewed when its access token ran out, or once on a 401. The same order of
+    checks, limits and audit as any other call, composite calls and the duplicate-rule header included."""
     title = _title(provider)
-    # No app here means no hour can ever be granted: say so, without the link that grants one, or the
+    matched, query = plan.matched, plan.query
+    # No app here means no grant can ever be made: say so, without the link that grants one, or the
     # page loops through a start that lands straight back on it.
     services.app_serving(surface.workspace, provider)
     row = temporary.for_screens(user, provider, surface.workspace)
@@ -246,26 +278,39 @@ def _call_on_temporary(user, provider: str, surface: declarations.Surface, match
                                                         "allowed. Allow it again, then try again.")
         again.connect_again = True
         raise again
-    if matched.rule.kind == "write":
-        _spend_write(user, payload.operation_id, surface)
+    if plan.writes:
+        _spend_write(user, payload.operation_id, surface, plan.writes)
     sent = _Sent()
     # Recorded against the workspace the screen is in, which a parent's shared app is not.
     where = (row.app.workspace if row.app.workspace_id == surface.workspace
              else Workspace.objects.filter(slug=surface.workspace).first() or row.app.workspace)
     subject = replace(temporary._subject(row), workspace=where)
+    ended = services.ConnectionError("session_ended", f"Your hour of {title} for this page has ended. "
+                                                      "Allow it again, then try again.")
+    ended.connect_again = True
     with _in_flight(user.pk):
         try:
-            got = server_tokens.Access(temporary.token_of(row), "", "")
-            status, raw = _ask(provider, matched, query, payload.body, got, _monotonic() + TOTAL_SECONDS, sent)
-            if status == 401:  # refused, so it did not land; this token can't be renewed
-                ended = services.ConnectionError("session_ended", f"Your hour of {title} for this page has ended. "
-                                                                  "Allow it again, then try again.")
-                ended.connect_again = True
+            deadline = _monotonic() + TOTAL_SECONDS
+            try:
+                row = temporary.current(row)
+            except temporary.Ended:
+                raise ended from None
+            got = server_tokens.Access(temporary.token_of(row), row.instance_url, "")
+            status, raw = _ask(provider, matched, query, plan.body, got, deadline, sent, plan.headers)
+            # Refused, so it did not land: once more on a renewed token when the grant renews, else it has ended.
+            if status == 401 and row.refresh_token:
+                try:
+                    row = temporary.renewed(row, row.token)
+                except temporary.Ended:
+                    raise ended from None
+                got = server_tokens.Access(temporary.token_of(row), row.instance_url, "")
+                status, raw = _ask(provider, matched, query, plan.body, got, deadline, sent, plan.headers)
+            if status == 401:
                 raise ended
             return _answer(status, raw, provider, matched, sent)
         finally:
             if sent.sent:
-                _audit_subject(subject, provider, user, surface, matched, payload.operation_id, "viewer", sent)
+                _audit_plan(subject, provider, user, surface, plan, payload.operation_id, "viewer", sent)
 
 
 def open_operation(request, surface_ref: dict) -> dict:
@@ -715,10 +760,16 @@ def _audit(conn: Connection, user, surface: declarations.Surface, plan: _Planned
     method and path, and its own status where Salesforce gave one), plus where it sat in the call: a
     workspace's history reads the same however a page grouped its changes. Its reads are one log
     line for the call, saying how many it held."""
-    subject = replace(services.Subject.of(conn), workspace=conn.app.workspace)
+    _audit_plan(replace(services.Subject.of(conn), workspace=conn.app.workspace), conn.provider, user, surface,
+                plan, operation_id, as_, sent)
+
+
+def _audit_plan(subject: services.Subject, provider: str, user, surface: declarations.Surface, plan: _Planned,
+                operation_id: str | None, as_: str, sent: _Sent) -> None:
+    """`_audit` for whatever account `subject` names: a stored connection, or a grant for screens."""
     if plan.composite is None:
         extra = {"allow_duplicates": True} if plan.headers else {}
-        _audit_subject(subject, conn.provider, user, surface, plan.matched, operation_id, as_, sent, **extra)
+        _audit_subject(subject, provider, user, surface, plan.matched, operation_id, as_, sent, **extra)
         return
     total = len(plan.parts)
     results = _part_results(plan.composite, sent)
@@ -727,10 +778,10 @@ def _audit(conn: Connection, user, surface: declarations.Surface, plan: _Planned
             continue
         own = dict(results[i]) if results else {}
         each = replace(sent, status=own.pop("status", sent.status))
-        _audit_subject(subject, conn.provider, user, surface, part, operation_id, as_, each,
+        _audit_subject(subject, provider, user, surface, part, operation_id, as_, each,
                        composite=plan.composite.kind, part=i + 1, parts=total, **own)
     if plan.composite.writes < total:
-        _audit_subject(subject, conn.provider, user, surface, replace(plan.matched, rule=replace(
+        _audit_subject(subject, provider, user, surface, replace(plan.matched, rule=replace(
             plan.matched.rule, kind="read")), operation_id, as_, sent, composite=plan.composite.kind,
             parts=total, reads=total - plan.composite.writes)
 

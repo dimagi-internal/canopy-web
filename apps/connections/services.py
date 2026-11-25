@@ -529,7 +529,8 @@ def _pkce_pair() -> tuple[str, str]:
 
 def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, return_to: str = "",
           lend_minutes: int | None = None, owner_turns_only: bool = False, for_agent: str = "",
-          temporary: bool = False, for_screens: bool = False, surface_workspace: str = "") -> str:
+          temporary: bool = False, for_screens: bool = False, surface_workspace: str = "",
+          grant_minutes: int | None = None) -> str:
     """Park a PKCE verifier, a CSRF `state` and `app` in the session; return the
     authorize URL (with `app`'s client). `lend_minutes` and `owner_turns_only` are the
     limits the connection will carry (`complete`); `for_agent` is the slug the share
@@ -537,7 +538,8 @@ def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, retur
     the callback finishes it with `temporary.complete`, for the agent `for_agent` names, or,
     with `for_screens`, for the person's own calls from screens. `surface_workspace` is where those
     screens are when it is not the app's own workspace (a sub-workspace using its parent's app,
-    `app_serving`): the callback checks the person may still use THAT workspace.
+    `app_serving`): the callback checks the person may still use THAT workspace. `grant_minutes` is how
+    long a temporary grant lasts, as the person chose it (`temporary.grant_length`).
 
     The verifier never leaves the server; only its S256 challenge goes to the
     provider, so an intercepted `code` cannot be exchanged by anyone else.
@@ -555,7 +557,8 @@ def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, retur
                       "owner_kind": kind, "owner_id": owner_id, "verifier": verifier, "return_to": return_to,
                       "lend_minutes": lend_minutes, "owner_turns_only": owner_turns_only, "for_agent": for_agent,
                       "temporary": temporary, "for_screens": bool(temporary and for_screens),
-                      "surface_workspace": surface_workspace or app.workspace_id}
+                      "surface_workspace": surface_workspace or app.workspace_id,
+                      "grant_minutes": grant_minutes if temporary else None}
     session[SESSION_KEY] = pending  # reassigned so a Django session marks itself modified
     owner_obj = (Agent if kind == "agent" else get_user_model()).objects.filter(pk=owner_id).first()
     return p.authorize_url(state, redirect_uri, challenge, owner_kind=kind, owner=owner_obj, temporary=temporary)

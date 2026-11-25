@@ -168,6 +168,12 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'When you want agents or another computer to use a connection you made.',
   },
   {
+    path: '/w/:workspace/connections/:provider/allow',
+    home: '/w/:workspace/settings/connections',
+    title: 'Allow an account for a while',
+    use: 'When a page or app asks you to allow your Salesforce for it and you choose for how long.',
+  },
+  {
     path: '/w/:workspace/review/:id',
     home: '/w/:workspace/agents',
     group: 'Shared by link',

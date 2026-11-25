@@ -3,16 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { listMyConnections, disconnectMine, turnOffServerUse } = vi.hoisted(() => ({
+const { listMyConnections, disconnectMine, turnOffServerUse, endTemporaryAccess } = vi.hoisted(() => ({
   listMyConnections: vi.fn(),
   disconnectMine: vi.fn(),
   turnOffServerUse: vi.fn(),
+  endTemporaryAccess: vi.fn(),
 }))
 vi.mock('@/api/connections', async (orig) => ({
   ...(await orig<typeof import('@/api/connections')>()),
   listMyConnections,
   disconnectMine,
   turnOffServerUse,
+  endTemporaryAccess,
 }))
 
 import { ConnectionsPanel } from './ConnectionsPanel'
@@ -498,5 +500,35 @@ describe('ConnectionsPanel: Used by canopy-web', () => {
     })
     at('/settings')
     expect(await screen.findByText(/Not shared yet: no agent or computer can use it/)).toBeTruthy()
+  })
+
+  it('lists what is allowed for a while, with when it ends, and ends it now', async () => {
+    const grant = {
+      id: 'g1', provider: 'salesforce', workspace: 'w', agent: null, account_label: 'jj@example.org',
+      expires_at: '2026-12-02T15:00:00Z', renews: true,
+    }
+    listMyConnections.mockResolvedValueOnce({ providers: [PROVIDER], connections: [], temporary: [grant] })
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [], temporary: [] })
+    endTemporaryAccess.mockResolvedValue({ outcome: 'revoked' })
+    at('/settings')
+    const section = await screen.findByTestId('allowed-for-a-while')
+    expect(section.textContent).toContain('Salesforce (jj@example.org)')
+    expect(section.textContent).toContain('Used by your pages and apps in w. Ends ')
+    fireEvent.click(screen.getByRole('button', { name: 'End now' }))
+    await waitFor(() => expect(endTemporaryAccess).toHaveBeenCalledWith('g1'))
+    expect(await screen.findByText('Ended. Salesforce has been told, and canopy no longer holds it.')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByTestId('allowed-for-a-while')).toBeNull())
+  })
+
+  it('says an account was allowed when a grant lands back here', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [], temporary: [] })
+    at('/settings?connection=salesforce&status=ok')
+    expect(await screen.findByText('Salesforce allowed. It is listed under Allowed for a while, with when it ends.')).toBeTruthy()
+  })
+
+  it('explains a length that cannot be allowed', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    at('/settings?connection=salesforce&status=error&reason=bad_duration')
+    expect(await screen.findByText('Salesforce can be allowed for 5 minutes up to 30 days. Choose again.')).toBeTruthy()
   })
 })

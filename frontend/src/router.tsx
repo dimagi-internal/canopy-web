@@ -39,6 +39,7 @@ import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage
 import { AccessRequestPage } from './pages/AccessRequestPage'
 import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
 import { ActAsApprovalPage } from './pages/ActAsApprovalPage'
+import { AllowAccessPage } from './pages/connections/AllowAccessPage'
 import { ConnectedPage } from './pages/connections/ConnectedPage'
 import { ShareConnectionPage } from './pages/connections/ShareConnectionPage'
 import { PagePermissionConfirmPage } from './pages/PagePermissionConfirmPage'
@@ -427,6 +428,8 @@ export const routeTable: RouteObject[] = [
       // Where the OAuth callback lands: "Connected as …", then who may use it (one passkey touch).
       { path: '/w/:workspace/connections/:id/connected', element: <ConnectedPage /> },
       { path: '/w/:workspace/connections/:id/share', element: <ShareConnectionPage /> },
+      // Allow your own Salesforce for your screens and apps here, for a length you choose.
+      { path: '/w/:workspace/connections/:provider/allow', element: <AllowAccessPage /> },
       // The approve link up.sh prints for a new cloud box (one passkey touch).
       { path: '/w/:workspace/runner-invitations/:invitationId', element: <RunnerInvitationApprovePage /> },
       // A host site asking you to approve one action with your passkey: the

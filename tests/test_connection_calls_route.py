@@ -231,7 +231,9 @@ def test_not_connected_says_where_to_connect(w):
         r = post(w)
     assert r.status_code == 409 and error_of(r) == "not_connected"
     assert "/salesforce/" in r.json()["connect_url"] and "/w/" in r.json()["connect_url"]
-    assert "Connect Salesforce in Settings → Connections." in r.json()["detail"]
+    # What fixes it is a grant for the viewer's screens, chosen on canopy's own page: no passkey, no switch.
+    assert r.json()["connect_url"].endswith("/start/?temporary=1&for_screens=1")
+    assert "Click Allow Salesforce and choose for how long." in r.json()["detail"]
 
 
 def test_needs_reconnect_tells_the_owner_themselves_and_gives_the_link(w):
@@ -240,8 +242,8 @@ def test_needs_reconnect_tells_the_owner_themselves_and_gives_the_link(w):
         r = post(w)
     assert r.status_code == 409 and error_of(r) == "not_connected"
     assert "owner" not in r.json()["detail"]
-    assert r.json()["detail"].endswith("Connect Salesforce in Settings → Connections.")
-    assert r.json()["connect_url"]
+    assert r.json()["detail"].endswith("Click Allow Salesforce to allow it again.")
+    assert "temporary=1" in r.json()["connect_url"]
     assert sf.calls == []
 
 
@@ -249,8 +251,8 @@ def test_a_session_ended_gives_the_owner_the_link(w):
     with FakeSF(), Salesforce(Answer(status=401, body=[]), Answer(status=401, body=[])):
         r = post(w)
     assert error_of(r) == "session_ended"
-    assert "owner" not in r.json()["detail"] and r.json()["connect_url"]
-    assert r.json()["detail"].endswith("Connect Salesforce in Settings → Connections.")
+    assert "owner" not in r.json()["detail"] and "temporary=1" in r.json()["connect_url"]
+    assert r.json()["detail"].endswith("Click Allow Salesforce to allow it again.")
 
 
 def test_what_is_stored_not_trusted_tells_the_owner_themselves(w):
@@ -259,7 +261,7 @@ def test_what_is_stored_not_trusted_tells_the_owner_themselves(w):
         r = post(w)
     assert error_of(r) == "server_refused"
     assert "owner" not in r.json()["detail"]
-    assert r.json()["detail"].endswith("Connect Salesforce in Settings → Connections.")
+    assert r.json()["detail"].endswith("Click Allow Salesforce to allow it again.")
 
 
 def test_ambiguous(w):
@@ -277,17 +279,20 @@ def test_off_switch_sentence(w):
     with Salesforce() as sf:
         r = post(w)
     assert r.status_code == 409 and error_of(r) == "server_use_off"
-    assert r.json()["detail"].endswith("You can turn this on in Settings → Connections.")
-    assert "owner" not in r.json()["detail"]
+    # The code stays (a page reads it as signed out); the sentence and link are the grant, never the switch.
+    assert r.json()["detail"].endswith("Click Allow Salesforce and choose for how long.")
+    assert "turn this on" not in r.json()["detail"] and "owner" not in r.json()["detail"]
+    assert "temporary=1" in r.json()["connect_url"]
     assert sf.calls == []
 
 
 def test_with_no_key_nobody_is_told_to_find_a_switch(w):
-    """`_switch_shown` hides the switch while canopy-web has no key, so no sentence may point at it."""
+    """`_switch_shown` hides the switch while canopy-web has no key, so no sentence may point at it: a
+    grant needs no key, so that is what the viewer is asked for."""
     with mock.patch.object(server_key, "available", return_value=False), Salesforce() as sf:
         r = post(w)
     assert r.status_code == 409 and error_of(r) == "server_use_off"
-    assert r.json()["detail"] == "This workspace hasn't turned on Salesforce for screens yet."
+    assert "switch" not in r.json()["detail"] and "Allow Salesforce" in r.json()["detail"]
     assert sf.calls == []
 
 
@@ -297,7 +302,7 @@ def test_a_limited_connection_is_not_told_about_a_switch_it_does_not_have(w):
         r = post(w)
     assert error_of(r) == "server_use_off"
     assert "turn this on" not in r.json()["detail"] and "owner" not in r.json()["detail"]
-    assert "Settings → Connections" in r.json()["detail"]
+    assert "Allow Salesforce" in r.json()["detail"]
 
 
 @pytest.mark.parametrize("limit", ["owner_turns_only", "expires_at"])
@@ -507,7 +512,7 @@ def test_a_second_401_is_session_ended(w):
         r = post(w)
     assert r.status_code == 409 and error_of(r) == "session_ended"
     assert len(sf.calls) == 2, "one retry, not more"
-    assert "connect" in r.json()["detail"].lower()
+    assert "allow salesforce" in r.json()["detail"].lower()
 
 
 def test_a_write_is_retried_on_401(w):

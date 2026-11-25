@@ -170,8 +170,11 @@ class Provider:
     client_auth: ClassVar[Literal["body", "basic"]] = "body"
     rotates_refresh_token: ClassVar[bool] = False
     revokes_refused_grant: ClassVar[bool] = True
-    # Whether a connect can ask for an access token alone (`temporary_params`, `apps.connections.temporary`).
+    # Whether a connect can be a grant that ends by itself (`apps.connections.temporary`): an access token
+    # alone (`temporary_params`), or, with `temporary_renews`, a refresh token too, held only until the end
+    # the person chose for their screens (`temporary.LONGEST_GRANT` at most) and then revoked.
     temporary_access: ClassVar[bool] = False
+    temporary_renews: ClassVar[bool] = False
     server_use_default: ClassVar[bool] = False
     server_calls: ClassVar[bool] = False
     pkce: ClassVar[bool] = True
@@ -286,8 +289,9 @@ class Provider:
     # ---- the OAuth flow -----------------------------------------------------
 
     def temporary_params(self) -> Mapping[str, str]:
-        """What asks for an access token and no refresh token. Empty, the default, is a provider
-        that cannot be asked: `temporary_access` stays False and a temporary connect is refused."""
+        """What asks for an access token and no refresh token, for a provider whose `temporary_access`
+        grants hold none (Google). A provider with `temporary_renews` asks as for a connection: its
+        refresh token is what keeps a grant longer than one access token working."""
         return {}
 
     def authorize_url(self, state: str, redirect_uri: str, code_challenge: str, *,

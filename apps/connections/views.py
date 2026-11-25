@@ -44,6 +44,10 @@ starts. No vault key is needed, there is no share screen, and it lands back on `
 that cannot be asked for no refresh token, and `bad_agent`, for a slug not in this workspace.
 `temporary=1&for_screens=1` (and no `for_agent`) keeps it instead for the person's own calls
 from screens in this workspace (`temporary.for_screens`): how a Drive page gets its access.
+For a provider whose grants renew (`temporary.renews`: Salesforce), a GET of that start lands on the
+page where the person chooses how long (`/w/<workspace>/connections/<provider>/allow`), whose form
+POSTs it back with `minutes` (`temporary.grant_length`; anything else lands `bad_duration`). Such a
+grant is for screens only: with `for_agent` it is `temporary_unsupported`.
 
 A connect that succeeds lands on the success screen,
 `/w/<workspace>/connections/<id>/connected?return_to=<return_to>&just_connected=1`, which says plainly
@@ -178,16 +182,26 @@ def connections_start(request: HttpRequest, provider: str, workspace: str) -> Ht
     except services.NotConfigured:
         return _land(request, return_to, provider, "error", "not_configured")
     if short_lived:
-        if not temporary.supported(provider):
+        # A grant that renews holds a refresh token, which is never handed to a turn: screens only.
+        if not temporary.supported(provider) or (temporary.renews(provider) and not screens):
             return _land(request, return_to, provider, "error", "temporary_unsupported")
         # For the person's own screens (no agent), or lent to one agent.
         if not screens and temporary.agent_for(workspace, for_agent) is None:
             return _land(request, return_to, provider, "error", "bad_agent")
+        grant_minutes = None
+        if temporary.renews(provider):
+            # A grant that can last days is chosen on canopy's own page (`ALLOW_PAGE`), and only that
+            # page's form (a POST, CSRF-checked) starts one: a link alone never allows a long grant.
+            if request.method != "POST":
+                return _allow_page(request, workspace, provider, return_to)
+            if temporary.grant_length(provider, params.get("minutes")) is None:
+                return _land(request, return_to, provider, "error", "bad_duration")
+            grant_minutes = int(params["minutes"]) if params.get("minutes") else None
         # The callback is the app's own workspace's: the one registered at the provider.
         return HttpResponseRedirect(services.begin(
             request.session, app=app, owner=owner, redirect_uri=_redirect_uri(request, provider, app.workspace_id),
             return_to=return_to, for_agent=for_agent, temporary=True, for_screens=screens,
-            surface_workspace=workspace))
+            surface_workspace=workspace, grant_minutes=grant_minutes))
     try:
         services.owner_keyset(owner[0], owner_obj, request.user)
     except services.ConnectionError as e:  # no vault key: nothing to seal to, so nothing is begun
@@ -249,6 +263,17 @@ def connections_callback(request: HttpRequest, provider: str, workspace: str) ->
         extra = {"setup": services.VAULT_KEY_SETUP} if e.code == "no_vault_key" else {}
         return _land(request, return_to, provider, "error", e.code, **extra)
     return _connected(request, workspace, conn, return_to, for_agent=parked.get("for_agent") or "")
+
+
+def _allow_page(request: HttpRequest, workspace: str, provider: str, return_to: str) -> HttpResponse:
+    """Redirect (under SCRIPT_NAME) to the page where the person chooses how long to allow `provider`
+    for their screens in `workspace`, carrying `return_to`. That page posts back here with `minutes`."""
+    query = urlencode({"return_to": _safe_return_to(return_to)})
+    url = (f"{request.META.get('SCRIPT_NAME', '')}/w/{quote(workspace, safe='')}/connections/"
+           f"{quote(provider, safe='')}/allow?{query}")
+    if not url_has_allowed_host_and_scheme(url, allowed_hosts=set(), require_https=True):
+        url = DEFAULT_RETURN
+    return HttpResponseRedirect(url)
 
 
 def _connected(request: HttpRequest, workspace: str, conn, return_to: str, *, for_agent: str = ""):
