@@ -4,8 +4,8 @@
   counterpart to install-runner.sh's launchd path.
 
 .DESCRIPTION
-  The runner's Python is platform-neutral with two exceptions: the producers
-  (inbox.py, schedules.py) shell out to `gog` and do date math, cdp_control drives
+  The runner's Python is platform-neutral with two exceptions: the producer
+  (inbox.py) shells out to `gog` and does date math, cdp_control drives
   emdash through `node`, and the transcript layer is pure pathlib. What made the
   daemon macOS-only was its SUPERVISION -- two launchd jobs and a `launchctl
   kickstart`. This script provides the other half of that split (see
@@ -291,6 +291,45 @@ try {
     if (-not (Test-Path $sysTar)) { Fail "tar.exe not found at $sysTar (Windows 10 1803+ ships it)" }
     & $sysTar -x -f $tar -C $Tmp
     if ($LASTEXITCODE -ne 0) { Fail "tar extraction failed ($sysTar)" }
+
+    # --- stage-2 handover ----------------------------------------------------
+    # The updater task runs ~\.canopy\canopy-runner-update.ps1, a copy of this
+    # script frozen at the LAST SUCCESSFUL install: the copy is refreshed only at
+    # the very end, after `uv tool install`. So a fix to this installer cannot
+    # reach a box whose frozen copy fails before that point: the box keeps
+    # failing the same way and keeps running the old daemon.
+    # Same cure as install-runner.sh: if the archived ref carries a different
+    # installer, hand over to THAT copy. It installs itself over the frozen copy
+    # on its way out. The env guard stops recursion.
+    if (-not $env:CANOPY_INSTALLER_STAGE2) {
+        $archived = Join-Path $Tmp "runner/canopy_runner/scripts/install-runner.ps1"
+        if ((Test-Path $archived) -and
+            (Get-FileHash $archived).Hash -ne (Get-FileHash $PSCommandPath).Hash) {
+            Info "installer differs at $Ref -- handing over to the archived copy"
+            # Outside $Tmp, which the finally below removes; .ps1 because -File needs it.
+            $stage2Tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("canopy-install-runner-" + [guid]::NewGuid().ToString("N") + ".ps1")
+            Copy-Item -Path $archived -Destination $stage2Tmp -Force
+            # The caller's own arguments, unchanged (as install-runner.sh passes
+            # ORIG_ARGS): with -IfStale the new copy re-asks update-check and pins.
+            $passArgs = @()
+            foreach ($kv in $PSBoundParameters.GetEnumerator()) {
+                if ($kv.Value -is [System.Management.Automation.SwitchParameter]) {
+                    if ($kv.Value.IsPresent) { $passArgs += "-$($kv.Key)" }
+                } else {
+                    $passArgs += "-$($kv.Key)"; $passArgs += "$($kv.Value)"
+                }
+            }
+            $env:CANOPY_INSTALLER_STAGE2 = "1"
+            $ps = (Get-Command powershell.exe).Source
+            $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+            & $ps -NoProfile -ExecutionPolicy Bypass -File $stage2Tmp @passArgs
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = $prevEap
+            Remove-Item -Force $stage2Tmp -ErrorAction SilentlyContinue
+            Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
+            exit $code
+        }
+    }
 
     # Stamp build provenance into the TEMP tree only -- never the working checkout.
     $buildInfo = @"

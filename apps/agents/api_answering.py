@@ -92,7 +92,11 @@ def list_agent_host_sites(request: HttpRequest, slug: str):
             summary="Add or change one host site: only the fields sent change. dry_run checks without saving")
 @gate("agent-admin", setting=True)
 def put_agent_host_site(request: HttpRequest, slug: str, site: str, payload: AgentHostSiteIn):
-    """A field of the wrong shape (an empty or over-long `bash` entry, a malformed path) is a 422."""
+    """A field of the wrong shape (an empty or over-long `bash` entry, a malformed path) is a 422.
+
+    `contact_scoped: true` also offers the agent to the site's own contacts, whose turns then reach
+    the site's tools bound to that one contact (a canopy-signed subject statement, no grant); the site
+    authorizes every call against them."""
     agent = agent_for_admin(request, slug)
     locked, before, after = _run(profile_settings.set_site, agent, site, _changed(payload), by=request.user,
                                  dry_run=payload.dry_run)

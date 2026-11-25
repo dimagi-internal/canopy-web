@@ -305,6 +305,21 @@ class TestCheck:
                 assert call["ResourceArns"] == [
                     "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/tg/x"]
 
+    def test_a_scaling_policy_change_is_simulated_against_star(self):
+        # Its ARN is arn:aws:autoscaling:..., its actions application-autoscaling:...;
+        # the simulator never matches the two, so against the ARN a "*" grant reads
+        # implicitDeny and every change to the CPU scaling policy was refused.
+        described = {"Changes": [{"Type": "Resource", "ResourceChange": {
+            "Action": "Modify", "LogicalResourceId": "CpuScalingPolicy",
+            "PhysicalResourceId": ("arn:aws:autoscaling:us-east-1:1:scalingPolicy:x:resource/ecs/"
+                                   "service/c/s:policyName/p"),
+            "ResourceType": "AWS::ApplicationAutoScaling::ScalingPolicy",
+            "Replacement": "False"}}]}
+        iam = FakeIam()
+        assert check(FakeCfn(described), iam, "s", "cs", "arn:role") == []
+        assert iam.calls
+        assert all("ResourceArns" not in c for c in iam.calls)
+
     def test_a_non_arn_physical_id_is_not_passed_as_a_resource(self):
         # Some physical ids are names, not ARNs (a log group, for one).
         described = {"Changes": [{"Type": "Resource", "ResourceChange": {

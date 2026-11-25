@@ -66,11 +66,24 @@ def test_a_valid_declaration_is_kept_and_an_app_without_one_keeps_its_shape():
     assert "browser" not in mf.validate(plain)
 
 
+def test_gmail_v1_2_capabilities_are_accepted():
+    caps = ["read_open_email", "read_open_thread", "compose_recipients", "start_compose", "fill_compose"]
+    assert mf.validate(_with(capabilities=caps))["browser"][0]["capabilities"] == caps
+
+
+def test_every_adapters_acts_are_among_its_capabilities_and_gmails_are_the_compose_writers():
+    for adapter in browser.ADAPTERS.values():
+        assert set(adapter.get("acts", ())) <= set(adapter["capabilities"])
+    assert set(browser.ADAPTERS["gmail"]["acts"]) == {"start_compose", "fill_compose"}
+    assert browser.acts_of("gmail", ["read_open_thread", "fill_compose"]) == ["fill_compose"]
+    assert browser.acts_of("nope", ["fill_compose"]) == []
+
+
 @pytest.mark.parametrize("change, why", [
     ({"page": "nope"}, "member page"),
     ({"page": "jobs"}, "member page"),
     ({"adapter": "outlook"}, "adapter"),
-    ({"capabilities": ["fill_compose"]}, "not offered"),
+    ({"capabilities": ["send_email"]}, "not offered"),
     ({"events": ["email_deleted"]}, "not offered"),
     ({"matches": ["http://mail.google.com/*"]}, "https match pattern"),
     ({"matches": ["https://*/*"]}, "https match pattern"),
@@ -90,6 +103,18 @@ def test_a_template_update_changing_the_declaration_needs_an_admin():
     old, new = mf.validate(APP), mf.validate(_with(capabilities=["read_open_email", "compose_recipients"]))
     assert any("browser tabs" in c for c in template_diff.changes(old, new))
     assert not any("browser tabs" in c for c in template_diff.changes(old, mf.validate(APP)))
+
+
+def test_a_template_update_adding_an_act_says_so_and_a_read_does_not():
+    old = mf.validate(APP)
+    acts = template_diff.changes(old, mf.validate(_with(capabilities=["read_open_email", "fill_compose"])))
+    assert any("change what is on the browser tab" in c and "gmail fill_compose" in c for c in acts)
+    reads = template_diff.changes(old, mf.validate(_with(capabilities=["read_open_email", "read_open_thread"])))
+    assert reads and not any("change what is on the browser tab" in c for c in reads)
+    # Already declared before: no new act, only the general change.
+    had = mf.validate(_with(capabilities=["fill_compose"]))
+    again = template_diff.changes(had, mf.validate(_with(capabilities=["fill_compose", "read_open_thread"])))
+    assert again and not any("change what is on the browser tab" in c for c in again)
 
 
 @pytest.mark.parametrize("url, hit", [
@@ -130,10 +155,18 @@ def test_a_member_gets_the_pages_for_their_roles(world):
     assert [(a["app_key"], a["page_slug"]) for a in viewer] == [("sales", "gmail-panel")]
     assert viewer[0] == {"workspace": "dimagi", "workspace_name": "Dimagi", "app_key": "sales", "app_name": "Sales",
                          "page_slug": "gmail-panel", "page_title": "Gmail", "adapter": "gmail",
-                         "capabilities": ["read_open_email"], "events": ["email_opened"],
+                         "capabilities": ["read_open_email"], "acts": [], "events": ["email_opened"],
                          "matches": ["https://mail.google.com/*"]}
     # An editor also holds `seller`, so both pages match the Gmail tab.
     assert {a["page_slug"] for a in _apps(world["editor"])} == {"gmail-panel", "sellers"}
+
+
+def test_each_row_says_which_of_its_capabilities_are_acts(world):
+    m = _with(capabilities=["read_open_thread", "start_compose", "fill_compose"])
+    _install(world, m)
+    row = next(a for a in _apps(world["viewer"]) if a["page_slug"] == "gmail-panel")
+    assert row["capabilities"] == ["read_open_thread", "start_compose", "fill_compose"]
+    assert row["acts"] == ["start_compose", "fill_compose"]
 
 
 def test_a_url_that_matches_nothing_lists_nothing(world):

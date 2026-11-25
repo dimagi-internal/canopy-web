@@ -92,6 +92,19 @@ def test_csrf_endpoint_is_public(db):
     assert "csrftoken" in resp.cookies
 
 
+def test_csrf_endpoint_says_the_token_a_write_must_carry(db):
+    """canopy inside the extension's side panel can't read its cookies from script, so it
+    sends the token this body says; it must be one the CSRF check accepts."""
+    client = Client(enforce_csrf_checks=True)
+    resp = client.get("/api/csrf/")
+    assert resp["Cache-Control"] == "no-store"
+    token = resp.json()["token"]
+    refused = client.post("/api/csrf/")  # any POST: the CSRF check runs before the method check
+    told = client.post("/api/csrf/", HTTP_X_CSRFTOKEN=token)
+    assert refused.status_code == 403
+    assert told.status_code == 405
+
+
 @override_settings(REQUIRE_AUTH=True)
 def test_accounts_paths_are_public(db):
     client = Client()
@@ -783,7 +796,7 @@ def test_an_already_linked_workspace_account_keeps_signing_in(db):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# An agent's Google account never opens a browser session as the agent
+# An agent's Google login and the JIT merge
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -800,32 +813,6 @@ def _agent_login(email="hal@dimagi-ai.com"):
 
 
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")
-def test_an_agents_google_account_is_not_linked_to_its_login(db):
-    login = _agent_login()
-    sociallogin = _make_jit_social_login("hal@dimagi-ai.com")
-
-    with pytest.raises(ImmediateHttpResponse) as exc:
-        CustomSocialAccountAdapter().pre_social_login(
-            RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
-
-    assert exc.value.response.status_code == 403
-    assert "an agent" in exc.value.response.content.decode()
-    sociallogin.connect.assert_not_called()
-    assert not login.socialaccount_set.exists()
-
-
-@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")
-def test_an_agent_login_already_linked_to_google_is_refused_too(db):
-    login = _agent_login()
-    sociallogin = _make_jit_social_login("hal@dimagi-ai.com", is_existing=True)
-    sociallogin.user = login
-
-    with pytest.raises(ImmediateHttpResponse):
-        CustomSocialAccountAdapter().pre_social_login(
-            RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
-
-
-@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")
 def test_the_jit_merge_never_connects_onto_an_agent_login(db):
     login = _agent_login()
     sociallogin = _make_jit_social_login("hal@dimagi-ai.com")
@@ -834,3 +821,20 @@ def test_the_jit_merge_never_connects_onto_an_agent_login(db):
 
     sociallogin.connect.assert_not_called()
     assert login.pk
+
+
+def test_site_signed_routes_are_public():
+    """Every `/api/sites/*` route canopy-web serves with `auth=None` verifies the site's own
+    signature itself, so the login middleware must let it through -- otherwise production
+    (REQUIRE_AUTH) answers 401 before the route can check the signature, while tests (auth
+    off) pass. `resources-updated` was missing from the list."""
+    from apps.common.middleware import _is_public
+    from apps.host_grants.api import sites_router
+
+    paths = {"/api/sites" + p for p in sites_router.path_operations}
+    assert "/api/sites/resources-updated" in paths
+    for path in sorted(paths):
+        for op in sites_router.path_operations[path[len("/api/sites") :]].operations:
+            if op.auth_callbacks:
+                continue
+            assert _is_public(path), f"{path} is auth=None but not in PUBLIC_PATH_PREFIXES"

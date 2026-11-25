@@ -189,6 +189,7 @@ from .runners import (  # noqa: F401
     RunnerEngineIn,
     RunnerFlagsIn,
     RunnerHealthIn,
+    RunnerHeartbeatSlimOut,
     RunnerIn,
     RunnerNameIn,
     RunnerOnlyAgentsIn,
@@ -225,6 +226,7 @@ from .schedules import (  # noqa: F401
     TriggerPatch,
 )
 from .session_sync import (  # noqa: F401
+    RunnerSyncOut,
     BackfillDescriptorOut,
     BackfillMessageIn,
     BackfillSyncOut,
@@ -250,6 +252,7 @@ from .sessions import (  # noqa: F401
 )
 from .turns import (  # noqa: F401
     CallerContextOut,
+    ClaimDefinitionOut,
     ClaimedTurnOut,
     ClaimPageSiteOut,
     InitiatorOnBehalfOut,
@@ -261,6 +264,9 @@ from .turns import (  # noqa: F401
     TranscriptAppendOut,
     TurnAbortIn,
     TurnEventCountOut,
+    PageBriefOut,
+    LiveTextIn,
+    LiveTextOut,
     TurnEventIn,
     TurnEventOut,
     TurnEventsIn,

@@ -10,18 +10,29 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 #: What a person can agree canopy learns from their sessions for. The class names are
 #: the contract: a capability declares one, a consent lists some.
 INDIVIDUAL, MEMORY, PROJECT, SYSTEM = "individual", "memory", "project", "system"
 CLASSES = (INDIVIDUAL, MEMORY, PROJECT, SYSTEM)
+#: Where a brain run's conversation records its run (`canopy_sessions.models.BRAIN_RUN_METADATA_KEY`).
+BRAIN_RUN_KEY = "brain_run"
 #: Classes that learn about ONE PERSON from their own words (only that person's consent
 #: counts) versus the ones that learn about a project or canopy from everyone's (every
 #: human participant must agree).
-#: Where a brain run's conversation records its run (`canopy_sessions.models.BRAIN_RUN_METADATA_KEY`).
-BRAIN_RUN_KEY = "brain_run"
 ABOUT_A_PERSON = frozenset({INDIVIDUAL, MEMORY})
 SHARED = frozenset({PROJECT, SYSTEM})
+
+
+def person_id(subject_type: str, subject: str) -> int | None:
+    """The user id a (`subject_type`, `subject`) pair is about, or None: not about a person, or not a user id."""
+    return int(subject) if subject_type == "person" and (subject or "").isdecimal() else None
+
+
+def project_id(subject_type: str, subject: str) -> int | None:
+    """The `AgentProject` pk a (`subject_type`, `subject`) pair is about, or None."""
+    return int(subject) if subject_type == "project" and (subject or "").isdecimal() else None
 
 
 class BrainSource(models.Model):
@@ -47,16 +58,19 @@ class BrainSource(models.Model):
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
     state = models.CharField(max_length=12, choices=STATE_CHOICES, default=OPEN)
     sealed_reason = models.CharField(max_length=16, blank=True, default="")
-    #: When the associator should look at this source next (`associate.run_due`): set by an
-    #: activity fold, so a burst of folds is one look; null once looked at.
-    associate_due_at = models.DateTimeField(null=True, blank=True)
-    #: When it was last looked at; null means never, which is also due.
+    #: When the associator should look at this source next (`associate.run_due`, the one column it asks, indexed
+    #: over open sources): when it is made, then by an activity fold, so a burst of folds is one look; null once
+    #: looked at.
+    associate_due_at = models.DateTimeField(null=True, blank=True, default=timezone.now)
+    #: When it was last looked at; null means never.
     associated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["kind", "ref"], name="brain_source_one_per_ref")]
+        indexes = [models.Index(fields=["associate_due_at"], condition=models.Q(state="open"),
+                                name="brain_source_due")]
 
 
 class SourceParticipant(models.Model):
@@ -90,8 +104,8 @@ class SourceParticipant(models.Model):
 class LearningConsent(models.Model):
     """A person's agreement to canopy learning, by purpose class. One live row per person.
 
-    Only the person, as themselves, makes or changes it (`consent.py`, `api.py`): never an
-    admin, an agent, a turn's token or a runner. `CoachingOptIn` is carried over as the
+    The person, as themselves, makes or changes it (`consent.py`, `api.py`); a workspace's manager
+    may only ADD classes for its members (`consent.admin_opt_in`), never take one away. `CoachingOptIn` is carried over as the
     `individual` class and still written beside this row until its readers move."""
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="learning_consents")
@@ -211,6 +225,9 @@ class SourceLink(models.Model):
                            related_name="+")
     by_agent = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.SET_NULL,
                                  related_name="+")
+    #: Everyone else who rejected it (user ids), besides `by`: each person's rejection sticks until THEY take it back,
+    #: so when `by` does, the next of these holds it (`associate.undeclare`).
+    rejected_by = models.JSONField(default=list, blank=True, db_default=[])
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -263,11 +280,41 @@ class BrainOutput(models.Model):
     #: The run that emitted it, and a hash of what it said and cited, so emitting twice is one output.
     run = models.ForeignKey("brain.BrainRun", null=True, blank=True, on_delete=models.SET_NULL, related_name="outputs")
     fingerprint = models.CharField(max_length=64, blank=True, default="")
+    #: Where it stands with the people who act on it (`findings.STATUSES`), apart from `state`, which is the cascade's.
+    #: Set by a person who may act on it (`findings.may_set`); a repeat folds into an open or accepted one.
+    status = models.CharField(max_length=12, default="open", db_default="open")
+    status_at = models.DateTimeField(null=True, blank=True)
+    status_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                  related_name="+")
+    #: What makes two outputs the same thing, as the run that emitted it names it (a short slug); "" never folds.
+    key = models.CharField(max_length=200, blank=True, default="", db_default="")
+    #: How many emits folded into it (the first counts), and when the last one did.
+    seen = models.PositiveIntegerField(default=1, db_default=1)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    #: The output this one was merged into as the same problem (`findings.merge`, status `duplicate`): a repeat of its
+    #: key folds there.
+    merged_into = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="merged")
+    #: The `done` finding of the same kind and key this one is a repeat of (`findings.came_back_of`): it came back after
+    #: it was acted on, which is how a learner's fixes are measured.
+    recurs_of = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="recurrences")
+    #: When each emit saw it (`findings.SIGHTINGS_KEPT` newest, ISO times with the run): its sightings over time.
+    sightings = models.JSONField(default=list, blank=True, db_default=[])
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def subject_user_id(self) -> int | None:
+        """The person it is about (a user id), or None (`person_id`)."""
+        return person_id(self.subject_type, self.subject)
+
+    @property
+    def subject_project_id(self) -> int | None:
+        """The project it is about (an `AgentProject` pk), or None (`project_id`)."""
+        return project_id(self.subject_type, self.subject)
+
     class Meta:
-        indexes = [models.Index(fields=["subject_type", "subject", "state"], name="brain_output_by_subject")]
+        indexes = [models.Index(fields=["subject_type", "subject", "state"], name="brain_output_by_subject"),
+                   models.Index(fields=["capability", "workspace", "key"], name="brain_output_by_key")]
         constraints = [models.UniqueConstraint(fields=["run", "fingerprint"], condition=~models.Q(fingerprint=""),
                                                name="brain_output_once_per_run")]
 
@@ -276,12 +323,17 @@ class OutputLineage(models.Model):
     """One output's one source: written by `brain_emit` from the turn's ACTUAL reads, so the cascade
     knows what to withdraw. `output_kind` names the store (`brain.output` now; an existing store later
     carries its own kind). `participant_scope` is the people whose words were in the source at the time:
-    the consents the output carries."""
+    the consents the output carries.
+
+    An output carries a row for EVERY source its run had read when it was written, not only those it cites: what a
+    run read is all in its context, so a removal of any of them reaches the output (as it reaches the run's artifacts
+    and conversation). `cited` marks the ones it names as its evidence, which are what a screen shows."""
 
     output_kind = models.CharField(max_length=40, default="brain.output")
     output_id = models.CharField(max_length=64)
     source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="lineage")
     participant_scope = models.JSONField(default=list, blank=True)
+    cited = models.BooleanField(default=True, db_default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -291,9 +343,10 @@ class OutputLineage(models.Model):
 
 
 class BrainRun(models.Model):
-    """One run of a learning feature: a conversation of its operator agent, confined to the brain's own
-    profile (`published_profiles.BRAIN`), that reads sources and emits outputs, nothing else. The server
-    makes it (`runs.start`); nothing a turn says makes one."""
+    """One run of a learning feature: a conversation of its operator agent, whose turn is an ordinary full-profile
+    turn of that agent set up by the learning system (`context`), reading the sessions due only through `brain_read`
+    and recording what it makes against them (`lineage`). The server makes it (`runs.start`); nothing a turn says
+    makes one."""
 
     OPEN, DONE, FAILED = "open", "done", "failed"
     STATE_CHOICES = [(OPEN, "Open"), (DONE, "Done"), (FAILED, "Failed")]
@@ -309,8 +362,8 @@ class BrainRun(models.Model):
     #: owners and its ancestors' (`outputs.visible_to`). A `system` run's subject is this slug too, so one run is
     #: open per feature and workspace (`brain_one_open_run`).
     scope = models.CharField(max_length=64, blank=True, default="", db_default="")
-    #: A lower bound a caller may set by hand: the run reads only sources past this pk. The scheduler passes 0 and
-    #: relies on what earlier clean runs read (`reading.candidates`), so a source that becomes eligible late is read.
+    #: Unused: what a run reads is bounded by its target's window of recent activity (`reading.window_start`), never by
+    #: a source id. Kept only because migrations are additive.
     floor = models.BigIntegerField(default=0)
     #: Its conversation (`canopy_sessions.Session`, `metadata.brain_run`).
     session = models.ForeignKey("canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
@@ -322,6 +375,14 @@ class BrainRun(models.Model):
     target = models.ForeignKey("BrainTarget", null=True, blank=True, on_delete=models.SET_NULL, related_name="runs")
     #: The schedule slot it answers (null for a Run now): one run per target and slot, however many firers report it.
     slot = models.DateTimeField(null=True, blank=True)
+    #: The context document the run was started with (`context.document`, typed by `schemas.BrainRunContext`, with
+    #: its `version`): what its turn was told, kept as it was told. Ids and names, never a word of a session.
+    context = models.JSONField(default=dict, blank=True, db_default={})
+
+    @property
+    def subject_user_id(self) -> int | None:
+        """The person it is about (a user id), or None (`person_id`)."""
+        return person_id(self.subject_type, self.subject)
 
     class Meta:
         #: One open run per feature and subject: two workers starting the same run race on this, not on a read.
@@ -329,6 +390,9 @@ class BrainRun(models.Model):
                                                condition=models.Q(state="open"), name="brain_one_open_run"),
                        models.UniqueConstraint(fields=["target", "slot"], condition=models.Q(slot__isnull=False),
                                                name="brain_one_run_per_slot")]
+        #: What a feature already learned about a subject (`reading.learned`), and a target's day (`budget`).
+        indexes = [models.Index(fields=["capability", "subject_type", "subject", "state"], name="brain_run_by_subject"),
+                   models.Index(fields=["target", "created_at"], name="brain_run_by_target_day")]
 
 
 class BrainTarget(models.Model):
@@ -349,6 +413,23 @@ class BrainTarget(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    #: Its budget (`budget.py`): sessions a run reads and outputs it writes; runs, outputs and tokens per UTC day.
+    #: A run stops cleanly at a cap: `brain_read` serves nothing more, `brain_emit` refuses, a fire starts nothing.
+    max_sources_per_run = models.PositiveIntegerField(default=50, db_default=50)
+    max_outputs_per_run = models.PositiveIntegerField(default=20, db_default=20)
+    max_runs_per_day = models.PositiveIntegerField(default=4, db_default=4)
+    max_outputs_per_day = models.PositiveIntegerField(default=50, db_default=50)
+    #: Null: no token cap. Checked before a run starts, from what the boxes reported (`events.SessionUsage`).
+    max_tokens_per_day = models.PositiveBigIntegerField(null=True, blank=True)
+    #: How far back its runs read: only sessions active in the last this many days (`budget.lookback_days`; null: the
+    #: kind's default). And how long an open finding nobody re-sees stays fresh (`budget.fade_days`; null: the default).
+    lookback_days = models.PositiveIntegerField(null=True, blank=True)
+    fade_days = models.PositiveIntegerField(null=True, blank=True)
+    #: The fade window by a finding's type (`budget.fade_days_for`): {type: days}, over `budget.FADE_BY_TYPE`.
+    fade_days_by_type = models.JSONField(default=dict, blank=True, db_default={})
+    #: How long a dismissed finding's repeats fold into it and stay dismissed (`budget.dismiss_cooldown_days`; null:
+    #: the default).
+    dismiss_cooldown_days = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -366,9 +447,38 @@ class BrainRunRead(models.Model):
     run = models.ForeignKey(BrainRun, on_delete=models.CASCADE, related_name="reads")
     source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="+")
     read_at = models.DateTimeField(auto_now_add=True)
+    #: How far into the session it read: the last row (`Message.turn_index`) served. A session that grew well past it
+    #: since a clean read is due again, from here (`reading.REREAD_ROWS`). Null: unknown (read before it was kept).
+    through = models.IntegerField(null=True, blank=True)
+    #: The triage verdict it was served under (`triage`): its score and one-line reason. Null: read before triage.
+    triage_score = models.IntegerField(null=True, blank=True)
+    triage_reason = models.CharField(max_length=200, blank=True, default="")
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["run", "source"], name="brain_run_reads_once")]
+
+
+class BrainTriage(models.Model):
+    """A cheap verdict on how worth reading a due source is (`triage`): counts of friction in what a learner's view
+    of it holds past where the read would start, and a score and reason built from them. Never a word of the session.
+    Kept per (source, view, the row a read starts after, the last row it ends at, `version`): a re-ask for the same
+    range costs one lookup, and a session that grew, or a change in how verdicts are made, is a new row."""
+
+    source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="+")
+    view = models.CharField(max_length=16)
+    #: The row a read starts after (`reading.resume_after`), -1 for the whole session.
+    after = models.IntegerField()
+    #: The session's last row when judged (-1: none).
+    upto = models.IntegerField()
+    version = models.PositiveSmallIntegerField()
+    score = models.IntegerField()
+    signals = models.JSONField(default=dict)
+    reason = models.CharField(max_length=200, blank=True, default="")
+    made_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["source", "view", "after", "upto", "version"],
+                                               name="brain_triage_once")]
 
 
 class RederiveRequest(models.Model):
@@ -428,3 +538,38 @@ class WorkspaceLearningReads(models.Model):
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="+")
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class BrainRunArtifact(models.Model):
+    """Something a learning run's turn made in canopy-web, or reported making outside it (a PR, an issue, a link).
+    Recorded by the server from the turn's own credential (`lineage`), never by the skill, with `OutputLineage`
+    (`output_kind` `brain.artifact`) to every source the run had read when it was made. When a removal reaches one of
+    those sources, the cascade WITHDRAWS what canopy can undo (a task, a draft) and FLAGS what it cannot (a sent email, a
+    pull request): flagged, it is listed on its workspace's brain page and raised to its owner (the person the run
+    answered to) until they acknowledge it (`alerts_removal`). Ids and a link only, never a word of what it says."""
+
+    LIVE, WITHDRAWN, FLAGGED = "live", "withdrawn", "flagged"
+    STATE_CHOICES = [(LIVE, "Live"), (WITHDRAWN, "Withdrawn"), (FLAGGED, "Flagged")]
+
+    run = models.ForeignKey(BrainRun, on_delete=models.CASCADE, related_name="artifacts")
+    #: `<app_label>.<model>` for a row canopy-web holds, else `link` (`github.pull`, `github.issue` for those).
+    kind = models.CharField(max_length=80)
+    #: The row's pk, or the URL.
+    ref = models.CharField(max_length=500)
+    #: Where it shows: the row's own workspace when it has one, else the run's.
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    #: Whom a flag is raised to: the person the run answered to.
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name="+")
+    state = models.CharField(max_length=10, choices=STATE_CHOICES, default=LIVE)
+    #: Why it was withdrawn or flagged (`cascade.removed_reason`), in words.
+    reason = models.CharField(max_length=200, blank=True, default="")
+    changed_at = models.DateTimeField(null=True, blank=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    acknowledged_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                        related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["run", "kind", "ref"], name="brain_artifact_one")]
+        indexes = [models.Index(fields=["workspace", "state"], name="brain_artifact_by_ws")]

@@ -92,14 +92,15 @@ def test_a_site_not_trusted_for_email_cannot_resolve_a_member(w):
 
 
 @pytest.mark.parametrize("role", [M.OWNER, M.ADMIN])
-def test_an_owner_or_admin_never_arrives_through_a_site(w, role):
-    """Not by a verified email, and not as an already-linked contact either: a
-    site's signing key never speaks for the people who run the tenant."""
+def test_an_owner_or_admin_arrives_as_themselves(w, role):
+    """Owners and admins are members like anyone else: on a site trusted for
+    email they arrive as themselves, by verified email or as an already-linked
+    contact, so an agent on the page gets their own permissions."""
     _arrive(w["priv"], sub="u-9", email="alice@dimagi.com", email_verified=True)   # linked as editor
     M.objects.filter(user=w["alice"], workspace=w["ws"]).update(role=role)
-    assert _arrive(w["priv"], sub="u-9")["kind"] == "contact"
+    assert _arrive(w["priv"], sub="u-9")["kind"] == "user"
     assert _arrive(w["priv"], sub="u-10", email="alice@dimagi.com",
-                   email_verified=True)["kind"] == "contact"
+                   email_verified=True)["kind"] == "user"
 
 
 def test_arrival_never_creates_an_account(w):

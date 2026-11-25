@@ -10,6 +10,7 @@ and the runners so a behaviour can't exist in two versions.
 """
 from .client import (
     ADAPTER_PACKAGE,
+    ADAPTER_VERSION,
     AcpAgent,
     AcpConnection,
     Pending,
@@ -31,7 +32,7 @@ __all__ = [
     "AcpAgent", "AcpConnection", "Pending", "PermissionDecision",
     "TERMINAL_STATUSES", "ToolCall", "UpdateReducer",
     "TurnError", "TurnResult", "adopt_turn", "drive_turn",
-    "ADAPTER_PACKAGE", "allow_first_option", "find_adapter", "install_adapter",
+    "ADAPTER_PACKAGE", "ADAPTER_VERSION", "allow_first_option", "find_adapter", "install_adapter",
     "elicitation_answer", "menu_from_elicitation", "menu_from_permission_request",
     "option_id_for",
 ]

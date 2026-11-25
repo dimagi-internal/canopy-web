@@ -246,8 +246,9 @@ class SlackEnabledIn(StrictModel):
 
 
 class TestVaultKeyIn(StrictModel):
-    """Turn an agent login's TEST vault key on or off. Its own endpoint, never on the
-    agent-repo upsert: an agent must not be able to give its own login a key."""
+    """Turn an agent login's TEST vault key on or off, as an admin of the agent. Its own
+    endpoint, never on the agent-repo upsert. The agent's own login turns its own on or
+    off at `PUT /api/vault/test-key`."""
 
     enabled: bool
 
@@ -494,6 +495,21 @@ class AgentActorRouteIn(StrictModel):
     turn_mode: Literal["", "manual", "auto"] = ""
 
 
+class AgentSourceOut(StrictModel):
+    """Where a runner gets the agent's definition: its repo (`repo`), or the stored
+    revision `revision` named by `root_sha256` (`stored`, docs/architecture/stored-agents.md)."""
+
+    source: Literal["repo", "stored"] = "repo"
+    revision: int | None = None
+    root_sha256: str | None = None
+    #: The live revision's commit in the agent's canopy-hosted repository.
+    commit: str | None = None
+    #: Where to `git clone` / `git fetch` the definition with a canopy token, when canopy
+    #: hosts its repository (`<base>/git/<workspace>/<slug>.git`): a stored agent, or one
+    #: exported to GitHub, whose canopy repository is then a read-only archive.
+    git_url: str | None = None
+
+
 class AgentRuntimeOut(StrictModel):
     """What a runner needs from canopy-web to run this agent: the repo pointer,
     the secret-reference names to resolve from the env store, the agent CLIs it
@@ -507,6 +523,9 @@ class AgentRuntimeOut(StrictModel):
     #: The agent CLIs it runs on, preferred first, and a model for each it names.
     clis: list[str] = ["claude-code"]
     cli_models: dict[str, str] = {}
+    #: Where the definition comes from: a stored agent has no `repo_url`, and its box
+    #: materializes `definition.revision` from canopy instead of cloning.
+    definition: AgentSourceOut = Field(default_factory=AgentSourceOut)
 
 
 class AgentPluginOut(StrictModel):
@@ -561,6 +580,8 @@ class AgentOut(StrictModel):
     # operational state rather than repo config, so the self-publish upsert
     # cannot turn it on.
     slack_enabled: bool = False
+    #: `stored` when canopy keeps the definition (no git repo), else `repo`.
+    source: Literal["repo", "stored"] = "repo"
     # The PLUGIN this instance runs, named exactly as the caller's
     # `canopy-agents` catalog names it (apps/plugins/services.py), so
     # `/plugin install <name>@canopy-agents` and `/<name>:setup` are right.
@@ -592,6 +613,16 @@ class AgentDefinitionOut(StrictModel):
                     "reach them?' is a fleet question. Names tenants only: no "
                     "board, credentials or turns are disclosed.",
     )
+    #: `stored`: canopy keeps the definition (no repo); `revision` is the live one.
+    source: Literal["repo", "stored"] = "repo"
+    revision: int | None = None
+    root_sha256: str | None = None
+    #: The live revision's commit in the agent's canopy-hosted repository.
+    commit: str | None = None
+    #: Where to `git clone` / `git fetch` the definition with a canopy token, when canopy
+    #: hosts its repository (`<base>/git/<workspace>/<slug>.git`): a stored agent, or one
+    #: exported to GitHub, whose canopy repository is then a read-only archive.
+    git_url: str | None = None
 
 
 class AgentOwnerOut(StrictModel):
@@ -756,12 +787,28 @@ class AgentHostSiteOut(AnsweringProfile):
     # Names of the agent's own credentials that are its login on this site, kept out of its conversations.
     own_login: list[str] = []
     sensitive: bool = False
+    # The site's own contacts reach the agent here, the site's tools bound to that one contact.
+    contact_scoped: bool = False
+    # The part of the site this entry serves (a surface its site.json declares); "" for the site itself.
+    surface: str = ""
+    # Turns held on this site's pages start lean: canopy's plugin and the page's tools only,
+    # with the page's context in the opening message.
+    page_lean: bool = False
+    # The model turns held on this site's pages start on; "" is the agent's own.
+    page_model: str = ""
+    # The agent's own short brief for this site's pages, given to every lean page turn.
+    page_guidance: str = ""
 
 
 class NewSiteDefaults(AnsweringProfile):
     ceiling: list[str] = []
     own_login: list[str] = []
     sensitive: bool = False
+    contact_scoped: bool = False
+    surface: str = ""
+    page_lean: bool = False
+    page_model: str = ""
+    page_guidance: str = ""
 
 
 class AgentHostSitesOut(StrictModel):
@@ -775,6 +822,19 @@ class AgentHostSiteIn(ReadModeIn):
     ceiling: list[str] | None = None
     own_login: list[str] | None = None
     sensitive: bool | None = None
+    # Let the site's own contacts reach the agent here, the site's tools bound to that one
+    # contact and authorized by the site on every call (docs/architecture/host-systems-of-record.md).
+    contact_scoped: bool | None = None
+    # The surface of the site this entry serves, one its site.json declares (`workers`); "" for the
+    # site itself. A contact's conversation is held on it, and its tool calls go to its MCP resource.
+    surface: str | None = None
+    # Start every turn held on this site's pages lean (canopy's plugin, the page's tools and
+    # its context in the opening message), on `page_model` when set ("" = the agent's own model).
+    page_lean: bool | None = None
+    page_model: Annotated[str, Field(max_length=64)] | None = None
+    # The agent's own short brief for this site's pages (how to call its tools, what to read
+    # first), given to every lean page turn in place of its CLAUDE.md and skills. "" clears it.
+    page_guidance: Annotated[str, Field(max_length=4000)] | None = None
 
 
 class AgentAppEntryOut(StrictModel):

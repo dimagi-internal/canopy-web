@@ -3,7 +3,7 @@
 dimagi → {connect, labs}. At connect, every brain capability of its page (its `system` findings, Run now, configuring a
 learner, Learning reads) is open to connect's owner and admin and to dimagi's owner and admin, as a person; never to an
 editor of connect, a sibling's (labs') admin, connect's admin acting at dimagi (up the tree), an agent's login, or an
-MCP call. "Learning reads" is off unless set, inherits from the nearest ancestor that sets it, and is asked of a source's
+MCP call by a person; an admin agent in its own turn is `tests/test_brain_agent_admin.py`. "Learning reads" is off unless set, inherits from the nearest ancestor that sets it, and is asked of a source's
 own workspace by `eligibility.explain` and `eligible_sources` alike; every change is a `SettingChange` the page lists."""
 from __future__ import annotations
 
@@ -23,7 +23,8 @@ from apps.brain.models import (
 from apps.canopy_sessions.models import Message, Session, SessionParticipant
 from apps.events.models import SettingChange
 from apps.mcp import api_tools
-from apps.workspaces.models import Workspace, WorkspaceMembership as M
+from apps.workspaces.models import Workspace
+from apps.workspaces.models import WorkspaceMembership as M
 from tests.fixtures.brain_world import aim, member, reads, user
 from tests.token_helpers import bearer_headers, pat_token
 
@@ -206,10 +207,10 @@ def test_run_now_refuses_an_operator_that_lives_below_or_beside(w):
     assert r.status_code == 422 and "operator lives outside" in r.json()["detail"]
 
 
-def test_the_management_routes_are_not_mcp_tools(w):
+def test_the_management_routes_refuse_an_agents_stored_token(w):
     for name in ("set_learning_reads", "configure_learner", "run_learning_target", "add_learning_target",
                  "remove_learning_target", "brain_state"):
-        assert name in api_tools.EXCLUDED
+        assert name not in api_tools.EXCLUDED                    # MCP tools, for admin agents: the route decides
     r = _put_reads(None, "connect", True, client=Client(), **bearer_headers(pat_token(w["agent_login"])))
     assert r.status_code == 403
 

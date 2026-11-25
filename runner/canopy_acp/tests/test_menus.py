@@ -110,7 +110,7 @@ def test_a_file_operation_reads_sensibly():
 
 # -- AskUserQuestion, which ACP carries as a form elicitation ----------------
 #
-# Shapes are what claude-agent-acp 0.93.0's `askUserQuestionsToCreateRequest`
+# Shapes are what claude-agent-acp 0.109.1's `askUserQuestionsToCreateRequest`
 # builds (dist/elicitation.js): one `question_<n>` field per question — a titled
 # `oneOf` enum, or an array of `anyOf` for a multi-select — each followed by an
 # optional free-text `question_<n>_custom`. A single question's text rides

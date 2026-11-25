@@ -69,12 +69,8 @@ _HOST = "an embedding host's or a contact's surface — a different principal"
 _ANON = "anonymous public read; nothing to do as a signed-in person"
 _BRAIN = ("a person's own agreement to canopy learning: an agent or an MCP client with their token "
           "must never be able to give or withdraw it (apps/brain)")
-_BRAIN_PAGE = ("the person's own view of canopy learning on the /brain page, refused to anyone but them "
-               "(apps/brain/api_state.py)")
 _REPORTING = ("who manages whom decides who reads a person's learning outputs: a workspace owner's own act, "
               "never an agent's or an MCP client's (apps/brain)")
-_BRAIN_MANAGE = ("a workspace's owners and admins managing its learning (learning reads, its learners, a run), "
-                 "as a person: never an agent or an MCP client (apps/brain/api_manage.py)")
 _BYTES = "returns raw bytes, which a tool result cannot carry"
 
 #: Path prefixes whose every route belongs to another principal.
@@ -88,6 +84,8 @@ EXCLUDED_PREFIXES: dict[str, str] = {
 #: operationId → why it is not a tool.
 EXCLUDED: dict[str, str] = {
     "_auth_smoke": "internal smoke route",
+    "get_agent_definition_archive": "a stored agent's revision as a gzip'd tar, for a runner or `canopy agent "
+                                    "materialize`; a tool reads one file with get_agent_definition_file",
     "health": "health check",
     "request_connection_call": "a screen's call, on a person's session; a token is refused, and an agent "
                                "uses its own connection in its turn",
@@ -129,9 +127,6 @@ EXCLUDED: dict[str, str] = {
     "exclude_my_session": _BRAIN, "include_my_session": _BRAIN, "get_my_session_learning": _BRAIN,
     "get_my_disclosure": _BRAIN, "list_my_removed_sessions": _BRAIN,
     "declare_my_session_project": _BRAIN, "undeclare_my_session_project": _BRAIN,
-    "set_learning_reads": _BRAIN_MANAGE, "configure_learner": _BRAIN_MANAGE,
-    "add_learning_target": _BRAIN_MANAGE, "remove_learning_target": _BRAIN_MANAGE, "run_learning_target": _BRAIN_MANAGE,
-    "brain_state": _BRAIN_PAGE, "brain_state_links": _BRAIN_PAGE, "brain_state_runs": _BRAIN_PAGE,
     "list_reporting": _REPORTING, "set_reporting": _REPORTING, "end_reporting": _REPORTING,
     "contact_token": _HOST,
     "public_stats": _ANON,
@@ -537,10 +532,16 @@ BRAIN_RUN_TOOLS = frozenset({"brain_emit"})
 def _write_bucket(tool: str, principal: dict) -> str:
     """Which write budget a call spends: a brain run's emits spend that run turn's own (`rate_limit.BRAIN_RUN`),
     never the canopy admin the run is accountable to; everything else the user's."""
-    turn_id = (principal.get("credential") or {}).get("turn_id")
-    if tool in BRAIN_RUN_TOOLS and turn_id:
-        return f"{BRAIN_RUN_BUCKET}{turn_id}"
-    return ""
+    if tool not in BRAIN_RUN_TOOLS:
+        return ""
+    cred = principal.get("credential") or {}
+    turn_id = cred.get("turn_id")
+    if not turn_id and cred.get("id"):
+        # A full-profile run turn reaches canopy with the per-turn agent login: its turn is the token's own.
+        from apps.harness.models import TurnAgentToken  # noqa: PLC0415 — only a brain run's emit pays for it
+
+        turn_id = TurnAgentToken.objects.filter(token_id=cred["id"]).values_list("turn_id", flat=True).first()
+    return f"{BRAIN_RUN_BUCKET}{turn_id}" if turn_id else ""
 
 
 def acting(principal: dict) -> dict:
@@ -591,8 +592,8 @@ class CanopyAPITool(OpenAPITool):
             summary = f"[{workspace}] {summary}"
         if method != "GET":
             try:
-                await sync_to_async(check_write_limit, thread_sensitive=True)(
-                    principal["user_id"], bucket=_write_bucket(self.name, principal))
+                bucket = await sync_to_async(_write_bucket, thread_sensitive=True)(self.name, principal)
+                await sync_to_async(check_write_limit, thread_sensitive=True)(principal["user_id"], bucket=bucket)
             except RateLimitError as exc:
                 await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
                                   args_summary=summary, ok=False, error=str(exc), **acting(principal))

@@ -13,7 +13,8 @@ from django.db import transaction
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from apps.harness.signals import session_content_deleted, turn_status_changed
+from apps.harness.models import Turn
+from apps.harness.signals import session_content_deleted, turn_closed
 
 from . import associate, cascade, runs, sources
 from .models import BrainRun, BrainSource
@@ -25,6 +26,17 @@ def _schedule_after_fold(sender, instance, created, update_fields=None, **kwargs
         return
     session_id = instance.pk
     transaction.on_commit(lambda: associate.schedule(session_id))
+
+
+@receiver(post_save, sender="canopy_sessions.Session", dispatch_uid="brain_a_moved_session_follows")
+def _a_moved_session(sender, instance, created, update_fields=None, **kwargs):
+    """A session moved to another workspace: its source follows it after the commit (`sources.refresh`), and its
+    links to projects of the workspace it left go (`sources.drop_foreign_links`)."""
+    if created or (update_fields is not None and "workspace" not in update_fields):
+        return
+    if (BrainSource.objects.filter(kind=BrainSource.SESSION, ref=str(instance.pk))
+            .exclude(workspace_id=instance.workspace_id).exists()):
+        _refresh_after_commit(instance.pk)
 
 
 #: The `Turn` fields that say who started it and in which conversation.
@@ -75,12 +87,10 @@ def _cascade_content_deletion(sender, session, **kwargs):
         cascade.after_commit(ids)
 
 
-@receiver(turn_status_changed, dispatch_uid="brain_run_ends_with_its_turn")
+@receiver(turn_closed, dispatch_uid="brain_run_ends_with_its_turn")
 def _run_ends_with_its_turn(sender, turn, **kwargs):
-    """A turn in a brain run's conversation reached an end: the run is over, and a clean end moves the
-    feature's cursor (`runs.finish`)."""
-    from apps.harness.models import Turn  # noqa: PLC0415 — receivers load at ready()
-
+    """A turn in a brain run's conversation reached an end: the run is over, and a clean end counts what it read as
+    learned (`runs.finish`)."""
     if turn.status not in Turn.TERMINAL or not turn.chat_session_id:
         return
     run = BrainRun.objects.filter(session_id=turn.chat_session_id, state=BrainRun.OPEN).select_related("capability").first()

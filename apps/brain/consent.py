@@ -1,9 +1,10 @@
 """A person's agreement to canopy learning: the only code that writes `LearningConsent` and
 `SourceExclusion`.
 
-Every act here is the person's own. The routes (`api.py`) refuse an agent's login, a turn's
-token, a runner and a site's token before calling in; nothing in this module trusts that, and
-nothing calls it for anyone else (`tests/test_brain_consent_api.py`). Each change is on the
+Every act here is the person's own, except `admin_opt_in`: a workspace's owner or admin (a person, or an admin
+agent working for one; `api_manage.opt_people_in`) may ADD classes to a member's consent there. Taking a class away,
+narrowing, revoking and withdrawing a session stay the person's alone. The person's routes (`api.py`) refuse an agent's
+login, a turn's token, a runner and a site's token before calling in (`tests/test_brain_consent_api.py`). Each change is on the
 person's own audit (`learning.*`, `hcp.audit`) and, ids only, in the event log of every
 workspace they are in.
 
@@ -17,12 +18,15 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
+from apps.contacts import hcp
+from apps.contacts import services as contact_services
 from apps.events import services as events
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import cascade
-from .models import CLASSES, INDIVIDUAL, BrainSource, LearningConsent, SourceExclusion
+from .associate import due_again
+from .models import CLASSES, INDIVIDUAL, PROJECT, BrainSource, LearningConsent, SourceExclusion
 
 logger = logging.getLogger(__name__)
 
@@ -60,20 +64,18 @@ def live(user) -> LearningConsent | None:
 
 
 def _person(user):
-    from apps.contacts import services as contact_services  # noqa: PLC0415 — contacts imports this module
-
     return contact_services.person_for(user=user)
 
 
-def _record(user, event_type: str, *, purpose: str, detail: str = "", ids: dict | None = None) -> None:
-    """One event on the person's own log and one ids-only row in each workspace they are in."""
-    from apps.contacts import hcp  # noqa: PLC0415 — contacts imports this module
-
+def _record(user, event_type: str, *, purpose: str, detail: str = "", ids: dict | None = None,
+            workspaces=None) -> None:
+    """One event on the person's own log and one ids-only row in each workspace they are in, or only in
+    `workspaces` (a session's own, for an act about one session: another organisation's log never names it)."""
     person = _person(user)
     if person is not None:
         hcp.audit(person, event_type, actor=hcp.user_actor(user), purpose=purpose, detail=detail)
     payload = {"user_id": user.pk, **(ids or {})}
-    for slug in sorted(wsvc.user_workspace_slugs(user)):
+    for slug in sorted(wsvc.user_workspace_slugs(user) if workspaces is None else set(workspaces)):
         try:
             events.record([{"source": SOURCE, "kind": event_type, "payload": payload}],
                           workspace=Workspace(pk=slug))
@@ -182,8 +184,54 @@ def set_consent(user, *, classes, workspaces=None, include_new: bool | None = No
                     ids={"class": cls})
     if before - set(classes) or (before and _narrows(was, _state(row))):
         cascade.after_commit(cascade.sources_of(user))
+    if PROJECT in classes:
+        _look_again(user)
     _sync_coaching(user, on=INDIVIDUAL in classes)
     return row
+
+
+class OptInRefusedError(ValueError):
+    """An admin may not opt this person in (the reason is shown per person)."""
+
+
+@transaction.atomic
+def admin_opt_in(user, *, classes, managed: set[str], by: str) -> tuple[LearningConsent, list[str]]:
+    """Add `classes` to `user`'s consent on an admin's word (`by`, as the audit names them). Only ever adds: a class
+    the person has is kept, their scope, rules and directives are untouched. `managed` is the set of workspaces the
+    admin manages learning in: a person with no consent gets one covering only their workspaces in it (no new ones),
+    and one whose consent already reaches a workspace outside it is refused (an admin never widens what the person
+    agreed to somewhere they do not manage). Returns the row and the classes added."""
+    classes = set(classes)
+    if not classes or classes - set(CLASSES):
+        raise RefusedError(f"classes must be a non-empty set of {', '.join(CLASSES)}")
+    mine = set(wsvc.user_workspace_slugs(user))
+    row = live(user)
+    if row is None:
+        scope = sorted(mine & managed)
+        if not scope:
+            raise OptInRefusedError("not in a workspace you manage")
+        row = LearningConsent.objects.create(user=user, classes=sorted(classes), workspaces=scope,
+                                             known_workspaces=sorted(mine), include_new=False)
+        added = sorted(classes)
+        _record(user, CONSENTED, purpose=f"opted in to canopy learning by {by}",
+                detail=",".join(added), ids={"classes": added, "by": by})
+    else:
+        reach = set(row.workspaces or []) or mine
+        if reach - managed:
+            raise OptInRefusedError("their consent covers workspaces you do not manage: "
+                                    + ", ".join(sorted(reach - managed)))
+        added = sorted(classes - set(row.classes))
+        if not added:
+            return row, []
+        row.classes = sorted(set(row.classes) | classes)
+        row.save(update_fields=["classes"])
+        for cls in added:
+            _record(user, CLASS_ADDED, purpose=f"opted in to canopy learning for {cls} by {by}", detail=cls,
+                    ids={"class": cls, "by": by})
+    if PROJECT in row.classes:
+        _look_again(user)
+    _sync_coaching(user, on=INDIVIDUAL in row.classes)
+    return row, added
 
 
 @transaction.atomic
@@ -201,9 +249,15 @@ def revoke(user) -> bool:
     return True
 
 
+def _look_again(user) -> None:
+    """The associator skips a session until everyone in it agreed to project learning: once this person does (or
+    widens it), their sessions are looked at again."""
+    due_again(pk__in=cascade.sources_of(user))
+
+
 def _sync_coaching(user, *, on: bool) -> None:
     """Keep `CoachingOptIn` the same as the `individual` class (coaching's ACL still reads it)."""
-    from apps.contacts import session_reviewers  # noqa: PLC0415 — contacts imports this module
+    from apps.contacts import session_reviewers  # noqa: PLC0415 — cycle: contacts.session_reviewers -> consent
 
     if on == session_reviewers.live(user).exists():
         return
@@ -250,7 +304,7 @@ def exclude(user, source: BrainSource) -> bool:
         _, made = SourceExclusion.objects.get_or_create(user=user, source=source)
         if made:
             _record(user, SOURCE_WITHDRAWN, purpose="remove a session from canopy learning",
-                    detail=source.ref, ids={"source": source.pk, "ref": source.ref})
+                    detail=source.ref, ids={"source": source.pk, "ref": source.ref}, workspaces=[source.workspace_id])
             cascade.after_commit([source.pk])
     return made
 
@@ -261,8 +315,9 @@ def include(user, source: BrainSource) -> bool:
     with transaction.atomic():
         n, _ = SourceExclusion.objects.filter(user=user, source=source).delete()
         if n:
+            due_again(pk=source.pk)
             _record(user, SOURCE_RESTORED, purpose="allow a session in canopy learning again",
-                    detail=source.ref, ids={"source": source.pk, "ref": source.ref})
+                    detail=source.ref, ids={"source": source.pk, "ref": source.ref}, workspaces=[source.workspace_id])
     return bool(n)
 
 

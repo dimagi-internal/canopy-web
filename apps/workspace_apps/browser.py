@@ -16,6 +16,11 @@ The rules (`validate`):
 * `adapter`, its `capabilities` and `events` are in `ADAPTERS`, the one registry of
   what the extension's adapters can do. It mirrors the extension's own adapters;
   adding one here is a deliberate act beside a new extension version.
+* An adapter's `acts` are the capabilities that change the page (fill a compose, open
+  one) rather than read it. This registry is the only source of that classification,
+  never the extension's `hello`: the panel lets a page call an act only straight from
+  a click on it (`frontend/src/ext/extensionBridge.ts::BrowserGate`), and a template
+  update that adds one needs an admin (`template_diff.py`).
 * `matches` are Chrome-style match patterns (`https://host/path*`), https only, and
   each host is within the adapter's `hosts`: a Gmail page can never be offered on
   another site, whatever it declares.
@@ -29,14 +34,25 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
-#: What each adapter bundled in the extension can do. `hosts` bounds a page's `matches`.
+#: What each adapter bundled in the extension can do. `hosts` bounds a page's `matches`;
+#: `acts` are the `capabilities` that change the page (a click on the page is needed to call one).
 ADAPTERS: dict[str, dict[str, tuple[str, ...]]] = {
-    "gmail": {
+    "gmail": {  # adapter v1.2
         "hosts": ("mail.google.com",),
-        "capabilities": ("read_open_email", "compose_recipients"),
+        "capabilities": ("read_open_email", "read_open_thread", "compose_recipients", "start_compose", "fill_compose"),
+        "acts": ("start_compose", "fill_compose"),
         "events": ("email_opened", "email_sent", "compose_recipients_changed"),
     },
 }
+
+for _name, _adapter in ADAPTERS.items():
+    assert set(_adapter.get("acts", ())) <= set(_adapter["capabilities"]), f"{_name}: acts must be capabilities"
+
+
+def acts_of(adapter: str, capabilities) -> list[str]:
+    """Which of these capabilities of `adapter` are acts, by the registry (unknown adapter: none)."""
+    acts = (ADAPTERS.get(adapter) or {}).get("acts", ())
+    return [c for c in capabilities or [] if c in acts]
 
 MAX_ENTRIES = 10
 MAX_MATCHES = 10
@@ -149,5 +165,6 @@ def entries_for(manifest: dict, url: str) -> list[dict]:
     for entry in manifest.get("browser") or []:
         page = pages.get(entry["page"])
         if page and page["audience"] == "member" and any(matches(p, url) for p in entry["matches"]):
-            out.append({**entry, "page_title": page["title"], "role": page["role"]})
+            out.append({**entry, "acts": acts_of(entry["adapter"], entry["capabilities"]),
+                        "page_title": page["title"], "role": page["role"]})
     return out

@@ -3,14 +3,15 @@
 Reads only, every figure a SQL aggregate or one read per section, never a word of a session. What a person sees is
 bounded by what they already read:
 
-* **Sessions** only through legs 1 to 6 (`access.readable_sessions(brain=False)`), as the preview: a link or a run's
-  read of a session they cannot read is a count, never its id or title.
+* **Sessions** only through legs 1 to 6 (`access.readable_sessions(brain=False)`): a link or a run's read of a
+  session they cannot read is a count, never its id or title.
 * **Projects** only ones they may read (`project_read_q`), in their own workspaces.
 * **Workspace-wide counts** (sources, removals, cascade work) only where they hold `logs.read` (the health
   dashboard's gate); elsewhere the same counts over their own sources and their own removals.
 * **Consent** as counts per workspace and class; nobody's name, and a count below `SMALL` is hidden (None, "<3")
   so a small workspace's few are not named by elimination. The viewer's own classes are theirs.
-* **Learners** are what `/api/brain/capabilities/` already lists, with who answers for each (`registry.accountable`).
+* **Learners** are what `/api/brain/capabilities/` already lists, with who answers for each (`registry.accountable`);
+  who operates and answers for one only inside its operator's organisation (`registry.shown_to`).
 * **Runs** of a feature about a project they read or about themselves; every run to a canopy admin.
 
 `tests/test_brain_page.py` holds the routes to no write at all."""
@@ -31,6 +32,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import readers, registry
+from .api_manage import flags_out, learner_refusal, may_manage, reads_out, targets_out
 from .eligibility import covers
 from .models import (
     CLASSES,
@@ -74,7 +76,7 @@ def _readable_projects(user, slugs):
 
 
 def _readable_sessions(user, slugs):
-    """Legs 1 to 6, as the preview: never the brain's own project leg."""
+    """Legs 1 to 6: never the brain's own project leg."""
     return access.readable_sessions(user, workspace_slugs=slugs, brain=False)
 
 
@@ -149,12 +151,12 @@ def link_groups(user, slugs, admin: set[str]) -> list[dict]:
 def learners(user=None, pin: str = "", targets: list[dict] = ()) -> list[dict]:
     """Every learner, whether it can be aimed and run at all (`runnable`), how many of `targets` (the page's) are its,
     and whether `user` may configure it at `pin` (`api_manage.learner_refusal`)."""
-    from .api_manage import learner_refusal  # noqa: PLC0415 — api_manage reads this module's neighbours
-
-    caps = BrainCapability.objects.select_related("operator", "registered_by").order_by("slug")
+    caps = list(BrainCapability.objects.select_related("operator", "registered_by").order_by("slug"))
+    shown = registry.shown_to(user, caps) if user is not None else set()
     return [{"slug": c.slug, "name": c.name, "purpose_class": c.purpose_class, "enabled": c.enabled, "scope": c.scope,
-             "operator": c.operator.slug if c.operator_id else "", "entry": c.entry,
-             "accountable": _name(registry.accountable(c)),
+             "operator": c.operator.slug if c.operator_id and c.pk in shown else "",
+             "entry": c.entry if c.pk in shown else "",
+             "accountable": _name(registry.accountable(c)) if c.pk in shown else "",
              "runnable": c.purpose_class in (PROJECT, SYSTEM) and c.slug != readers.PROJECT_READERS,
              "targets": sum(1 for t in targets if t["learner"] == c.slug),
              "configurable": bool(pin and user is not None and not learner_refusal(user, pin, c))} for c in caps]
@@ -211,8 +213,6 @@ def cascade_counts(user, slugs, admin: set[str]) -> list[dict]:
 
 
 def summary(user, slugs, pin: str = "") -> dict:
-    from .api_manage import may_manage, reads_out, targets_out  # noqa: PLC0415 — api_manage reads this module's neighbours
-
     slugs = set(slugs)
     admin = _admin_slugs(user, slugs)
     aimed = [t for t in targets_out(user, pin) if t["workspace"] in slugs] if pin else []
@@ -221,6 +221,7 @@ def summary(user, slugs, pin: str = "") -> dict:
             "canopy_admin": bool(getattr(user, "is_superuser", False)),
             "consent": consent_counts(user, slugs, admin), "sources": source_counts(user, slugs, admin),
             "links": link_groups(user, slugs, admin), "learners": learners(user, pin, aimed), "targets": aimed,
+            "flags": flags_out(user, pin, slugs) if pin else [],
             "runs": run_counts(user, slugs, admin),
             "cascade": cascade_counts(user, slugs, admin)}
 
@@ -251,6 +252,16 @@ def link_page(user, slugs, *, before: int = 0, limit: int = 50) -> dict:
     return {"links": out, "next_before": rows[-1].pk if rows else 0, "done": len(page) <= limit}
 
 
+def context_shown(run: BrainRun) -> dict | None:
+    """The context document a run was started with (`context.document`), as the page shows it: the ids of the
+    sessions due left out (their count stays), since the viewer may not read them, and the open and dismissed findings
+    it was told of (their counts stay), since who sees a run is not who sees its findings. None for a run from before
+    it was kept."""
+    if not run.context:
+        return None
+    return {**run.context, "source_ids_due": [], "triage": [], "open_findings": [], "dismissed_findings": []}
+
+
 def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
     """Runs, newest first, with what each read: the sessions the viewer reads by id and title, the rest a count."""
     limit = _limit(limit)
@@ -261,9 +272,12 @@ def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
     page = list(qs[:limit + 1])
     rows = page[:limit]
     reads: dict[int, list] = {}
-    for run_id, session_id in (BrainRunRead.objects.filter(run__in=[r.pk for r in rows])
-                               .values_list("run_id", "source__session_id")):
+    verdicts: dict[tuple, tuple] = {}
+    for run_id, session_id, score, why in (BrainRunRead.objects.filter(run__in=[r.pk for r in rows])
+                                           .values_list("run_id", "source__session_id", "triage_score",
+                                                        "triage_reason")):
         reads.setdefault(run_id, []).append(session_id)
+        verdicts[(run_id, session_id)] = (score, why)
     every = {s for ids in reads.values() for s in ids if s}
     seen = {s.pk: s for s in _readable_sessions(user, slugs).filter(pk__in=every).only("pk", "title", "workspace_id")}
     projects = _projects(user, slugs, {r.subject for r in rows if r.subject_type == "project"})
@@ -277,6 +291,8 @@ def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
         out.append({"id": r.pk, "learner": r.capability.slug, "purpose": r.purpose, "subject_type": r.subject_type,
                     "subject": subject, "scope": r.scope, "state": r.state, "created_at": r.created_at, "finished_at": r.finished_at,
                     "reads": len(got), "sessions": [{"session_id": s.pk, "workspace": s.workspace_id,
-                                                     "title": redact.redact_text(s.title or "")[0]} for s in shown],
-                    "hidden": len(got) - len(shown)})
+                                                     "title": redact.redact_text(s.title or "")[0],
+                                                     "triage_score": verdicts[(r.pk, s.pk)][0],
+                                                     "triage_reason": verdicts[(r.pk, s.pk)][1]} for s in shown],
+                    "hidden": len(got) - len(shown), "context": context_shown(r)})
     return {"runs": out, "next_before": rows[-1].pk if rows else 0, "done": len(page) <= limit}

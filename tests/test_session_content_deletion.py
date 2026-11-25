@@ -750,6 +750,7 @@ WORDS = {  # holds what was said: emptied (or dropped) by `content_deletion`
     "harness.Turn", "harness.TurnEvent", "harness.TurnTranscript", "harness.FailureInvestigation",
     "admission.AdmissionNotice",
     "slack.SlackMenuPost", "slack.SlackChoicePost", "slack.SlackTurnPost",
+    "tokens.HostReplyDelivery",  # an undelivered reply's text (host_grants/reply_relay.forget_session)
 }
 IDS_ONLY = {  # ids, switches and timestamps; nothing anyone said
     "canopy_sessions.SessionParticipant", "canopy_sessions.JoinRequest", "canopy_sessions.SessionReviewAsk",
@@ -763,6 +764,7 @@ IDS_ONLY = {  # ids, switches and timestamps; nothing anyone said
 OWN_RECORD = {  # a thing someone made and has its own delete; it only says which session it came from
     "walkthroughs.Walkthrough", "reviews.ReviewRequest", "storyboards.Storyboard",  # published artifacts
     "agents.AgentTask", "agent_tasks.AgentTask", "huddles.CheckinRun", "harness.RunnerDrill",
+    "agents.AgentDefinitionRevision",  # a stored agent's definition; names the turn an agent's draft came from
     "contacts.PersonFact", "contacts.PersonAuditEvent", "contacts.PersonSearch",  # the person's memory page
 }
 

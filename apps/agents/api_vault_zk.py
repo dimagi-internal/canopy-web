@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from django.http import HttpRequest
 from ninja import Router
+from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.errors import (
@@ -15,6 +16,7 @@ from apps.api.errors import (
     ProblemError,
 )
 from apps.api.route_gates import gate
+from apps.passkeys import stepup
 
 from . import services
 from .credentials import (
@@ -24,12 +26,14 @@ from .credentials import (
 )
 from .gates import (
     agent_for_admin,
+    agent_for_read,
 )
 from .route_refusals import zk_problem
 from .schemas import (
     VaultKeeperPinsIn,
     VaultKeeperPinsOut,
     ZkEnableIn,
+    ZkMyWrapsOut,
     ZkRotateIn,
     ZkStateOut,
     ZkValuesIn,
@@ -131,6 +135,28 @@ def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> Z
     except zk.ZkError as exc:
         raise zk_problem(exc) from exc
     return _zk_state(agent)
+
+
+@router.post("/{slug}/vault/zk/wraps/mine", response=ZkMyWrapsOut,
+             summary="Give your own approved machine the vault key, from your own copy")
+# self: a member of the agent's vault, for their OWN machines only; browser: + step-up.
+@gate("self", setting=True, step_up=True)
+def add_my_device_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> ZkMyWrapsOut:
+    """`{kv, wraps: [{kind: device, target, wrap}]}`: device wraps, each to a machine of
+    yours this agent waits on, made in your browser from your own copy of the vault key.
+    You must hold that copy (409 `zk_no_copy`); a machine that is not yours is 403
+    `zk_not_your_machine`, and one that already holds a copy is 409 `zk_not_pending`."""
+
+    agent = agent_for_read(request, slug)
+    if vault_members.role_of(vault_members.vault_for_agent(agent), request.user) is None:
+        raise HttpError(403, "this action requires a member of this agent's vault")
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        n = zk.add_own_device_wraps(agent, kv=payload.kv, wraps=payload.wraps, user=request.user)
+    except zk.ZkError as exc:
+        raise zk_problem(exc) from exc
+    return ZkMyWrapsOut(granted=n)
 
 
 @router.put("/{slug}/vault/zk/pins", response=VaultKeeperPinsOut,

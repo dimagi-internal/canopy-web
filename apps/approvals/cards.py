@@ -6,7 +6,7 @@ params; the requester's own words (`reason`, `evidence`) are kept apart and labe
 """
 from __future__ import annotations
 
-from apps.workspaces.links import scoped_path
+from apps.workspaces.links import scoped_path, scoped_url
 
 from . import kinds
 from .authority import may_approve
@@ -18,6 +18,15 @@ _VIA = {"slack": "Slack", "web": "the web", "email": "email", "push": "a notific
 
 def url(req: ApprovalRequest) -> str:
     return scoped_path(req.workspace_id, f"/approvals/{req.pk}")
+
+
+def page_url(req: ApprovalRequest) -> str:
+    """`url`, absolute: what a Slack message, an email or an agent's reply links to."""
+    return scoped_url(req.workspace_id, f"/approvals/{req.pk}")
+
+
+#: The words every channel uses for the one way to approve a kind with `Kind.step_up`.
+STEP_UP_APPROVE = "Open in canopy to approve (passkey)"
 
 
 def who(user) -> str:
@@ -46,12 +55,15 @@ def outcome_line(req: ApprovalRequest) -> str:
 
 
 def build(req: ApprovalRequest, *, viewer=None) -> dict:
-    """The card as a dict matching `ApprovalCardOut`. `viewer` fills `can_decide`."""
+    """The card as a dict matching `ApprovalCardOut`. `viewer` fills `can_decide`.
+
+    `step_up` says approving needs a passkey in a browser: every channel then offers a link to the
+    request's page (`STEP_UP_APPROVE`) where it would offer Approve, and keeps Decline, which needs none."""
     try:
         kind = kinds.get(req.kind)
-        label, needs = kind.label, kind.needs
+        label, needs, step_up = kind.label, kind.needs, kind.step_up
     except kinds.KindError:
-        label, needs = req.kind, ""
+        label, needs, step_up = req.kind, "", False
     sent = {}
     for d in req.deliveries.select_related("user"):
         sent.setdefault(who(d.user), set()).add(d.channel)
@@ -62,7 +74,8 @@ def build(req: ApprovalRequest, *, viewer=None) -> dict:
     return {
         "id": req.pk, "key": req.key, "kind": req.kind, "kind_label": label, "needs": needs,
         "title": req.title, "summary": req.summary, "status": req.status, "workspace": req.workspace_id,
-        "url": url(req), "requested_by": requested_by(req), "reason": req.reason, "evidence": req.evidence,
+        "url": url(req), "page_url": page_url(req), "step_up": step_up,
+        "requested_by": requested_by(req), "reason": req.reason, "evidence": req.evidence,
         "plan": req.plan, "if_declined": req.if_declined, "source_url": req.source_url,
         "created_at": req.created_at, "expires_at": req.expires_at,
         "sent_to": [f"{name} ({', '.join(sorted(ch))})" for name, ch in sorted(sent.items())],

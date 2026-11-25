@@ -155,6 +155,27 @@ def declare_credential_names(agent, names) -> list[str]:
     return added
 
 
+def undeclare_credential_name(agent, name: str) -> bool:
+    """Take `name` out of the agent's declared refs (`runtime_secrets`, `runtime_sources`);
+    True when it was declared. The other half of `declare_credential_names`: a declared
+    ref with no value is a row on the vault table its admins could otherwise never remove."""
+    name = str(name).strip()
+    with transaction.atomic():
+        locked = Agent.objects.select_for_update().get(pk=agent.pk)
+        secrets = [str(n) for n in (locked.runtime_secrets or [])]
+        sources = dict(locked.runtime_sources or {})
+        kept = [n for n in secrets if n.strip() != name]
+        had_source = sources.pop(name, None) is not None
+        dropped = len(kept) != len(secrets) or had_source
+        if dropped:
+            locked.runtime_secrets = kept
+            locked.runtime_sources = sources
+            locked.save(update_fields=["runtime_secrets", "runtime_sources"])
+        agent.runtime_secrets = locked.runtime_secrets
+        agent.runtime_sources = locked.runtime_sources
+    return dropped
+
+
 def record_credential_reads(agent, names, *, user=None, runner=None, via="", turn_id="",
                             license=None) -> None:
     """One `AgentCredentialRead` row per ref handed out."""

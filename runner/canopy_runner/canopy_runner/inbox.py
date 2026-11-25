@@ -185,6 +185,11 @@ class ThreadFacts(NamedTuple):
     #: only when this same message's From is aligned (canopy decides that too).
     to_header: str = ""
     cc_header: str = ""
+    #: For a Google Docs comment that TAGS the agent (the newest message woke it through
+    #: `wanted/doc-interaction`): the Doc it is on, read off Google's own links
+    #: (`inbox_rules.doc_comment_of`). canopy-web binds the turn to that one Doc only when
+    #: this same message is DMARC-aligned for docs.google.com. None otherwise.
+    doc_comment: dict | None = None
 
 
 def _decoded_body(msg: dict) -> str:
@@ -249,14 +254,30 @@ def thread_facts(mailbox: str, gog_client: str, thread_id: str, *,
             auth.append(h.get("value") or "")
         first.setdefault(name, h.get("value") or "")
     m = _OK_PRIOR_STATE.search(_decoded_body(newest))
+    verdict = thread_verdict(msgs, mailbox) if sender is not None else None
     return ThreadFacts(newest_from=sender.lower() if sender is not None else None,
                        recovers_from_alarm=(m.group(1).upper() == "ALARM") if m else None,
                        newest_from_header=sender,
                        auth_results=tuple(auth),
                        automated=is_automated(first) if sender is not None else None,
                        message_id=newest.get("id") or None,
-                       verdict=thread_verdict(msgs, mailbox) if sender is not None else None,
-                       to_header=first.get("to", ""), cc_header=first.get("cc", ""))
+                       verdict=verdict,
+                       to_header=first.get("to", ""), cc_header=first.get("cc", ""),
+                       doc_comment=_doc_comment(newest, mailbox, verdict))
+
+
+def _doc_comment(newest: dict, mailbox: str, verdict) -> dict | None:
+    """The Doc of a tagged comment, only when the NEWEST message is the one that woke the
+    thread through the Docs row: an earlier message's verdict says nothing about this one."""
+    if verdict is None or verdict.row != "wanted/doc-interaction":
+        return None
+    parsed = inbox_rules.message_from_gmail(newest, mailbox)
+    if inbox_rules.classify(parsed).row != "wanted/doc-interaction":
+        return None
+    try:
+        return inbox_rules.doc_comment_of(parsed)
+    except Exception:  # noqa: BLE001 — a turn without ids is the read-mode turn it always was
+        return None
 
 
 def thread_verdict(msgs: list[dict], mailbox: str) -> "inbox_rules.Verdict":
@@ -605,6 +626,8 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             origin_ref["to"] = facts.to_header
         if facts.cc_header:
             origin_ref["cc"] = facts.cc_header
+        if facts.doc_comment:
+            origin_ref["doc_comment"] = facts.doc_comment
         if facts.auth_results:
             origin_ref["headers"] = [{"name": "Authentication-Results", "value": v}
                                      for v in facts.auth_results]

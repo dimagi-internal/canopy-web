@@ -1,5 +1,8 @@
 """A request as a Web Push: the title says what is asked, the body says who asks, the tap opens the
-request with everything on it."""
+request with everything on it. A push carries no Approve button, so a kind whose approval needs a passkey
+(`step_up` on the card) is decided where every push lands: on the request's page, which asks for it.
+`kind="decision"` keeps the notification up until it is handled, with a "Review & decide" button that
+opens that page, so it does not read like an alert (`frontend/public/sw-push.js`)."""
 from __future__ import annotations
 
 from apps.push.services import send_to_user
@@ -15,6 +18,7 @@ def body(card: dict) -> str:
 
 
 def send(req, user, card: dict) -> dict | None:
-    sent = send_to_user(user, title=f"Approve? {card['title']}"[:100], body=body(card), url=card["url"],
-                        urgency="high")
+    ask = "Approve with your passkey?" if card["step_up"] else "Approve?"
+    sent = send_to_user(user, title=f"{ask} {card['title']}"[:100], body=body(card), url=card["url"],
+                        urgency="high", kind="decision")
     return {} if sent else None

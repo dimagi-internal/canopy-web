@@ -212,6 +212,18 @@ def test_delete_removes_the_slot(fleet):
     assert rows["canopy-pat"]["set"] is False
 
 
+def test_delete_on_a_name_with_no_value_removes_the_name(fleet):
+    """A declared name with nothing stored is still a row; deleting it again takes the
+    declaration, or its admins could never clear it from the table."""
+    _put(fleet["client"], {"canopy-pat": SECRET})
+    assert fleet["client"].delete("/api/agents/ace/credentials/nova-api-key").status_code == 200
+    rows = {r["name"]: r for r in fleet["client"].get("/api/agents/ace/credentials/status").json()}
+    assert "nova-api-key" not in rows
+    assert rows["canopy-pat"]["set"] is True
+    fleet["agent"].refresh_from_db()
+    assert fleet["agent"].runtime_secrets == ["canopy-pat", "gog-token"]
+
+
 # --- resolve: ciphertext only ----------------------------------------------------
 
 def test_resolve_hands_out_ciphertext_never_the_value(fleet, monkeypatch):

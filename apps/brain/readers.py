@@ -3,8 +3,8 @@
 **The project leg.** A session tied to a project by a `core` `SourceLink`, whose source passes
 `eligible_sources` for the built-in `project-readers` feature (every human in it agreed to the
 `project` class, none excluded it, nothing sealed), is readable, read-only, by every PERSON who may read
-that project (`agents.services.projects.project_read_q`). Never an agent's login: an agent reads a
-project's sessions through a brain run, in the confined `brain` profile, not through the session ACL. `canopy_sessions.access` asks `project_q`
+that project (`agents.services.projects.project_read_q`), and only a project of the session's own workspace. Never
+an agent's login: an agent reads a project's sessions through a brain run (`brain_read`), not through the session ACL. `canopy_sessions.access` asks `project_q`
 and `audience` asks `project_reader_ids`; both answer only for sessions of a workspace with "Learning reads" on
 (`learning_reads`, through `eligible_sources`).
 Stored rows only, never `may_pull`, redacted on the way out (`canopy_sessions.transcript_read.readable_window`).
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from django.db.models import CharField, Q
+from django.db.models import CharField, Exists, OuterRef, Q
 from django.db.models.functions import Cast
 
 from apps.agents.models import Agent, AgentProject
@@ -28,6 +28,7 @@ from apps.workspaces.models import Workspace
 from . import learning_reads
 from .eligibility import eligible_sources
 from .models import BrainSource, SourceLink
+from .participants import is_agent_login
 
 logger = logging.getLogger(__name__)
 
@@ -42,19 +43,16 @@ def _core_links():
     return SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, tier=SourceLink.CORE)
 
 
-def is_agent_login(user) -> bool:
-    return Agent.objects.filter(user_id=getattr(user, "pk", None)).exists()
-
-
 def project_q(user) -> Q:
     """The sessions `user` reads through the project leg, as a `Q` on `Session`. Empty while no workspace has
     "Learning reads" on (a session's own workspace must: `eligible_sources`), for anyone signed out, for an agent's login, and for a user who reads no project."""
     if not learning_reads.any_on() or not getattr(user, "is_authenticated", False) or is_agent_login(user):
         return Q(pk__in=[])
+    # A project of the session's OWN workspace only: a link left from before a move never opens a read elsewhere.
     readable = (AgentProject.objects.filter(project_read_q(user)).annotate(key=Cast("pk", CharField()))
-                .values("key"))
+                .filter(key=OuterRef("subject"), workspace_id=OuterRef("source__session__workspace_id")))
     eligible = eligible_sources(PROJECT_READERS, READ).values("session_id")
-    return Q(pk__in=_core_links().filter(subject__in=readable, source__session_id__in=eligible)
+    return Q(pk__in=_core_links().filter(Exists(readable), source__session_id__in=eligible)
              .values("source__session_id"))
 
 
@@ -72,7 +70,7 @@ def project_reader_ids(session) -> set[int]:
     out: set[int] = set()
     for link in _core_links().filter(source=source):
         project = AgentProject.objects.filter(pk=link.subject).select_related("agent").first()
-        if project is None:
+        if project is None or project.workspace_id != session.workspace_id:
             continue
         if not project.is_personal:
             out |= members

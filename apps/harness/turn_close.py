@@ -22,6 +22,7 @@ from django.utils import timezone
 
 from .ledger import append_events
 from .models import RunnerDrill, Turn
+from .signals import turn_closed
 
 
 def close_turn(
@@ -87,6 +88,7 @@ def close_turn(
     from .turn_agent_tokens import revoke_for_turn
 
     revoke_for_turn(turn.pk)
+    turn_closed.send(sender=Turn, turn=turn)   # work that ends with its turn (a brain run)
     if ledger:
         payload = {"status": status}
         if note is not None:

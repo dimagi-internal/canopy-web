@@ -139,7 +139,9 @@ class DeviceProofRequiredOut(StrictModel):
     #: `not_routed`: the proof is an approved box's, but that box does not run
     #: this agent (no alert; fix the routing or stop asking). `no_valid_proof`:
     #: no proof, or one no active key matches (the owner is alerted).
-    reason: Literal["not_routed", "no_valid_proof"] = "no_valid_proof"
+    #: `key_pending`: the caller's own machine, enrolled and waiting for the caller
+    #: to approve its key (no alert; they were emailed the approve link).
+    reason: Literal["not_routed", "key_pending", "no_valid_proof"] = "no_valid_proof"
 
 
 class AgentCredentialAlertOut(StrictModel):
@@ -393,6 +395,9 @@ class AgentCredentialsResolveOut(StrictModel):
     #: on their own machine — the delegated credentials that are someone's own and so not
     #: theirs: name, provider and whose. Never a value. Use your own account for these.
     delegated_withheld: list[DelegatedWithheldOut] = Field(default_factory=list)
+    #: Where the definition comes from (`{source, revision, root_sha256}`): a stored agent
+    #: is materialized from canopy, not cloned (docs/architecture/stored-agents.md).
+    definition: dict[str, Any] = Field(default_factory=dict)
 
 
 class ZkWrapMissingOut(StrictModel):

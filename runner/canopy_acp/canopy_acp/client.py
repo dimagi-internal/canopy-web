@@ -384,6 +384,10 @@ class AcpConnection:
 # installs both at bootstrap.
 ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp"
 ADAPTER_BIN = "claude-agent-acp"
+#: The one adapter version every runner runs: the signed bundle installs it
+#: (`runner/packaging/versions.json`, which the build checks against this), and
+#: `install_adapter` installs it and replaces any other version under its prefix.
+ADAPTER_VERSION = "0.109.1"
 
 
 #: Install prefixes searched after PATH: the cloud box's (`npm i -g --prefix
@@ -434,24 +438,42 @@ def find_adapter(explicit: str | None = None, prefixes=None) -> list[str] | None
     return None
 
 
-def install_adapter(prefix: pathlib.Path) -> str:
-    """Install the adapter under `prefix` unless one is already found there or on
-    PATH. `npm install -g --prefix`: a bare `-g` is EACCES for a service user.
+def installed_version(prefix: pathlib.Path) -> str | None:
+    """The adapter version installed under `prefix`, or None when there is none."""
+    for entry in _entry_points(pathlib.Path(prefix)):
+        try:
+            return str(json.loads((entry.parent.parent / "package.json").read_text())["version"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
 
-    Returns "present", "installed", "no-node" (nothing attempted) or
-    "failed: <why>" — the caller words its own log line."""
-    if shutil.which(ADAPTER_BIN) or find_adapter(prefixes=[prefix]):
+
+def install_adapter(prefix: pathlib.Path) -> str:
+    """Put ADAPTER_VERSION under `prefix`. `npm install -g --prefix`: a bare `-g` is
+    EACCES for a service user.
+
+    An install of another version under `prefix` is replaced, so a runner that
+    installed the adapter once keeps up with the pin. An adapter on PATH that is
+    not under `prefix` is someone else's to manage, and is left alone.
+
+    Returns "present", "installed", "upgraded from <version>", "no-node" (nothing
+    attempted) or "failed: <why>" — the caller words its own log line."""
+    have = installed_version(prefix)
+    if have == ADAPTER_VERSION:
+        return "present"
+    if have is None and shutil.which(ADAPTER_BIN):
         return "present"
     npm = shutil.which("npm")
     if not npm or not shutil.which("node"):
         return "no-node"
     try:
-        subprocess.run([npm, "install", "-g", "--prefix", str(prefix), ADAPTER_PACKAGE],
+        subprocess.run([npm, "install", "-g", "--prefix", str(prefix),
+                        f"{ADAPTER_PACKAGE}@{ADAPTER_VERSION}"],
                        check=True, timeout=600,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as exc:  # noqa: BLE001
         return f"failed: {exc}"
-    return "installed"
+    return f"upgraded from {have}" if have else "installed"
 
 
 class AcpAgent:
@@ -464,8 +486,12 @@ class AcpAgent:
 
     def __init__(self, *, cwd, argv: list[str] | None = None, env: dict | None = None,
                  on_update=None, permission_policy=None, confine_fs: bool = True,
-                 ask_human=None, spawn=None):
+                 ask_human=None, spawn=None, session_meta: dict | None = None):
         self.cwd = pathlib.Path(cwd)
+        # `_meta` for `session/new` and `session/load` (claude-agent-acp reads
+        # `claudeCode.options`, Agent SDK options for the session): how a caller starts
+        # a session with less than the adapter's defaults load. None sends none.
+        self._session_meta = dict(session_meta) if session_meta else None
         # `spawn(argv, cwd=, env=)` -> a Popen-like with text stdin/stdout/stderr, for a
         # caller whose adapter must outlive it (the cloud runner's turn relay). None
         # spawns the adapter as this process's own child.
@@ -541,6 +567,7 @@ class AcpAgent:
         agent._confine_fs = confine_fs
         agent.session_id = session_id
         agent._stderr_tail = collections.deque(maxlen=STDERR_TAIL_LINES)
+        agent._session_meta = None
         if getattr(proc, "stderr", None) is not None:
             threading.Thread(target=agent._drain_stderr, daemon=True, name="acp-stderr").start()
         agent.conn = AcpConnection(
@@ -591,9 +618,14 @@ class AcpAgent:
         tail = " | ".join(list(self._stderr_tail)[-5:])
         return f"adapter {how}" + (f"; last stderr: {tail}" if tail else "; no stderr")
 
+    def _with_meta(self, params: dict) -> dict:
+        meta = getattr(self, "_session_meta", None)
+        return {**params, "_meta": meta} if meta else params
+
     def new_session(self, timeout: float = 120) -> str:
         result = self.conn.request(
-            "session/new", {"cwd": str(self.cwd), "mcpServers": []}).result(timeout=timeout)
+            "session/new", self._with_meta({"cwd": str(self.cwd), "mcpServers": []})
+        ).result(timeout=timeout)
         self.session_id = result.get("sessionId") or ""
         return self.session_id
 
@@ -605,7 +637,7 @@ class AcpAgent:
         """
         result = self.conn.request(
             "session/load",
-            {"sessionId": session_id, "cwd": str(self.cwd), "mcpServers": []},
+            self._with_meta({"sessionId": session_id, "cwd": str(self.cwd), "mcpServers": []}),
         ).result(timeout=timeout)
         self.session_id = session_id
         return result

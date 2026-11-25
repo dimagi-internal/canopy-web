@@ -3,19 +3,30 @@
 An output is about the run's own subject (never one it names), of a kind its feature declares, and cites the
 sources it came from. Every cited source must be one THIS run read (`BrainRunRead`) and must still be eligible
 now: a source cited but never read, or one whose people withdrew since, is refused whole. The lineage
-(`OutputLineage`) is written from the reads, so a later removal can find every output a source fed. The words
-are scrubbed like every learning read, keys as well as values. Emitting the same thing twice is one output."""
+(`OutputLineage`) is written from the reads, every source the run had read by then and not only the cited ones
+(`write_lineage`): all of it was in the run's context, so a later removal of any of them reaches the output.
+An output that names a `key` already held by an open finding of the same learner, subject and workspace is a repeat
+and folds into it (`findings`); so is one that names that finding outright (`same_as`, its id), which must be an open
+finding of the run's own learner, subject and workspace or the emit is refused. A repeat of one dismissed within its
+target's cooldown folds in too and stays dismissed; a repeat of a `done` one is a new output naming it (`recurs_of`).
+A new output spends the run's budget (`budget.run_left`); at the cap it is refused. The words
+are scrubbed like every learning read, keys as well as values. Emitting the same thing twice is one output.
+
+Every piece of evidence (`body.evidence`, `{source, index, quote}`) must be a quote of a row this run read
+(`grounding.check`): one that is not is refused whole, naming the item and why, so the run fixes it and emits again.
+The sources evidence names are cited with the ones in `source_ids`."""
 from __future__ import annotations
 
 import hashlib
 import json
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.agents.models import AgentProject
 from apps.common import redact
 
-from . import associate, learning_reads
+from . import associate, budget, findings, grounding, learning_reads
 from .eligibility import eligible
 from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
 
@@ -31,7 +42,10 @@ LINK = "link"
 LINK_TIERS = ("core", "adjacent", "candidate", "rejected")
 
 
-def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = ""):
+def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = "", key: str = "",
+         same_as: int | None = None):
+    """Write one output, or fold a repeat into the open one it matches (`findings`). Returns the output; `folded` on
+    it says which happened."""
     cap = run.capability
     if learning_reads.run_refusal(cap, run.subject, run.scope) or not cap.enabled or run.state != BrainRun.OPEN:
         raise EmitRefusedError("this run may not emit")
@@ -41,18 +55,25 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
         return _emit_link(run, body=body, source_ids=source_ids)
     if not isinstance(body, dict) or len(json.dumps(body, default=str)) > MAX_BODY_CHARS:
         raise EmitRefusedError(f"body must be an object of at most {MAX_BODY_CHARS} characters")
-    ids = sorted({int(i) for i in source_ids})
+    ids = {int(i) for i in source_ids}
+    if "evidence" in body:
+        try:
+            evidence, named = grounding.check(run, body["evidence"])
+        except grounding.GroundingError as e:
+            raise EmitRefusedError(f"{e}. Nothing was written: fix that piece of evidence and emit again") from e
+        body, ids = {**body, "evidence": evidence}, ids | named
+    ids = sorted(ids)
     if not ids or len(ids) > MAX_SOURCES:
         raise EmitRefusedError(f"cite between 1 and {MAX_SOURCES} sources")
     read = set(BrainRunRead.objects.filter(run=run, source_id__in=ids).values_list("source_id", flat=True))
     if set(ids) - read:
         raise EmitRefusedError(f"cites a source this run did not read: {sorted(set(ids) - read)}")
     sources = list(BrainSource.objects.filter(pk__in=ids).select_related("session"))
-    subject = int(run.subject) if cap.subject_type == "person" else None
+    subject = run.subject_user_id
     for s in sources:
         if not eligible(s, cap, run.purpose, subject):
             raise EmitRefusedError(f"source {s.pk} is no longer open to this feature")
-    workspaces = {s.workspace_id for s in sources}
+    workspaces = {s.session.workspace_id if s.session is not None else s.workspace_id for s in sources}
     if run.scope:
         # A run started for a workspace reads only its subtree and what it learns is that workspace's: its owners
         # and their ancestors' see it (`outputs.visible_to`).
@@ -61,21 +82,53 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
         raise EmitRefusedError("an output cites sources of one workspace; emit one per workspace")
     scrubbed = _scrub(body)
     clean_title = redact.redact_text(title or "")[0][:300]
+    clean_key = redact.redact_text((key or "").strip())[0][:200]
+    workspace = workspaces.pop()
     fingerprint = hashlib.sha256(json.dumps([kind, clean_title, scrubbed, ids], sort_keys=True,
                                             default=str).encode()).hexdigest()
     with transaction.atomic():
         existing = BrainOutput.objects.filter(run=run, fingerprint=fingerprint).first()
         if existing is not None:
+            existing.folded = False
             return existing
+        if same_as is not None:
+            repeat = findings.match_id(run, int(same_as), kind=kind, workspace=workspace)
+            if repeat is None:
+                raise EmitRefusedError(f"output {same_as} is not an open (or recently dismissed) {kind} of this "
+                                       "learner here: emit it as new (or with its key) instead")
+        else:
+            repeat = findings.match(run, kind=kind, key=clean_key, workspace=workspace)
+        if repeat is not None:                   # a repeat costs no output of the budget
+            out = findings.fold(repeat, run, title=clean_title, body=scrubbed, cited=ids)
+            out.folded = True
+            return out
+        left = budget.run_left(run)["outputs"]
+        if left <= 0:
+            raise EmitRefusedError("this run's budget of outputs is spent (its target's per run or per day): "
+                                   "emit nothing more and end the run")
+        now = timezone.now()
         out = BrainOutput.objects.create(
-            capability=cap, kind=kind, workspace_id=workspaces.pop(), subject_type=run.subject_type,
+            capability=cap, kind=kind, workspace_id=workspace, subject_type=run.subject_type,
             subject=run.subject, title=clean_title, body=scrubbed, turn_id=turn_id, run=run,
-            fingerprint=fingerprint)
-        for s in sources:
-            people = sorted(s.participants.filter(user__isnull=False).values_list("user_id", flat=True))
-            OutputLineage.objects.create(output_kind="brain.output", output_id=str(out.pk), source=s,
-                                         participant_scope=people)
+            fingerprint=fingerprint, key=clean_key, last_seen_at=now, sightings=findings.sighted([], run, now),
+            recurs_of=findings.came_back_of(run, kind=kind, key=clean_key, workspace=workspace))
+        write_lineage(run, out, cited=ids)
+    out.folded = False
     return out
+
+
+def write_lineage(run: BrainRun, out: BrainOutput, *, cited) -> None:
+    """`out`'s lineage: every source `run` has read so far, `cited` marking the ones it names. Each row carries the
+    people whose words were in the source then (its consents). Idempotent."""
+    cited = set(cited)
+    for read in BrainRunRead.objects.filter(run=run).select_related("source"):
+        s = read.source
+        people = sorted(s.participants.filter(user__isnull=False).values_list("user_id", flat=True))
+        row, made = OutputLineage.objects.get_or_create(
+            output_kind="brain.output", output_id=str(out.pk), source=s,
+            defaults={"participant_scope": people, "cited": s.pk in cited})
+        if not made and s.pk in cited and not row.cited:
+            OutputLineage.objects.filter(pk=row.pk).update(cited=True)
 
 
 def _emit_link(run: BrainRun, *, body: dict, source_ids):
@@ -101,7 +154,7 @@ def _emit_link(run: BrainRun, *, body: dict, source_ids):
     source = BrainSource.objects.select_related("session").get(pk=ids[0])
     if not eligible(source, run.capability, run.purpose):
         raise EmitRefusedError(f"source {source.pk} is no longer open to this feature")
-    project = AgentProject.objects.filter(pk=run.subject, workspace_id=source.workspace_id).first()
+    project = AgentProject.objects.filter(pk=run.subject, workspace_id=source.session.workspace_id).first()
     if project is None or project.is_personal:
         raise EmitRefusedError("a link rules on a workspace project of the source's own workspace")
     evidence = body.get("evidence") or []

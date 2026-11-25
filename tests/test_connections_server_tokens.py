@@ -158,6 +158,17 @@ def test_cache_misses_when_digest_changes(w):
     assert server_tokens.access_token(w.conn)[0] == "00D!other"
 
 
+def test_a_token_forgotten_on_another_process_is_a_miss_here(w):
+    """`forget` on another task marks the stored token spent (its row's expiry); this process's
+    cache, still holding the same digest, must not hand the dead token out."""
+    machine_writes_access(w, w.conn)
+    server_tokens.access_token(w.conn)
+    row = server_tokens._row(w.conn.pk)
+    assert server_tokens._cached(row) is not None
+    Connection.objects.filter(pk=w.conn.pk).update(access_expires_at=timezone.now())  # what `forget` writes
+    assert server_tokens._cached(server_tokens._row(w.conn.pk)) is None
+
+
 def test_cache_lasts_five_minutes(w):
     machine_writes_access(w, w.conn)
     server_tokens.access_token(w.conn)

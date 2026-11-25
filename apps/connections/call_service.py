@@ -71,6 +71,14 @@ OPERATION_SECONDS = 120
 #: ...and this long after its opening, however it is written to.
 OPERATION_HARD_LIMIT_SECONDS = 600
 OPERATION_MAX_WRITES = 500
+#: A screen whose only writes are Drive label changes on the viewer's own Google account gets a click as
+#: long as the hour of Google access the viewer granted for their own screens (`temporary=1&for_screens=1`):
+#: one click can clear a whole folder. Label changes are all such a screen can make, and only to files the
+#: viewer may already relabel; the hour still ends it, and nothing renews it.
+DRIVE_LABEL_WRITES = frozenset({("POST", "files/*/modifyLabels")})
+DRIVE_LABEL_OPERATION_SECONDS = 900
+DRIVE_LABEL_OPERATION_HARD_LIMIT_SECONDS = 3600
+DRIVE_LABEL_OPERATION_MAX_WRITES = 20000
 OPERATIONS_PER_MINUTE = 60
 _CHUNK_BYTES = 64 * 1024
 _REDACTED = b"[redacted]"
@@ -85,6 +93,12 @@ def _title(provider: str) -> str:
     return getattr(providers.CLASSES.get(provider), "title", provider)
 
 
+#: The one provider header a screen may ask for: save past the org's duplicate rules ("Create anyway"),
+#: on a single record's create or update only (`_duplicates_header`).
+DUPLICATE_RULE_HEADER = ("Sforce-Duplicate-Rule-Header", "allowSave=true")
+_DUPLICATES_ON = frozenset({("POST", "sobjects/{type}"), ("POST", "sobjects/{type}/{id}"),
+                            ("PATCH", "sobjects/{type}/{id}")})
+
 #: Salesforce's own count of the org's API use (`api-usage=18/15000`), passed to the page as `limits`.
 LIMIT_INFO_HEADER = "Sforce-Limit-Info"
 _LIMIT_INFO = re.compile(r"[A-Za-z0-9_\-=/,; ]{1,200}")
@@ -92,6 +106,30 @@ _LIMIT_INFO = re.compile(r"[A-Za-z0-9_\-=/,; ]{1,200}")
 MAX_RETRY_AFTER = 3600
 #: A provider status that says it is limiting calls or busy: it did not do what was asked.
 _LIMITED_STATUSES = frozenset({429, 503})
+
+
+@dataclass(frozen=True)
+class _Window:
+    """How far one click goes: ends `idle` seconds after its last write, `hard` after the click, at
+    `max_writes` writes."""
+    idle: int
+    hard: int
+    max_writes: int
+
+
+_CLICK = _Window(OPERATION_SECONDS, OPERATION_HARD_LIMIT_SECONDS, OPERATION_MAX_WRITES)
+_DRIVE_LABELS_CLICK = _Window(DRIVE_LABEL_OPERATION_SECONDS, DRIVE_LABEL_OPERATION_HARD_LIMIT_SECONDS,
+                              DRIVE_LABEL_OPERATION_MAX_WRITES)
+
+
+def _window(surface: declarations.Surface) -> _Window:
+    """The long click only when EVERY write the screen declares is a Drive label change on the viewer's
+    own Google account; anything else on the screen keeps the ordinary click."""
+    lines = surface.write_lines()
+    if lines and all(line.get("provider") == "google" and line.get("as") == "viewer"
+                     and (line.get("method"), line.get("path")) in DRIVE_LABEL_WRITES for line in lines):
+        return _DRIVE_LABELS_CLICK
+    return _CLICK
 
 
 @dataclass
@@ -115,6 +153,8 @@ class _Planned:
     query: dict
     body: object
     composite: calls.Composite | None = None
+    #: Headers sent beside the token: only ever `DUPLICATE_RULE_HEADER`, when asked for and allowed.
+    headers: tuple[tuple[str, str], ...] = ()
 
     @property
     def parts(self) -> tuple[calls.Match, ...]:
@@ -140,7 +180,7 @@ def call(request, provider: str, payload) -> dict:
     _check_declared(surface, provider, payload, plan)
     matched, query = plan.matched, plan.query
     try:
-        if provider in calls.TEMPORARY_ONLY:
+        if _on_temporary(user, provider, surface):
             return _call_on_temporary(user, provider, surface, matched, query, payload)
         conn = (_shared_connection(user, provider, surface, payload.agent) if payload.as_ == "shared"
                 else _viewer_connection(user, provider, surface))
@@ -149,7 +189,7 @@ def call(request, provider: str, payload) -> dict:
         sent = _Sent()
         with _in_flight(user.pk):
             try:
-                return _exchange(conn, provider, matched, query, plan.body, sent)
+                return _exchange(conn, provider, matched, query, plan.body, sent, plan.headers)
             finally:
                 if sent.sent:
                     _mark_used(conn)
@@ -159,10 +199,30 @@ def call(request, provider: str, payload) -> dict:
         # Connecting their own account wouldn't bring an agent's back.
         if payload.as_ == "viewer" and (said.code == "not_connected" or getattr(said, "connect_again", False)):
             start = reverse("connections_start", args=[provider, surface.workspace])
-            if provider in calls.TEMPORARY_ONLY:  # an hour's access for this person's screens, nothing stored
+            if provider in calls.TEMPORARY_ONLY and not _server_calls(provider):  # an hour, nothing stored
                 start += "?temporary=1&for_screens=1"
             said.members = {"connect_url": f"{base_url()}{start}"}
         raise said from None
+
+
+def _server_calls(provider: str) -> bool:
+    """Whether canopy-web may call this provider with a person's stored connection (its `server_calls`)."""
+    return bool(getattr(providers.CLASSES.get(provider), "server_calls", False))
+
+
+def _on_temporary(user, provider: str, surface: declarations.Surface) -> bool:
+    """Whether a screen's call runs on the viewer's hour of access for screens (`temporary.for_screens`).
+
+    A `calls.TEMPORARY_ONLY` provider whose `server_calls` is off (Google today): always, never a stored
+    connection. The day its `server_calls` is turned on (one flag on the provider class), the same call
+    runs on the viewer's hour while they have one, and otherwise on their stored connection with
+    "canopy-web can use this" on (`_viewer_connection`, `server_tokens`), as Salesforce's does; the rules,
+    declarations, leases and audit are the same either way, so nothing else changes."""
+    if provider not in calls.TEMPORARY_ONLY:
+        return False
+    if not _server_calls(provider):
+        return True
+    return temporary.for_screens(user, provider, surface.workspace) is not None
 
 
 def _call_on_temporary(user, provider: str, surface: declarations.Surface, matched: calls.Match, query: dict,
@@ -175,6 +235,13 @@ def _call_on_temporary(user, provider: str, surface: declarations.Surface, match
     row = temporary.for_screens(user, provider, surface.workspace)
     if row is None:
         raise services.NotConnected(f"This page needs your {title} for the next hour. Allow it, then try again.")
+    # An hour allowed before the app's admin ticked another permission: the provider would refuse what
+    # needs it, so ask again now rather than spend a write on a call bound to be refused.
+    if providers.for_app(row.app).missing_scopes(tuple(row.scopes.split())):
+        again = services.ConnectionError("scope_added", f"This page now needs more of your {title} than you "
+                                                        "allowed. Allow it again, then try again.")
+        again.connect_again = True
+        raise again
     if matched.rule.kind == "write":
         _spend_write(user, payload.operation_id, surface)
     sent = _Sent()
@@ -205,11 +272,13 @@ def open_operation(request, surface_ref: dict) -> dict:
         raise services.ConnectionError("rate_limited", "Too many clicks in the last minute; wait a moment and try "
                                                        "again.")
     now = timezone.now()
+    window = _window(surface)
     row = ConnectionOperation.objects.create(
         user=request.user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
-        expires_at=now + timedelta(seconds=OPERATION_SECONDS),
-        hard_limit_at=now + timedelta(seconds=OPERATION_HARD_LIMIT_SECONDS))
-    return {"operation_id": row.pk, "expires_at": row.expires_at, "hard_limit_at": row.hard_limit_at, "writes": writes}
+        expires_at=now + timedelta(seconds=window.idle),
+        hard_limit_at=now + timedelta(seconds=window.hard))
+    return {"operation_id": row.pk, "expires_at": row.expires_at, "hard_limit_at": row.hard_limit_at, "writes": writes,
+            "max_writes": window.max_writes, "idle_seconds": window.idle, "hard_limit_seconds": window.hard}
 
 
 @contextmanager
@@ -282,11 +351,12 @@ def _allowed(provider: str, payload) -> _Planned:
         raise services.ConnectionError("not_allowed", f"A screen can only use your own {_title(provider)} account.")
     try:
         matched = calls.match(provider, payload.method, payload.path)
-        query = calls.check_query(payload.query, provider)
+        query = calls.check_query(payload.query, provider, matched.path)
         if payload.body is not None and matched.rule.method in ("GET", "DELETE"):
             raise calls.NotAllowed(f"A {matched.rule.method} call can't carry a body.")
+        headers = _duplicates_header(provider, matched, getattr(payload, "allow_duplicates", False))
         if not calls.is_composite(matched):
-            return _Planned(matched, query, payload.body)
+            return _Planned(matched, query, payload.body, headers=headers)
         composite = calls.expand(provider, matched, query, payload.body)
     except calls.NotSupported as exc:
         raise services.ConnectionError("provider_not_supported", str(exc)) from None
@@ -295,6 +365,18 @@ def _allowed(provider: str, payload) -> _Planned:
     kind = "write" if composite.writes else "read"
     return _Planned(replace(matched, rule=replace(matched.rule, kind=kind)), composite.query, composite.body,
                     composite)
+
+
+def _duplicates_header(provider: str, matched: calls.Match, asked: bool) -> tuple[tuple[str, str], ...]:
+    """`allow_duplicates` as the one header it stands for, or a refusal: only Salesforce, and only one
+    record's create or update (`_DUPLICATES_ON`). The header is canopy's own constant; nothing the page
+    sends becomes a header."""
+    if not asked:
+        return ()
+    if provider != "salesforce" or (matched.rule.method, matched.rule.pattern) not in _DUPLICATES_ON:
+        raise calls.NotAllowed("Saving past duplicate rules works only when creating or updating one Salesforce "
+                               "record (POST or PATCH sobjects/<type>).")
+    return (DUPLICATE_RULE_HEADER,)
 
 
 def _check_declared(surface: declarations.Surface, provider: str, payload, plan: _Planned) -> None:
@@ -421,13 +503,14 @@ def _spend_write(user, operation_id: str | None, surface: declarations.Surface, 
     lease = ConnectionOperation.objects.none() if pk is None else ConnectionOperation.objects.filter(
         pk=pk, user=user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
         expires_at__gt=now)
-    slid = Value(now + timedelta(seconds=OPERATION_SECONDS), output_field=DateTimeField())
-    if lease.filter(writes_used__lte=OPERATION_MAX_WRITES - writes).update(
+    window = _window(surface)
+    slid = Value(now + timedelta(seconds=window.idle), output_field=DateTimeField())
+    if lease.filter(writes_used__lte=window.max_writes - writes).update(
             writes_used=F("writes_used") + writes, expires_at=Least(F("hard_limit_at"), slid)):
         return
     if lease.exists():
         many = "changes" if writes == 1 else f"changes, and this call would make {writes}"
-        raise services.ConnectionError("needs_operation", f"One click can make at most {OPERATION_MAX_WRITES} "
+        raise services.ConnectionError("needs_operation", f"One click can make at most {window.max_writes} "
                                                           f"{many}; click again to make more.")
     raise services.ConnectionError("needs_operation", "Making a change from this screen needs a click on it first.")
 
@@ -447,17 +530,18 @@ def _token(conn: Connection) -> server_tokens.Access:
                                                     "moment.") from None
 
 
-def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict, body, sent: _Sent) -> dict:
+def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict, body, sent: _Sent,
+              extra: tuple[tuple[str, str], ...] = ()) -> dict:
     """Ask, and on a 401 once more: with whatever newer token is stored, or after a forced refresh if
     this minute's is unspent (`server_tokens.forget`). A 401 means the provider refused the call, so
     it did not land, whatever the method. Nothing else is ever asked twice."""
     deadline = _monotonic() + TOTAL_SECONDS
     got = _token(conn)
-    status, raw = _ask(provider, matched, query, body, got, deadline, sent)
+    status, raw = _ask(provider, matched, query, body, got, deadline, sent, extra)
     if status == 401:
         if server_tokens.forget(conn, got.digest):
             got = _token(conn)
-            status, raw = _ask(provider, matched, query, body, got, deadline, sent)
+            status, raw = _ask(provider, matched, query, body, got, deadline, sent, extra)
         if status == 401:
             what = f"{_title(provider)} ended this connection's session."
             ended = services.ConnectionError("session_ended", what)
@@ -467,7 +551,7 @@ def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict
 
 
 def _ask(provider: str, matched: calls.Match, query: dict, body, got: server_tokens.Access, deadline: float,
-         sent: _Sent) -> tuple[int, bytes]:
+         sent: _Sent, extra: tuple[tuple[str, str], ...] = ()) -> tuple[int, bytes]:
     """One request: `(status, what came back, without the token)`."""
     try:
         url = calls.build_url(provider, got.instance_url, matched.path, query, method=matched.rule.method)
@@ -478,7 +562,8 @@ def _ask(provider: str, matched: calls.Match, query: dict, body, got: server_tok
     too_large, no_answer = False, False
     status, raw = 0, b""
     # Identity: a decoder can sit on bytes across many socket reads, and the deadline is checked per read.
-    headers = {"Authorization": f"Bearer {got.token}", "Accept": "application/json", "Accept-Encoding": "identity"}
+    headers = {**dict(extra), "Authorization": f"Bearer {got.token}", "Accept": "application/json",
+               "Accept-Encoding": "identity"}
     try:
         resp = requests.request(matched.rule.method, url, allow_redirects=False, stream=True,
                                 timeout=(CONNECT_SECONDS, READ_SECONDS), headers=headers, **kwargs)
@@ -625,7 +710,8 @@ def _audit(conn: Connection, user, surface: declarations.Surface, plan: _Planned
     line for the call, saying how many it held."""
     subject = replace(services.Subject.of(conn), workspace=conn.app.workspace)
     if plan.composite is None:
-        _audit_subject(subject, conn.provider, user, surface, plan.matched, operation_id, as_, sent)
+        extra = {"allow_duplicates": True} if plan.headers else {}
+        _audit_subject(subject, conn.provider, user, surface, plan.matched, operation_id, as_, sent, **extra)
         return
     total = len(plan.parts)
     results = _part_results(plan.composite, sent)

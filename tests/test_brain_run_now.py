@@ -1,8 +1,9 @@
 """Running a learner's target now (`POST /api/w/<ws>/brain/targets/{id}/runs`), and the sessions an output cites
 (`GET /api/brain/outputs/`).
 
-Run now is the target's schedule's own Run now, a manager's as a person (never an agent's login, a turn's token, an
-act-as token or MCP), and refuses with the reason when it cannot start. A `system` run is one run over every source eligible for `system`. An output
+Run now is the target's schedule's own Run now, a manager's as a person or an admin agent in its own turn
+(`brain.actor`, `tests/test_brain_agent_admin.py`; never an agent's stored token, an unverified turn's or an act-as
+token), and refuses with the reason when it cannot start. A `system` run is one run over every source eligible for `system`. An output
 names the sessions it cites only where the viewer reads them; the rest are a count."""
 from __future__ import annotations
 
@@ -144,7 +145,7 @@ def test_a_project_learner_takes_a_project_target(w):
     assert BrainRun.objects.get(pk=run.json()["id"]).subject == str(project.pk)
 
 
-def test_only_a_manager_as_a_person(w):
+def test_only_a_manager_never_an_agent_without_one_behind_it(w):
     assert _run(w, who="alice").status_code == 403                                     # a member, not a manager
     w["operator"].user.is_superuser = True                                              # even a superuser agent login
     w["operator"].user.save()
@@ -160,7 +161,7 @@ def test_only_a_manager_as_a_person(w):
     assert r.status_code == 403
     assert _client(w["root"]).post(url, {}, content_type="application/json",
                                    HTTP_X_CANOPY_TURN_ID="x").status_code == 403
-    assert "run_learning_target" in api_tools.EXCLUDED
+    assert "run_learning_target" not in api_tools.EXCLUDED                             # a tool: the rule is the route's
     assert act_as.route_refusal("POST", f"/api/brain/targets/{w['target'].pk}/runs", "write",
                                 is_tool=False) is not None
     assert not BrainRun.objects.exists()
@@ -176,8 +177,13 @@ def test_an_output_names_only_the_sessions_the_viewer_reads(w):
     rows = _client(w["root"]).get("/api/brain/outputs/").json()                  # a canopy admin sees system findings
     row = next(r for r in rows if r["id"] == out.pk)
     assert row["sessions"] == [] and row["hidden_sessions"] == 2                # but reads neither session
+    assert row["source_sessions"] == []                                         # so no evidence quote links anywhere
     w["owner"].refresh_from_db()
     rows = _client(w["owner"]).get("/api/brain/outputs/").json()                  # the workspace owner
     row = next(r for r in rows if r["id"] == out.pk)
     assert row["hidden_sessions"] + len(row["sessions"]) == 2
     assert all(set(s) == {"session_id", "workspace", "title"} for s in row["sessions"])
+    # Evidence names a source id; only a session the viewer already reads gets mapped to it, and only its own source's.
+    src = {str(s.pk): sources.for_session(s).pk for s in (seen, unseen)}
+    assert {x["session_id"] for x in row["source_sessions"]} == {s["session_id"] for s in row["sessions"]}
+    assert all(x["source"] == src[x["session_id"]] for x in row["source_sessions"])

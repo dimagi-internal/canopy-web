@@ -92,7 +92,6 @@ def test_refuses_everything_outside_the_drive_list(path):
 
 
 @pytest.mark.parametrize("method,path", [
-    ("POST", "files"),  # create
     ("PATCH", f"files/{FILE}"),  # rename, move
     ("DELETE", f"files/{FILE}"),
     ("POST", f"files/{FILE}"),
@@ -336,6 +335,34 @@ def test_a_401_ends_it_and_gives_the_link_again(g):
         r = _post(g)
     assert r.json()["error"] == "session_ended" and "for_screens=1" in r.json()["connect_url"]
     assert len(drive.calls) == 1, "an hour's token is never refreshed or retried"
+
+
+SHEETS = "https://www.googleapis.com/auth/spreadsheets"
+METADATA = "https://www.googleapis.com/auth/drive.metadata"
+EMAIL = "https://www.googleapis.com/auth/userinfo.email"
+
+
+def test_an_hour_from_before_a_permission_was_ticked_asks_again_and_sends_nothing(g):
+    """The admin ticked Sheets after jj allowed the hour: Google would refuse, so the page is asked to allow again."""
+    g.gapp.scopes = f"{METADATA} {SHEETS}"
+    g.gapp.save(update_fields=["scopes"])
+    TemporaryAccess.objects.filter(pk=g.hour.pk).update(scopes=f"openid {EMAIL} {METADATA}")
+    with Salesforce() as drive:
+        r = _post(g)
+    assert r.status_code == 409 and r.json()["error"] == "scope_added", r.content
+    assert "Allow it again" in r.json()["detail"]
+    assert r.json()["connect_url"].endswith("/auth/connections/google/w/start/?temporary=1&for_screens=1")
+    assert drive.calls == []
+
+
+def test_an_hour_holding_every_permission_the_app_asks_for_is_sent(g):
+    g.gapp.scopes = f"{METADATA} {SHEETS}"
+    g.gapp.save(update_fields=["scopes"])
+    TemporaryAccess.objects.filter(pk=g.hour.pk).update(scopes=f"openid {EMAIL} {METADATA} {SHEETS}")
+    with Salesforce(Answer(body={"files": []})) as drive:
+        r = _post(g)
+    assert r.status_code == 200, r.content
+    assert len(drive.calls) == 1
 
 
 def test_a_label_change_needs_a_click_first(g):

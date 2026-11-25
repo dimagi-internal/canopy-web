@@ -243,7 +243,28 @@ describe('starting a conversation', () => {
     await screen.findByPlaceholderText(/^Type a message/)
 
     expect(created()).toBeUndefined()
-    expect(calls.some((c) => c.init?.method === 'POST')).toBe(false)
+    // The one POST it makes is the warm-up, which creates and starts nothing
+    // (`POST /api/embed/prepare`): it lets the agent's runner get ready.
+    const posts = calls.filter((c) => c.init?.method === 'POST')
+    expect(posts.map((c) => new URL(c.url, 'http://x').pathname)).toEqual(
+      posts.length ? ['/api/embed/prepare'] : [],
+    )
+  })
+
+  it('asks the agent its runner to get ready as the panel opens, naming only the agent', async () => {
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })}
+        app="canopy-web"
+      />,
+    )
+    await screen.findByPlaceholderText(/^Type a message/)
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes('/api/embed/prepare') && c.init?.method === 'POST')).toBe(true),
+    )
+    const prepare = calls.find((c) => c.url.includes('/api/embed/prepare'))!
+    expect(JSON.parse(String(prepare.init?.body))).toEqual({ agent_slug: 'hal' })
+    expect(created()).toBeUndefined()
   })
 
   it('sends the first message with the session it just created', async () => {

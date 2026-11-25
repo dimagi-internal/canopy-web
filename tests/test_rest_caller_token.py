@@ -228,3 +228,46 @@ def test_a_repo_chats_caller_token_keeps_its_writes(client, w):
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
     resp = client.post("/api/harness/turns/", data={}, content_type="application/json", **bearer_headers(raw))
     assert "act-as-you" not in resp.content.decode()
+
+
+# -- the one route outside MCP: its own chat's secrets -------------------------
+
+def _chat_key_headers(raw, chat_key):
+    from apps.canopy_sessions import chat_keys
+
+    return {**bearer_headers(raw), f"HTTP_{chat_keys.HEADER.upper().replace('-', '_')}": chat_key}
+
+
+def test_a_caller_token_lists_the_secrets_shared_with_its_own_chat(client, w):
+    from apps.canopy_sessions import chat_keys
+
+    raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
+    resp = client.get("/api/session-secrets/key",
+                      **_chat_key_headers(raw, chat_keys.mint(w["session"])))
+    assert resp.status_code == 200, resp.content
+    assert resp.json() == []
+
+
+def test_a_caller_token_cannot_read_another_chats_secrets(client, w):
+    from apps.canopy_sessions import chat_keys
+
+    other = Session.objects.create(workspace=w["ws"], project="canopy-web", created_by=w["jj"],
+                                   title="another chat")
+    raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
+    resp = client.get("/api/session-secrets/key", **_chat_key_headers(raw, chat_keys.mint(other)))
+    assert resp.status_code == 403
+    assert "serves as tools" in resp.json()["detail"]
+
+
+def test_a_caller_token_without_a_chat_key_still_cannot_reach_chat_secrets(client, w):
+    raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
+    assert client.get("/api/session-secrets/key", **bearer_headers(raw)).status_code == 403
+
+
+def test_a_caller_token_never_writes_a_chat_secret_route(client, w):
+    from apps.canopy_sessions import chat_keys
+
+    raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
+    resp = client.post("/api/session-secrets/key", data={}, content_type="application/json",
+                       **_chat_key_headers(raw, chat_keys.mint(w["session"])))
+    assert resp.status_code == 403

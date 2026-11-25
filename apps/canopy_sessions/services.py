@@ -59,6 +59,12 @@ SERVER_OWNED_METADATA = frozenset({
     "turn_end_epochs",
     # A fork's cut and the directory it runs in (apps/canopy_sessions/placement.py::FORK_KEY).
     "fork",
+    # The relay channel a host site carries this conversation over (`RELAY_CHANNEL_KEY`),
+    # from the relay token that started it.
+    "relay_channel",
+    # The surface of its site a contact's conversation is held on
+    # (apps/host_grants/surfaces.py::SESSION_KEY), from the agent's entry when it started.
+    "host_surface",
 })
 
 #: The metadata keys a caller MAY set — an allowlist, so a key canopy starts acting on
@@ -102,6 +108,8 @@ def host_metadata(raw) -> dict:
 
 #: Where `stamp_host_metadata` records which embedding site a session belongs to.
 EMBED_APP_KEY = "embed_app"
+#: Where it records the relay channel a site carries the conversation over (`personalid`).
+RELAY_CHANNEL_KEY = "relay_channel"
 
 
 def stamp_host_metadata(metadata: dict, request) -> dict:
@@ -128,6 +136,11 @@ def stamp_host_metadata(metadata: dict, request) -> dict:
     reqs = getattr(request, "runner_requirements", ())
     if reqs:
         metadata[rr.METADATA_KEY] = list(reqs)
+    channel = getattr(request, "relay_channel", "")
+    if channel:
+        # A relay token (`ContactToken.channel`): the site carries this conversation
+        # server-to-server over its own channel.
+        metadata[RELAY_CHANNEL_KEY] = channel
     grant_id = getattr(request, "host_grant_id", None)
     principal = _grant_principal(user=getattr(request, "user", None),
                                  contact=getattr(request, "contact", None))

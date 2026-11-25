@@ -12,6 +12,8 @@ export type BrainStoredLink = components['schemas']['BrainStoredLink']
 export type BrainRunPage = components['schemas']['BrainRunPageOut']
 export type BrainRun = components['schemas']['BrainRunState']
 export type BrainOutput = components['schemas']['BrainOutputOut']
+export type BrainScorecard = components['schemas']['BrainScorecardOut']
+export type BrainTargetScore = components['schemas']['BrainTargetScore']
 
 const pin = (ws: string) => ({ [WORKSPACE_HEADER]: ws })
 
@@ -32,9 +34,14 @@ export async function getBrainRuns(ws: string, before = 0): Promise<BrainRunPage
   return unwrap(res, 'Failed to load runs') as BrainRunPage
 }
 
+/** How each learner target's findings land at `ws`, over the last eight weeks (counts of findings you may read). */
+export async function getBrainScorecard(ws: string): Promise<BrainScorecard> {
+  return unwrap(await apiV2.GET('/api/brain/scorecard', { headers: pin(ws) }), 'Failed to load the scorecard') as BrainScorecard
+}
+
 /** What learning produced at `ws` that you may see. */
 export async function listBrainOutputs(ws: string): Promise<BrainOutput[]> {
-  const res = await apiV2.GET('/api/brain/outputs/', { params: { query: { limit: 50 } }, headers: pin(ws) })
+  const res = await apiV2.GET('/api/brain/outputs/', { params: { query: { limit: 300 } }, headers: pin(ws) })
   return unwrap(res, 'Failed to load outputs') as BrainOutput[]
 }
 
@@ -76,4 +83,65 @@ export async function runTargetNow(ws: string, id: number): Promise<BrainRun> {
     headers: pin(ws),
   })
   return unwrap(res, 'Could not start the run') as BrainRun
+}
+
+export type BrainFlag = components['schemas']['BrainFlagOut']
+
+/** Acknowledge something a learning run made that a removal could not undo (its owner or the workspace's managers). */
+export async function acknowledgeFlag(ws: string, id: number): Promise<void> {
+  const res = await apiV2.POST('/api/brain/flags/{flag_id}/acknowledge', {
+    params: { path: { flag_id: id } },
+    headers: pin(ws),
+  })
+  unwrap(res, 'Could not acknowledge it')
+}
+
+export type BrainOutputStatus = 'open' | 'accepted' | 'dismissed' | 'done'
+
+/** Say where a finding stands (its audience's actors only: a system finding's workspace owners and admins). */
+export async function setOutputStatus(ws: string, id: number, status: BrainOutputStatus): Promise<BrainOutput> {
+  const res = await apiV2.POST('/api/brain/outputs/{output_id}/status', {
+    params: { path: { output_id: id } },
+    body: { status },
+    headers: pin(ws),
+  })
+  return unwrap(res, 'Could not change its status') as BrainOutput
+}
+
+export type BrainFixPlan = components['schemas']['BrainOutputFixPlanOut']
+export type BrainFixStarted = components['schemas']['BrainOutputFixOut']
+
+/** What asking for a finding's fix would do: who is asked, the button's words, what happens, the brief. */
+export async function getFixPlan(ws: string, id: number): Promise<BrainFixPlan> {
+  const res = await apiV2.GET('/api/brain/outputs/{output_id}/fix', { params: { path: { output_id: id } }, headers: pin(ws) })
+  return unwrap(res, 'Could not load what fixing it does') as BrainFixPlan
+}
+
+/** Ask the learner's operator agent to fix a finding: your conversation with it, and the finding set to Fixing. */
+export async function askFix(ws: string, id: number): Promise<BrainFixStarted> {
+  const res = await apiV2.POST('/api/brain/outputs/{output_id}/fix', { params: { path: { output_id: id } }, headers: pin(ws) })
+  return unwrap(res, 'Could not ask for the fix') as BrainFixStarted
+}
+
+export type BrainTargetBudgetIn = components['schemas']['BrainTargetBudgetIn']
+
+/** Change a target's budget (its workspace's owners and admins). */
+export async function setTargetBudget(ws: string, id: number, body: BrainTargetBudgetIn): Promise<BrainTarget> {
+  const res = await apiV2.PATCH('/api/brain/targets/{target_id}/budget', {
+    params: { path: { target_id: id } },
+    body,
+    headers: pin(ws),
+  })
+  return unwrap(res, 'Could not change the budget') as BrainTarget
+}
+
+export type BrainWhy = components['schemas']['BrainWhyOut']
+
+/** Why `learner` may or may not read a session you are in or read yourself. */
+export async function whyNotRead(ws: string, sessionId: string, learner: string): Promise<BrainWhy> {
+  const res = await apiV2.GET('/api/brain/why/{session_id}', {
+    params: { path: { session_id: sessionId }, query: { learner } },
+    headers: pin(ws),
+  })
+  return unwrap(res, 'Could not look that up') as BrainWhy
 }

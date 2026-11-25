@@ -294,3 +294,38 @@ def test_streams_bounds_are_index_probes_not_a_grouped_join():
                      and "turn_index" in q["sql"]]
     assert binding_reads, "the bounds query was not captured"
     assert not any("GROUP BY" in sql for sql in binding_reads), binding_reads
+
+
+def _streams_queries(runner, c):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as q:
+        body = c.get(f"/api/harness/runners/{runner.id}/streams").json()
+    return len(q.captured_queries), body["streams"]
+
+
+def test_streams_reads_a_fixed_number_of_queries_however_many_agent_chats_it_backs():
+    """An agent's box backs hundreds of its chats, and each one's `project` is its
+    agent's slug: the list reads the agents once, never one per binding."""
+    from apps.agents.models import Agent
+
+    user, ws, runner, c = _ctx()
+    agents = [Agent.objects.create(slug=f"a{i}", name=f"A{i}", workspace=ws, owner=user) for i in range(3)]
+
+    def bind(n, start):
+        for i in range(start, start + n):
+            s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER,
+                                       agent=agents[i % 3], title=str(i))
+            RunnerBinding.objects.create(session=s, runner=runner, session_key=f"k{i}")
+            Message.objects.create(session=s, turn_index=i, role="assistant", plaintext="a")
+
+    bind(3, 0)
+    few, small = _streams_queries(runner, c)
+    bind(27, 3)
+    many, big = _streams_queries(runner, c)
+    assert many == few
+    assert len(small) == 3 and len(big) == 30
+    by_key = {x["session_key"]: x for x in big}
+    assert by_key["k4"]["project"] == "a1"
+    assert (by_key["k4"]["first_index"], by_key["k4"]["last_index"]) == (4, 4)

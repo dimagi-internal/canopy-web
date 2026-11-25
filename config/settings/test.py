@@ -50,3 +50,9 @@ CANOPY_SCHEDULE_TICK_S = 0
 # And the one off-request clock (apps/common/ticks.py) they all run on: tests call
 # a job's function, or `ticks.tick()`, directly.
 TICK_BASE_S = 0
+
+# A contact's send budget (apps/embedding/rate_limit.py::check_contact_send) is counted
+# in the process cache, which outlives a test and whose contact ids repeat across
+# tests: out of the way here; the tests of the budget set it per test.
+CONTACT_SEND_PER_MINUTE = 100_000
+CONTACT_SEND_PER_DAY = 100_000

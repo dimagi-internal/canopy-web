@@ -25,7 +25,7 @@ from django.utils import timezone
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 
 from . import clis as cli_vocab
-from . import mail_coalesce, runner_refresh, sensitivity, turn_snapshot
+from . import mail_coalesce, runner_refresh, runner_sync, sensitivity, turn_snapshot
 from .channels import email as email_channel
 from .claim import DEFAULT_LEASE_SECONDS
 from .ledger import append_events
@@ -530,7 +530,8 @@ def heartbeat(
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
-    envelope: int = 0, midturn: int = 0, agents_unprepared: list[str] | None = None,
+    envelope: int = 0, midturn: int = 0, isolated: int = 0, stored_projects: int = 0,
+    sync: int = 0, agents_unprepared: list[str] | None = None,
     data_mode: str = "", data_mode_hash: str = "", claude_model: str = "",
     clis: dict | None = None,
 ) -> Runner:
@@ -635,6 +636,26 @@ def heartbeat(
     # the same reply twice, so it must never be handed one.
     if int(runner.capabilities.get("midturn") or 0) != int(midturn or 0):
         runner.capabilities = {**runner.capabilities, "midturn": int(midturn or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # Whether this runner's CODE keeps nothing of an `isolated` turn for later ones (a learning run's:
+    # `claim.isolation_refusal`). Reported, same contract as `midturn`: absent = 0, and such a box is never
+    # handed one.
+    if int(runner.capabilities.get("isolated") or 0) != int(isolated or 0):
+        runner.capabilities = {**runner.capabilities, "isolated": int(isolated or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # Whether this runner's CODE makes a stored agent's checkout its emdash project, so a
+    # laptop may be handed that agent's confined turns (`clis.laptop_cannot_confine_stored`).
+    # Reported, same contract as `isolated`: absent = 0.
+    if int(runner.capabilities.get("stored_projects") or 0) != int(stored_projects or 0):
+        runner.capabilities = {**runner.capabilities, "stored_projects": int(stored_projects or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # Whether this runner's CODE reads its work through `/sync` (`HeartbeatIn.sync`).
+    # Same contract: absent = 0. While any beat says 0 the drain routes stay.
+    if int(runner.capabilities.get("sync") or 0) != int(sync or 0):
+        runner.capabilities = {**runner.capabilities, "sync": int(sync or 0)}
         if "capabilities" not in fields:
             fields.append("capabilities")
     # Which agent CLIs the box has (`harness.clis`). A level, like `envelope`:
@@ -1005,7 +1026,10 @@ def cancel_turn(turn: Turn, *, by: str = "") -> Turn | None:
             cancel_turn(holder, by=by)
             return turn
     if turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN):
-        append_events(turn, [{"kind": "cancel_requested", "payload": who}])
+        with transaction.atomic():
+            append_events(turn, [{"kind": "cancel_requested", "payload": who}])
+            # The stop rides the box's next heartbeat (`cancel_turn_ids`) and `/sync`.
+            runner_sync.bump(turn.claimed_by_id)
         if turn.claimed_by_id:
             from apps.realtime import groups
 

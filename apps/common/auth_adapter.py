@@ -15,7 +15,6 @@ from .log_redact import path_template
 
 logger = logging.getLogger(__name__)
 
-
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     def on_authentication_error(
         self, request, provider, error=None, exception=None, extra_context=None
@@ -130,12 +129,17 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             # only the domain's own admin can make one.
             self._refuse(request, sociallogin, email, reason=self.NOT_WORKSPACE)
 
-        if self._lands_on_agent_login(sociallogin, email):
-            # An agent's login is a machine's: it reaches canopy with tokens, never
-            # with a browser session. Its Google account's credentials live on
-            # runners, so letting them open the browser as the agent would turn a
-            # runner compromise into an interactive session.
-            self._refuse(request, sociallogin, email, reason=self.AGENT_LOGIN)
+        agent_login = self._agent_login_landed_on(sociallogin, email)
+        if agent_login is not None:
+            # An agent's own Google account signs in as the agent's login, like any
+            # account: the session has exactly the permissions the agent's tokens
+            # already have, and every step-up-gated act stays refused to it
+            # (`apps/passkeys/stepup.py::require_a_person`).
+            if not sociallogin.is_existing:
+                # The one user `_agent_login_landed_on` matched on this provider-verified
+                # address; the JIT merge never connects onto an agent's login itself.
+                sociallogin.connect(request, get_user_model().objects.get(pk=agent_login))
+            return
 
         if admitted_outside_domain:
             # Never run the JIT-identity merge on this branch: it connects
@@ -175,7 +179,6 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     #: Why a sign-in was refused, for the page (`templates/auth/domain_rejected.html`).
     NOT_ALLOWED = "not_allowed"
     NOT_WORKSPACE = "not_workspace"
-    AGENT_LOGIN = "agent_login"
 
     @staticmethod
     def _refuse(request, sociallogin, email, *, reason=NOT_ALLOWED):
@@ -207,19 +210,20 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         return bool(hd) and hd in allowed
 
     @staticmethod
-    def _lands_on_agent_login(sociallogin, email) -> bool:
-        """This sign-in would open a session as an agent's own login: an account
+    def _agent_login_landed_on(sociallogin, email) -> int | None:
+        """The agent login this sign-in would open a session as, if any: an account
         already linked to one, or the one user `_connect_jit_identity` would link."""
         User = get_user_model()
         if sociallogin.is_existing:
-            return User.objects.filter(pk=sociallogin.user.pk,
-                                       agent_identity__isnull=False).exists()
+            pk = sociallogin.user.pk
+            return pk if User.objects.filter(pk=pk, agent_identity__isnull=False).exists() else None
         if not email:
-            return False
+            return None
         matches = list(User.objects.filter(email__iexact=email)
                        .values_list("pk", flat=True)[:2])
-        return len(matches) == 1 and User.objects.filter(
-            pk=matches[0], agent_identity__isnull=False).exists()
+        if len(matches) == 1 and User.objects.filter(pk=matches[0], agent_identity__isnull=False).exists():
+            return matches[0]
+        return None
 
     @staticmethod
     def _verified_emails(sociallogin) -> set[str]:

@@ -16,6 +16,7 @@ import uuid
 from django.db import transaction
 from django.db.models import Q
 
+from apps.harness import runner_sync
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 from apps.harness.routing import turn_workspace_q
@@ -73,7 +74,9 @@ def answer_menu(*, session: Session, option: int | None,
     binding.pending_answer = {"id": answer_id, "option": option,
                               "selections": selections, "texts": texts,
                               "at": time.time()}
-    binding.save(update_fields=["pending_answer"])
+    with transaction.atomic():
+        binding.save(update_fields=["pending_answer"])
+        runner_sync.bump(binding.runner_id)
 
     from apps.realtime import groups
     groups.publish(groups.runner_group(binding.runner_id), {
@@ -115,7 +118,9 @@ def interrupt_session(session: Session) -> str:
         return "unavailable"
     interrupt_id = str(uuid.uuid4())
     binding.pending_interrupt = {"id": interrupt_id, "at": time.time()}
-    binding.save(update_fields=["pending_interrupt"])
+    with transaction.atomic():
+        binding.save(update_fields=["pending_interrupt"])
+        runner_sync.bump(binding.runner_id)
 
     from apps.realtime import groups
     groups.publish(groups.runner_group(binding.runner_id), {
@@ -298,7 +303,9 @@ def close_session(*, session: Session) -> str:
         binding.close_requested = True
         binding.close_error = ""
         binding.close_error_at = None
-        binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
+        with transaction.atomic():
+            binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
+            runner_sync.bump(binding.runner_id)
         # Who asked, now: the box's report that retires the row names only the box.
         lifecycle.record(lifecycle.CLOSE_REQUESTED, session, runner=str(binding.runner_id))
         from apps.realtime import groups
@@ -379,7 +386,9 @@ def close_agent_sessions(agent) -> dict[str, int]:
             binding.close_requested = True
             binding.close_error = ""
             binding.close_error_at = None
-            binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
+            with transaction.atomic():
+                binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
+                runner_sync.bump(binding.runner_id)
             lifecycle.record(lifecycle.CLOSE_REQUESTED, session, runner=str(binding.runner_id),
                              reason="agent deleted")
             outcome = "queued"

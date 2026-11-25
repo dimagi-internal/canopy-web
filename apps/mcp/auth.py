@@ -10,13 +10,16 @@ carry the user's id and email (`sub` = user id) so tools can recover the
 authenticated user with `get_access_token()`. On a miss it returns
 `None`, which FastMCP turns into a 401.
 
-ORM access is wrapped in `sync_to_async` because `verify_token` runs in
+ORM access is wrapped in `database_sync_to_async` because `verify_token` runs in
 the MCP server's async event loop while the lookup and its use stamp hit the
-database synchronously.
+database synchronously. It closes the thread's connection when the lookup returns:
+sign-in happens once per HTTP request, and the request's thread can then live as
+long as a streamed response does, holding the connection (a pool slot, with
+`config/db_pool.py`) idle the whole time.
 """
 from __future__ import annotations
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from fastmcp.server.auth import AccessToken, TokenVerifier
 
 # Scope advertised for PAT-authenticated callers. PATs are full-user
@@ -95,7 +98,7 @@ class CanopyPATVerifier(TokenVerifier):
             # An act-as-you token (`apps/harness/act_as.py`): the PERSON who approved it
             # with their passkey, re-checked on every request. What it may call is
             # `act_as_scope.ActAsScopeMiddleware`'s, and again the in-process route's.
-            grant = await sync_to_async(_lookup_act_as, thread_sensitive=True)(token)
+            grant = await database_sync_to_async(_lookup_act_as)(token)
             if grant is None:
                 return None
             from apps.harness import act_as  # noqa: PLC0415 — only an act-as token pays for it
@@ -111,7 +114,7 @@ class CanopyPATVerifier(TokenVerifier):
                         "act_as_scope": cred["act_as_scope"]},
             )
         if token.startswith("cct_"):
-            grant = await sync_to_async(_lookup_turn_grant, thread_sensitive=True)(token)
+            grant = await database_sync_to_async(_lookup_turn_grant)(token)
             if grant is None:
                 return None
             # `user_id` is the CALLER — their own ACL applies — or absent for an
@@ -129,7 +132,7 @@ class CanopyPATVerifier(TokenVerifier):
                         "all_tools": grant.all_tools, "sensitive": grant.sensitive,
                         "read_only": grant.read_only},
             )
-        user, pat = await sync_to_async(_lookup_user, thread_sensitive=True)(token)
+        user, pat = await database_sync_to_async(_lookup_user)(token)
         if user is None:
             return None
 

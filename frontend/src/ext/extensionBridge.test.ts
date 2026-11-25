@@ -93,7 +93,7 @@ describe('ExtensionLink: the panel ⇄ extension hop', () => {
 })
 
 const DECL: BrowserDeclaration = {
-  adapter: 'gmail', capabilities: ['read_open_email'], events: ['email_opened'], matches: ['https://mail.google.com/*'],
+  adapter: 'gmail', capabilities: ['read_open_email'], acts: [], events: ['email_opened'], matches: ['https://mail.google.com/*'],
 }
 
 describe('BrowserGate: the app page ⇄ panel hop', () => {
@@ -123,6 +123,45 @@ describe('BrowserGate: the app page ⇄ panel hop', () => {
       await expect(gate.request('read_open_email', {})).rejects.toMatchObject({ code: 'no_adapter' })
       expect(posts.length).toBe(before)
     }
+  })
+
+  describe('acts: capabilities that change the page', () => {
+    const ACTS: BrowserDeclaration = {
+      ...DECL, capabilities: ['read_open_thread', 'start_compose', 'fill_compose'], acts: ['start_compose', 'fill_compose'],
+    }
+    function actGate() {
+      const s = setup()
+      s.from(ctx(GMAIL))
+      return { ...s, gate: new BrowserGate(ACTS, s.link) }
+    }
+
+    it('refuses an act without a click, before anything is sent', async () => {
+      const { gate, posts } = actGate()
+      const before = posts.length
+      for (const cap of ['start_compose', 'fill_compose']) {
+        await expect(gate.request(cap, { body: 'hi' })).rejects.toMatchObject({ code: 'needs_click', message: 'This needs a click.' })
+        await expect(gate.request(cap, { body: 'hi' }, false)).rejects.toMatchObject({ code: 'needs_click' })
+      }
+      expect(posts.length).toBe(before)
+    })
+
+    it('relays an act from a click', () => {
+      const { gate, posts } = actGate()
+      void gate.request('fill_compose', { body: 'hi' }, true)
+      expect(posts.at(-1)?.msg).toMatchObject({ type: 'canopy-ext:request', capability: 'fill_compose', args: { body: 'hi' } })
+    })
+
+    it('relays a read with no click', () => {
+      const { gate, posts } = actGate()
+      void gate.request('read_open_thread', {})
+      expect(posts.at(-1)?.msg).toMatchObject({ type: 'canopy-ext:request', capability: 'read_open_thread' })
+    })
+
+    it('still refuses an act on a tab the page does not run on, click or not', async () => {
+      const s = setup()
+      s.from(ctx('https://evil.example/'))
+      await expect(new BrowserGate(ACTS, s.link).request('fill_compose', {}, true)).rejects.toMatchObject({ code: 'no_adapter' })
+    })
   })
 
   it('refuses args that are not an object', async () => {

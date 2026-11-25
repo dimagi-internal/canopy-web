@@ -88,3 +88,13 @@ class EmbedSessionMemoryOut(SessionMemoryOut):
 
     #: canopy's own chat page for this session, relative to canopy's base.
     manage_path: str
+
+
+class EmbedPrepareIn(StrictModel):
+    # The agent the panel opened with (one this site offers the visitor).
+    agent_slug: str
+
+
+class EmbedPrepareOut(StrictModel):
+    # Whether a runner was asked to get ready (false: not a fast-page agent here, or asked lately).
+    rung: bool

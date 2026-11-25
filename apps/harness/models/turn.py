@@ -45,12 +45,17 @@ class Turn(models.Model):
     # Opened by the session itself, never claimed, never routed — so it is neither
     # postable nor routable, and it does not serialize the agent (the constraint below).
     ORIGIN_LOCAL = "local"
+    # A message a host site relayed for a person on a channel of its own (PersonalID,
+    # WhatsApp), sent with a relay contact token (`ContactToken.channel`). The person
+    # is present on the host's channel, as a person typing in a chat is.
+    ORIGIN_SITE_MESSAGE = "site_message"
     ORIGIN_CHOICES = [
         (ORIGIN_API, "API"), (ORIGIN_ACE_WEB, "ace-web"),
         (ORIGIN_CANOPY_WEB_CHAT, "canopy-web chat"),
         (ORIGIN_CANOPY_SCHEDULER, "canopy scheduler"),
         (ORIGIN_EMAIL, "Email"), (ORIGIN_SLACK, "Slack"),
         (ORIGIN_LOCAL, "Local"),
+        (ORIGIN_SITE_MESSAGE, "Host site message"),
     ]
     # What an external caller may POST. The rest are set by exactly one in-repo
     # producer each, and letting a caller spell them would let it borrow another
@@ -62,6 +67,10 @@ class Turn(models.Model):
     # `ContactSendIn`): `email` and `slack` are channels canopy attests itself, so a
     # chat message calling itself one would borrow that channel's routing rule.
     CHAT_SEND_ORIGINS = {ORIGIN_API, ORIGIN_ACE_WEB}
+    # What a contact's send may name when its token is a RELAY token (the site signed
+    # a `canopy_channel`): the chat sources, plus `site_message`, which only a relay
+    # produces. It is also such a send's default (`contact_api.send`).
+    RELAY_SEND_ORIGINS = CHAT_SEND_ORIGINS | {ORIGIN_SITE_MESSAGE}
     # Retired values the live fleet may still be posting. Normalized (same mapping
     # migration 0030 applied to existing rows) rather than 422'd, so shipping this
     # does not break Echo/Ada mid-flight. Applied BOTH at the request boundary and
@@ -77,7 +86,7 @@ class Turn(models.Model):
     # reserved for the producer that does not exist yet.
     ROUTABLE_ORIGINS = [
         ORIGIN_ACE_WEB, ORIGIN_EMAIL, ORIGIN_CANOPY_SCHEDULER,
-        ORIGIN_CANOPY_WEB_CHAT, ORIGIN_SLACK, ORIGIN_API,
+        ORIGIN_CANOPY_WEB_CHAT, ORIGIN_SLACK, ORIGIN_API, ORIGIN_SITE_MESSAGE,
     ]
 
     PREFER_LOCAL, LOCAL_ONLY, ANY = "prefer_local", "local_only", "any"

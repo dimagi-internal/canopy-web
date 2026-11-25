@@ -447,9 +447,9 @@ class Recurrence(StrictModel):
     """A recurring task's rhythm. The task is then a TEMPLATE: it stays in backlog, and each
     period's work is an instance of it (`POST /api/tasks/{key}/spawn`, or the tick when `auto`)."""
 
-    #: `day`, `week` (from Monday), `2weeks` (alternate Mondays), `month` (from the 1st), or
+    #: `day`, `weekdays` (Monday to Friday), `week` (from Monday), `2weeks` (alternate Mondays), `month` (from the 1st), or
     #: `as_needed` (spawned by hand only, one instance per date).
-    every: Literal["day", "week", "2weeks", "month", "as_needed"]
+    every: Literal["day", "weekdays", "week", "2weeks", "month", "as_needed"]
     #: The day an instance is due in its week (week and 2weeks only; Monday when omitted).
     weekday: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None
     #: Spawn each period's instance automatically when the period begins, in the workspace's

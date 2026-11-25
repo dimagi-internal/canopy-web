@@ -632,3 +632,15 @@ def test_candidate_urls_from_whatever_the_owner_has():
         ["https://labs.example.org/.well-known/canopy-site.json",
          "https://labs.example.org/canopy/site.json"]
     assert site_needs.candidate_urls("") == []
+
+
+def test_the_page_shows_the_sites_surfaces_and_the_agents_serving_each(w, monkeypatch):
+    workers = {"title": "Connect Worker messaging", "sensitive": False,
+               "mcp_resource": "https://labs.example.org/messaging/canopy/mcp/", "person_scheme": "labs-worker"}
+    _publish(w, monkeypatch, needs={**NEEDS, "surfaces": {"workers": workers}})
+    declare(w["bare"], {"workers": {"sites": [SITE], "contact_scoped": True, "surface": "workers"}})
+    body = _needs(w)
+    assert body["surfaces"] == [{"name": "workers", **workers, "agents": ["bare"]}]
+    _publish(w, monkeypatch)
+    cache.clear()
+    assert _needs(w)["surfaces"] == []

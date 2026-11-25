@@ -8,7 +8,7 @@ Tasks and projects belong to a **workspace**, not to an agent. Every route: `api
 - **Assignee**: a person (`assignee_user`) or an agent (`agent`), never both (CHECK `task_one_assignee`), or nobody. An agent assignee is who approval starts a turn for; a person assignee is who "My tasks" lists it for.
 - **Agent alias** (`ext_id`, `T12` / `P5`): the name the agent that filed it (`created_by_agent`) gives it. Unique per that agent and kept through reassignment.
 - **Project** (`AgentProject`). Addressed `<workspace>/<handle>`, its one page; the agent alias link only forwards there. Led by a person (`owner_user`) and/or a **lead agent** (`agent`), worked on by **member agents** (the lead agent is always one). Any agent of the workspace, or one above it, may file tasks into any project.
-- **Recurring task** (`AgentTask.recurrence`): a TEMPLATE with a rhythm (`day`, `week`, `2weeks`, `month`, `as_needed`; an optional `weekday`; `auto`). It stays in backlog and never completes; each period's work is an **instance**, an ordinary task whose `template` names it (not `parent`: subtasks roll up progress and nest at most `MAX_TASK_DEPTH`). `last_done` is derived (the newest done instance's completion), never stored.
+- **Recurring task** (`AgentTask.recurrence`): a TEMPLATE with a rhythm (`day`, `weekdays`, `week`, `2weeks`, `month`, `as_needed`; an optional `weekday`; `auto`). It stays in backlog and never completes; each period's work is an **instance**, an ordinary task whose `template` names it (not `parent`: subtasks roll up progress and nest at most `MAX_TASK_DEPTH`). `last_done` is derived (the newest done instance's completion), never stored.
 - **Comment**: words on a task anyone who reads it may add (`comment` action, `TaskEvent.COMMENT`). Not a `reply`: it answers no ask and never starts or wakes a turn.
 - **Statuses** are fixed values, each in one Linear category; code reads the category (`AgentTask.CATEGORY`, `AgentProject.CATEGORY`), never the raw status. A workspace renames how a category is shown (`TaskSettings.status_names`).
 
@@ -27,6 +27,7 @@ Tasks and projects belong to a **workspace**, not to an agent. Every route: `api
 `services/recurrence.py` (its docstring has the period rules). **`spawn(template, due, by)` is the one writer of instances**: it copies title, notes, assignee, project, priority and labels (never relations), and is idempotent per (template, period) because the period is stamped on the instance (`template_period`, unique per template) when it is made, so moving an instance's `due` neither frees its period nor fills another. `as_needed`'s period is the date itself.
 
 - **The tick** (`agents.recurrence`, `AgentsConfig.ready`, every 10 minutes) gives each `auto` template the current period's instance once that period has begun, in the workspace's `TaskSettings.timezone`. A template made part-way through a period starts at the next one; `as_needed` is never auto. A run that is late, or runs twice, still makes each period's instance once.
+- **`weekdays`** is one instance a day like `day`, but the tick makes none on Saturday or Sunday (a spawn by hand still can).
 - **`2weeks`** alternates from the period of the template's first instance (a first one spawned by hand sets it), else from the week the template was made.
 - **A template is not work.** Every count of a project's scope and done leaves templates out (`work.WORK_Q`: `progress_of`, `milestones_of`, the list's task counts), or a project of chores could never be done. An instance names its template by `template_key` and `template_title`.
 - **A personal project's template** spawns into that project, and only to an assignee who may still have work there (`_refuse_outsiders`); its instances are as private as any of its tasks.
@@ -66,6 +67,8 @@ A project has member agents (`member_agents`) and member **people** (`apps/agent
 ## What a project serves
 
 A project can serve things to its workspace as `ProjectService` rows, one per thing, by `kind` (`kb`, `mcp`, `skill`, `plugin`; the `ProjectService` docstring says what each is). canopy serves a `kb` (as the project's own MCP server) and a `skill`'s instructions; it neither proxies nor vets an `mcp` server and does not load a `plugin`: those are listed with their add lines.
+
+A skill that runs code keeps that code in the project's **files**, a git repository canopy hosts for the project, drafted by whoever may change it and published only by a person its vaults open to ([project-files.md](project-files.md)).
 
 A skill that needs a secret uses the project's **vault**: a workspace vault attached to the project (`VaultAttachment.project`) opens to the project's people and is read in the turns of every member agent in the vault's workspace tree, with no per-agent attachment (`vault.md` § Workspace vaults). The project's detail lists the vaults by name, the secret names and who they serve, never a value.
 

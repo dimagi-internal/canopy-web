@@ -47,8 +47,10 @@ PUBLIC_PATH_PREFIXES = (
     # unrevoked app that has valid frame origins, and carries no data).
     "/embed/",
     "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
+    "/api/sites/resources-updated",  # auth=None — self-enforces: a JWS signed by the site's own registered key, naming only that site's resource URIs (apps/host_grants/resources_updated.py)
     "/api/sites/agents",         # auth=None — self-enforces: a request signed by the site's own registered key (apps/host_grants/api.py)
     "/api/sites/sign-offs",      # auth=None — self-enforces: a request signed by the site's own registered key (apps/host_grants/sign_offs_api.py); the approver's /api/sign-offs/ stays behind login
+    "/api/sites/contacts",       # auth=None — self-enforces: a request signed by the site's own registered key, writing only that site's own people (apps/host_grants/contact_records_api.py); also /erase
     "/api/sites/runner-attestations",  # auth=None — self-enforces: a request signed by the site's own registered key, carrying a runner's single-use device-key proof (apps/host_grants/runner_attestations_api.py)
     "/api/runner-sessions/",     # auth=None — self-enforces: an approved device key's proof (apps/harness/api_runner_sessions.py)
     "/api/harness/runners/pair-by-role",  # auth=None — self-enforces: the box's instance-role proof + an invitation its creator approved behind a passkey (apps/harness/api_runner_invitations.py)
@@ -111,6 +113,11 @@ PUBLIC_PATH_PREFIXES = (
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
     "/api/beta-requests",        # auth=None — the public site's request-access form; grants nothing
     "/api/public-apps/",         # auth=None — an enabled AND public workspace app's public pages, projections and create-only forms (apps/workspace_apps)
+    # A stored agent's git repository (apps/agent_definitions/git_http.py): git asks
+    # with HTTP Basic, which this middleware cannot see, and needs the view's own 401
+    # with `WWW-Authenticate: Basic` to prompt — never a 302 to Google sign-in. The view
+    # takes a canopy token and nothing else, and serves reads only.
+    "/git/",
     # NOTE: "/about" and "/get-started" are NOT here. Every other entry above
     # ends in "/" (or is a full path), so prefix-matching it is safe; "/about"
     # alone would also admit any future "/about-billing" or "/aboutus" route as

@@ -8,11 +8,15 @@ import { AdminOnly, HealthViews } from './HealthViews'
 import { useTreeRead } from './useTreeRead'
 import { Td, Th } from '@/components/DataTable'
 
-// WORKSPACE ANALYTICS: turns, chats, messages, tokens and people over time,
+// WORKSPACE ANALYTICS: turns, chats, messages, agents and people over time,
 // across this workspace and (by default) every one below it. Every number comes
 // from the server's analytics fact log (`GET /api/workspaces/{slug}/analytics`),
 // which retention does not purge — so a number here does not drop when old
 // transcripts are deleted.
+//
+// Tokens are NOT shown: the server still returns them, but the box usage reports
+// they come from cover only the sessions canopy matched (and, until recently,
+// missed every subagent), so the totals are not yet trustworthy.
 
 const RANGES = [7, 30, 90] as const
 
@@ -55,17 +59,14 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
   const days = a.series
   return (
     <div className="space-y-6">
-      <section aria-label="Totals" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+      <section aria-label="Totals" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         <Stat label="Turns" value={compact(t.turns)} />
         <Stat label="Chats opened" value={compact(t.sessions)} />
         <Stat label="Messages sent" value={compact(t.messages)} />
         <Stat label="Active people" value={compact(t.active_users)} />
-        <Stat label="Active agents" value={compact(t.active_agents)} />
+        <Stat label="Active agents" value={compact(t.active_agents)} hint="ran a turn in range" />
+        <Stat label="Built agents" value={compact(t.built_agents)} hint={`${compact(t.new_agents)} new in ${a.days} days`} />
         <Stat label="Active repositories" value={compact(t.active_repositories)} hint="work no agent ran" />
-        <Stat label="Tokens read from cache" value={compact(t.cache_read_tokens)}
-              hint={`${compact(t.cache_creation_tokens)} written to cache`} />
-        <Stat label="Input · output tokens" value={`${compact(t.input_tokens)} · ${compact(t.output_tokens)}`}
-              hint={t.sessions_with_usage ? `from ${compact(t.sessions_with_usage)} sessions` : 'none reported yet'} />
       </section>
 
       <section aria-label="Over time" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -78,12 +79,8 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         ]} />
         <DailyBars title="Messages sent" days={days} layers={[{ key: 'messages', label: 'Messages', className: 'fill-primary' }]} />
         <DailyBars title="Active people" days={days} rangeTotal={t.active_users} layers={[{ key: 'active_users', label: 'People', className: 'fill-primary' }]} />
-        <DailyBars title="Tokens read from cache" days={days} format={compact}
-                   layers={[{ key: 'cache_read_tokens', label: 'From cache', className: 'fill-primary' }]} />
-        <DailyBars title="Input and output tokens" days={days} format={compact} layers={[
-          { key: 'input_tokens', label: 'Input', className: 'fill-primary' },
-          { key: 'output_tokens', label: 'Output', className: 'fill-muted-foreground' },
-        ]} />
+        <DailyBars title="Active agents" days={days} rangeTotal={t.active_agents} layers={[{ key: 'active_agents', label: 'Agents', className: 'fill-primary' }]} />
+        <DailyBars title="Built agents" days={days} rangeTotal={t.built_agents} layers={[{ key: 'built_agents', label: 'Built', className: 'fill-primary' }]} />
       </section>
 
       <section aria-label="Where turns came from">
@@ -109,7 +106,7 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
           <thead className="text-left text-muted-foreground">
             <tr><Th>Person</Th><NumHead>Active days</NumHead><NumHead>Messages</NumHead><NumHead>Turns</NumHead>
               <NumHead>Chats</NumHead><NumHead>Settings changed</NumHead><NumHead>MCP calls</NumHead>
-              <Th density="none">Works with most</Th><NumHead>From cache</NumHead><NumHead>Input · output</NumHead>
+              <Th density="none">Works with most</Th>
               <Th density="none">Last active</Th></tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -119,8 +116,6 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
                 <Num>{u.active_days}</Num><Num>{u.messages}</Num><Num>{u.turns}</Num><Num>{u.sessions}</Num>
                 <Num>{u.settings}</Num><Num>{u.mcp_calls}</Num>
                 <Td density="none" tone="secondary" mono>{u.top.join(', ') || '—'}</Td>
-                <Num>{compact(u.cache_read_tokens)}</Num>
-                <Num>{compact(u.input_tokens)} · {compact(u.output_tokens)}</Num>
                 <Td density="none" tone="secondary">{u.last_at ? relativeAge(u.last_at, new Date(), { seconds: false }) : '—'}</Td>
               </tr>
             ))}
@@ -153,16 +148,15 @@ function Breakdown({ title, column, testid, rows, note, empty }: {
         <thead className="text-left text-muted-foreground">
           <tr><Th>{column}</Th>
             <NumHead>Turns</NumHead><NumHead>Failed or lost</NumHead><NumHead>Chats</NumHead>
-            <NumHead>Messages</NumHead><NumHead>People</NumHead><NumHead>From cache</NumHead>
-            <NumHead>Input · output</NumHead><Th density="none">Last activity</Th></tr>
+            <NumHead>Messages</NumHead><NumHead>People</NumHead>
+            <Th density="none">Last activity</Th></tr>
         </thead>
         <tbody className="divide-y divide-border">
           {rows.map(({ name, row: r }) => (
             <tr key={name}>
               <Td density="cozy" tone="foreground" mono>{name}</Td>
               <Num>{r.turns}</Num><Num>{r.failed}</Num><Num>{r.sessions}</Num><Num>{r.messages}</Num>
-              <Num>{r.people}</Num><Num>{compact(r.cache_read_tokens)}</Num>
-              <Num>{compact(r.input_tokens)} · {compact(r.output_tokens)}</Num>
+              <Num>{r.people}</Num>
               <Td density="none" tone="secondary">{r.last_at ? relativeAge(r.last_at, now, { seconds: false }) : '—'}</Td>
             </tr>
           ))}

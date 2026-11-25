@@ -32,7 +32,7 @@ refused or let through), and the OAuth consent page needs a person.
 
 **No agent tools.** The server is canopy the product (board, sessions, turns,
 runners, schedules, mail, page actions). It offers no per-agent tools that run an
-agent remotely (no `<agent>__<profile>`, no `agent_reply`): such a call would run as
+agent remotely (no `<agent>__<profile>` tool): such a call would run as
 a turn on the agent OWNER's machine under their credentials. To use an agent, install
 its plugin from your catalog (`plugin-marketplace.md`) and run it locally as yourself.
 A call to an `<agent>__…` tool gets MCP's unknown-tool error.

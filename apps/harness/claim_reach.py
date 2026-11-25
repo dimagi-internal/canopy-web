@@ -40,7 +40,7 @@ from .routing import (
     project_session_covers,
     project_session_waits_why,
     repo_order_for,
-    routed_slug,
+    routed_agent as routed_agent_of,
     runner_target_q,
     runner_tenant_slugs_of,
     transfer_holding,
@@ -151,7 +151,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     # (recoverable), never `config` (never runs).
     rows = assignment_rows_for(
         routed_agent, t.origin, actors.actor_of(t), defaults, priorities, requires=reqs,
-        serves="" if ignore_serve else routed_slug(t, routed_agent),
+        serves=None if ignore_serve else routed_agent_of(t, routed_agent),
     )
     return any(row_runner.id == r.id for _rank, row_runner in rows)
 
@@ -619,7 +619,7 @@ def _unserving_said(t: Turn, by_unserving: dict) -> str:
     for r, pks in by_unserving.items():
         if t.pk not in pks:
             continue
-        why = turn_serves_refusal(r, t) or (cannot_serve(r, agent.slug) if agent is not None else "")
+        why = turn_serves_refusal(r, t) or (cannot_serve(r, agent) if agent is not None else "")
         if why:
             said.append(why)
     return "; ".join(said)

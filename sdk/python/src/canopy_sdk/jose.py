@@ -19,12 +19,14 @@ from .contract import ContractError
 from .keys import alg_for, header_jwk, public_key_for
 
 
-def unverified_header(token, *, algorithms=contract.GRANT_ALGORITHMS) -> dict:
+def unverified_header(token, *, algorithms=contract.GRANT_ALGORITHMS,
+                      max_bytes: int = contract.MAX_JWT_BYTES) -> dict:
     """The JOSE header, size-checked, with ``alg`` inside ``algorithms``. Selects
-    a key; decides nothing."""
+    a key; decides nothing. ``max_bytes`` is ``MAX_JWT_BYTES`` for every token but
+    the one that is a document (``contract.MAX_SITE_AGENTS_BYTES``)."""
     import jwt
 
-    if not isinstance(token, str) or not token or len(token) > contract.MAX_JWT_BYTES:
+    if not isinstance(token, str) or not token or len(token) > max_bytes:
         raise ContractError("malformed", "not a compact JWS of acceptable size")
     try:
         header = jwt.get_unverified_header(token)

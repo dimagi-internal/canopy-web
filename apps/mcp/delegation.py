@@ -25,7 +25,7 @@ ACL and its page's scopes — never more than their own PAT would.
 """
 from __future__ import annotations
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from canopy_sdk.host import DPoPGate, HostNotConfigured, presented_dpop_jkt
 from fastmcp.exceptions import ResourceError, ToolError
 from fastmcp.server.auth import AccessToken
@@ -36,9 +36,10 @@ AUTH_METHOD = "delegated"
 
 
 def _run_sync(fn, *args):
-    # thread_sensitive: the ORM's connections are per-thread; the same executor
-    # every other MCP-side ORM call here uses.
-    return sync_to_async(fn, thread_sensitive=True)(*args)
+    # On the request's own thread (connections are per thread), closing its
+    # connection when done: the gate runs once per request, ahead of a response
+    # that may stream for a long time (apps/mcp/auth.py says why).
+    return database_sync_to_async(fn)(*args)
 
 
 def _verifier():

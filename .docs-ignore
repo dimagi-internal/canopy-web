@@ -10,14 +10,5 @@ HttpAgent  # the AG-UI client library
 strict_required_status_checks_policy  # GitHub's ruleset API field
 merge_queue  # GitHub's ruleset rule type
 page_scrollToRow  # an example page action a host defines in its own code
-# --- Stale citations: the code no longer has these. Fix the doc (point at what exists, or drop the
-# --- claim), then delete the line. Added when this test was introduced; the doc triage removes them.
-tier2_securing  # no such identifier
-templates/contacts/hcp_consent.html  # no such template
-test_host_site  # no such test
-agent_reply  # no such tool
-tests/test_turn_executors.py  # no such test file
-agents/0064_kb_passages.py  # no such migration file
-CreateIn  # no such class
-PATCH /api/workspaces/<ws>/host-sites[/<id>]  # route not found as written
-CANOPY_MCP_BEARER  # no such setting
+tier2_securing  # an HCP spec field canopy-web deliberately omits (hcp-conformance.md says so)
+CANOPY_MCP_BEARER  # named as the shared-bearer pattern mcp-surface.md forbids; it must not exist

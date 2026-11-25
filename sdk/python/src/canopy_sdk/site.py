@@ -51,6 +51,40 @@ says how long a scheme's result ids are: canopy then keeps a link under it only 
 ``<scheme>://`` and exactly that many url-safe characters. Without it an id may be up
 to ``resources.MAX_ID_LENGTH`` of them.
 
+``site.person_scheme`` (optional, SDK 0.30+; ``CANOPY_HOST["PERSON_SCHEME"]``) is the URI
+scheme of the site's own records of its people (``labs-worker``): the site is the SYSTEM
+OF RECORD for the people it brings, and a contact's ``record_uri``
+(``canopy_sdk.contacts``) must be under it. ``site.retention_days`` (optional, SDK 0.30+;
+``RETENTION_DAYS``) is how long canopy keeps the conversations of this site's contacts;
+canopy enforces the shorter of it and the workspace's own rule. Both are read LIVE, like
+``resource_schemes``: neither widens anything.
+
+``site.reply_url`` (optional, SDK 0.38+; the Django host fills it from ``CANOPY_HOST["REPLY_URL"]``)
+is where the site takes canopy's reply push (``canopy_sdk.host.replies``): the agent's replies in
+the conversations the site relays over its own channel. ``site.reply_mode`` (optional;
+``REPLY_MODE``) is ``final`` (one post when a turn ends) or ``stream`` (a post per piece of
+prose). canopy ADOPTS a declared ``reply_url`` without its owner typing it, but only when the
+document verifies against the site's registered keys, the URL is https, its origin is exactly one
+of the site's REGISTERED origins (never the ones this document lists), and it passes canopy's
+outbound checks: the site can name only an address it already holds. A reply webhook a person set
+in canopy wins over the declared one.
+
+``surfaces`` (optional, SDK 0.37+) splits one site into the parts that serve different people.
+A site with none is one surface, as before. Each is keyed by a name (``SURFACE_NAME``) and says
+whether its conversations hold the site's sensitive data (``sensitive``, REQUIRED, so a surface is
+never non-sensitive by omission), the MCP resource a contact's subject-bound tool calls go to
+(``mcp_resource``) and the scheme of its people's records (``person_scheme``)::
+
+    "surfaces": {"workers": {"title": "Connect Worker messaging", "sensitive": false,
+                             "mcp_resource": "https://labs.connect.dimagi.com/messaging/canopy/mcp/",
+                             "person_scheme": "labs-worker"}}
+
+An agent's host-site entry names the surface it serves (``surface: workers``). canopy lets a
+site's contact hold a conversation on a surface the site declares ``sensitive: false`` (the
+conversation is then not sensitive), and sends that contact's tool calls only to that surface's
+resource, on the site's registered origin. The site's own pages stay the site itself, with
+whatever sensitivity its visitor assertions require. Read LIVE, like ``person_scheme``.
+
 canopy finds the document beside the site's registered JWKS, or — knowing only
 the site's address — at ``WELL_KNOWN_PATH`` on its origin (mount
 ``canopy_sdk.django.views.site_document`` there) or at ``canopy/site.json``
@@ -61,6 +95,7 @@ Both halves are here: ``site_document`` / ``sign_site_document`` the site's,
 """
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -209,10 +244,61 @@ def _site(value) -> dict:
            "mcp_resource": _url(value.get("mcp_resource"), "site.mcp_resource"),
            "resource_schemes": _schemes(value.get("resource_schemes"))}
     out["resource_id_lengths"] = _id_lengths(value.get("resource_id_lengths"), out["resource_schemes"])
-    for key in ("resource_schemes", "resource_id_lengths"):
+    out["person_scheme"] = _person_scheme(value.get("person_scheme"))
+    out["retention_days"] = _retention_days(value.get("retention_days"))
+    out["reply_url"] = _url(value.get("reply_url"), "site.reply_url")
+    out["reply_mode"] = _reply_mode(value.get("reply_mode"))
+    for key in ("resource_schemes", "resource_id_lengths", "person_scheme", "retention_days",
+                "reply_url", "reply_mode"):
         if not out[key]:
             del out[key]
     return out if any(out.values()) else {}
+
+
+def _person_scheme(value) -> str:
+    """``site.person_scheme``: the URI scheme of the site's records of its people
+    (``labs-worker``), checked like a resource scheme (``resources.check_scheme``)."""
+    from .resources import ResourceError, check_scheme
+
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise SiteDocumentError("malformed", "site.person_scheme must be a URI scheme")
+    try:
+        return check_scheme(value)
+    except ResourceError as exc:
+        raise SiteDocumentError("malformed", f"site.person_scheme: {exc.message}") from exc
+
+
+#: The bounds on ``site.retention_days``: at least a day, at most ten years.
+MIN_RETENTION_DAYS = 1
+MAX_RETENTION_DAYS = 3650
+
+
+def _retention_days(value) -> int | None:
+    """``site.retention_days``: how many days canopy keeps the conversations of this site's
+    contacts. canopy enforces the shorter of it and the workspace's own retention rule."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) \
+            or not MIN_RETENTION_DAYS <= value <= MAX_RETENTION_DAYS:
+        raise SiteDocumentError("malformed", f"site.retention_days must be a whole number of days from "
+                                             f"{MIN_RETENTION_DAYS} to {MAX_RETENTION_DAYS}")
+    return value
+
+
+#: The values of ``site.reply_mode``: one post when a turn ends, or one per piece of prose.
+REPLY_MODES: tuple[str, ...] = ("final", "stream")
+
+
+def _reply_mode(value) -> str:
+    """``site.reply_mode``: ``final`` or ``stream``; "" when absent (canopy then posts ``final``)."""
+    if value is None or value == "":
+        return ""
+    if value not in REPLY_MODES:
+        raise SiteDocumentError("malformed", f"site.reply_mode must be one of {', '.join(REPLY_MODES)}, "
+                                             f"not {value!r}")
+    return value
 
 
 def _id_lengths(value, schemes: list[str]) -> dict[str, int]:
@@ -251,9 +337,54 @@ def _schemes(value) -> list[str]:
         raise SiteDocumentError("malformed", f"site.resource_schemes: {exc.message}") from exc
 
 
+#: A surface's name: what an agent's host-site entry names (``surface:``).
+SURFACE_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+#: At most this many surfaces per site.
+MAX_SURFACES = 8
+#: The keys a surface may carry.
+SURFACE_KEYS: tuple[str, ...] = ("title", "sensitive", "mcp_resource", "person_scheme")
+
+
+def _surfaces(value) -> dict:
+    """``surfaces``: ``{name: {title?, sensitive, mcp_resource?, person_scheme?}}``, validated;
+    ``{}`` when absent or empty. ``sensitive`` is required: a surface is never taken as not
+    sensitive because a key was left out."""
+    if value is None or value == {}:
+        return {}
+    if not isinstance(value, Mapping):
+        raise SiteDocumentError("malformed", "surfaces must map a surface name to its facts")
+    if len(value) > MAX_SURFACES:
+        raise SiteDocumentError("malformed", f"surfaces has more than {MAX_SURFACES} entries")
+    out: dict = {}
+    for name, facts in value.items():
+        if not isinstance(name, str) or not SURFACE_NAME.match(name):
+            raise SiteDocumentError("malformed", f"surfaces: {name!r} is not a surface name "
+                                                 f"({SURFACE_NAME.pattern})")
+        if not isinstance(facts, Mapping):
+            raise SiteDocumentError("malformed", f"surfaces.{name} must be a mapping")
+        extra = set(facts) - set(SURFACE_KEYS)
+        if extra:
+            raise SiteDocumentError("malformed", f"surfaces.{name}: unknown key(s) {sorted(extra)}")
+        if not isinstance(facts.get("sensitive"), bool):
+            raise SiteDocumentError("malformed", f"surfaces.{name}.sensitive must be true or false")
+        entry = {"sensitive": facts["sensitive"]}
+        title = _text(facts.get("title"), f"surfaces.{name}.title", MAX_TITLE)
+        if title:
+            entry["title"] = title
+        resource = _url(facts.get("mcp_resource"), f"surfaces.{name}.mcp_resource")
+        if resource:
+            entry["mcp_resource"] = resource
+        scheme = _person_scheme(facts.get("person_scheme"))
+        if scheme:
+            entry["person_scheme"] = scheme
+        out[name] = entry
+    return dict(sorted(out.items()))
+
+
 #: The keys of ``site``, in order.
 SITE_FACTS: tuple[str, ...] = ("origins", "jwks_url", "issuer", "mcp_resource", "resource_schemes",
-                               "resource_id_lengths")
+                               "resource_id_lengths", "person_scheme", "retention_days", "reply_url",
+                               "reply_mode")
 
 
 def _normalize(claims: Mapping) -> dict:
@@ -284,24 +415,30 @@ def _normalize(claims: Mapping) -> dict:
     site = _site(claims.get("site"))
     if site:
         body["site"] = site
+    surfaces = _surfaces(claims.get("surfaces"))
+    if surfaces:
+        body["surfaces"] = surfaces
     return body
 
 
 def site_document(site_name: str, *, pages: Sequence[Mapping] = (), sensitive_data: Mapping | None = None,
                   uses: Mapping | None = None, site: Mapping | None = None,
                   title: str = "", scope_labels: Mapping | None = None,
-                  now: float | None = None) -> dict:
+                  surfaces: Mapping | None = None, now: float | None = None) -> dict:
     """The payload, validated: ``pages`` as ``[{key, title, scopes}]``,
     ``sensitive_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
     ``{"agents", "sensitive_data_agents", "version"}``, ``site`` as ``{"origins",
-    "jwks_url", "issuer", "mcp_resource", "resource_schemes", "resource_id_lengths"}`` (each optional; left out
+    "jwks_url", "issuer", "mcp_resource", "resource_schemes", "resource_id_lengths", "person_scheme",
+    "retention_days", "reply_url", "reply_mode"}`` (each optional; left out
     when empty), ``title`` the site's display name and ``scope_labels`` as ``{scope: phrase}`` (both optional,
-    descriptive text for the consent prompt)."""
+    descriptive text for the consent prompt), and ``surfaces`` as ``{name: {"sensitive", "mcp_resource",
+    "person_scheme", "title"}}`` (optional; ``sensitive`` required on each)."""
     name = str(site_name or "").strip()
     if not name:
         raise SiteDocumentError("not_configured", "the document needs the site's host-site name")
     body = _normalize({"pages": list(pages), "sensitive_data": sensitive_data or {}, "uses": uses or {},
-                       "site": site, "title": title, "scope_labels": scope_labels})
+                       "site": site, "title": title, "scope_labels": scope_labels,
+                       "surfaces": surfaces})
     return {"v": SITE_DOCUMENT_VERSION, "iss": name, "iat": int(time.time() if now is None else now),
             **body}
 
@@ -331,11 +468,36 @@ class SiteFacts:
     resource_schemes: tuple[str, ...] = ()
     #: ``((scheme, n), ...)``: the exact length of a scheme's result ids, where declared.
     resource_id_lengths: tuple[tuple[str, int], ...] = ()
+    #: The URI scheme of the site's own records of its people (``labs-worker``): a contact's
+    #: ``record_uri`` must be under it (``canopy_sdk.contacts``). "" when none is declared.
+    person_scheme: str = ""
+    #: How many days canopy keeps the conversations of this site's contacts (the shorter of
+    #: this and the workspace's own rule wins). None when the site declares none.
+    retention_days: int | None = None
+    #: Where the site takes canopy's reply push ("" when it declares none), and how
+    #: (``final`` / ``stream``; "" when it declares none).
+    reply_url: str = ""
+    reply_mode: str = ""
 
     def resource_policy(self) -> dict[str, int | None]:
         """``{scheme: declared id length or None}``, as ``resources.validate_link`` takes it."""
         lengths = dict(self.resource_id_lengths)
         return {scheme: lengths.get(scheme) for scheme in self.resource_schemes}
+
+
+@dataclass(frozen=True)
+class SiteSurface:
+    """One surface of a site (``surfaces``): a part of it serving its own people."""
+
+    name: str
+    #: Whether its conversations hold the site's sensitive data. A contact may hold a
+    #: conversation only on a surface that does not.
+    sensitive: bool
+    #: Where a contact's subject-bound tool calls on this surface go ("" for none).
+    mcp_resource: str = ""
+    #: The scheme of the records of this surface's people ("" for none declared).
+    person_scheme: str = ""
+    title: str = ""
 
 
 @dataclass(frozen=True)
@@ -359,7 +521,14 @@ class SiteNeeds:
     title: str = ""
     #: ``{scope: phrase}`` — what the site says each scope lets an agent do. Descriptive only.
     scope_labels: Mapping = field(default_factory=dict)
+    #: The site's surfaces (``surfaces``), by name; empty when it declares none (the site is
+    #: then its own single surface).
+    surfaces: tuple[SiteSurface, ...] = ()
     claims: dict = field(repr=False, default_factory=dict)
+
+    def surface(self, name: str) -> SiteSurface | None:
+        """The surface called ``name``, or None when the site declares no such surface."""
+        return next((s for s in self.surfaces if s.name == name), None)
 
     @classmethod
     def from_claims(cls, claims: Mapping, *, site_name: str = "") -> SiteNeeds:
@@ -377,9 +546,18 @@ class SiteNeeds:
                             issuer=body["site"]["issuer"], mcp_resource=body["site"]["mcp_resource"],
                             resource_schemes=tuple(body["site"].get("resource_schemes") or ()),
                             resource_id_lengths=tuple(
-                                (body["site"].get("resource_id_lengths") or {}).items()))
+                                (body["site"].get("resource_id_lengths") or {}).items()),
+                            person_scheme=body["site"].get("person_scheme") or "",
+                            retention_days=body["site"].get("retention_days"),
+                            reply_url=body["site"].get("reply_url") or "",
+                            reply_mode=body["site"].get("reply_mode") or "")
                   if body.get("site") else None),
             title=body.get("title", ""), scope_labels=dict(body.get("scope_labels") or {}),
+            surfaces=tuple(SiteSurface(name=name, sensitive=facts["sensitive"],
+                                       mcp_resource=facts.get("mcp_resource", ""),
+                                       person_scheme=facts.get("person_scheme", ""),
+                                       title=facts.get("title", ""))
+                           for name, facts in (body.get("surfaces") or {}).items()),
             claims=dict(claims))
 
 

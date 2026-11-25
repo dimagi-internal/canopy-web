@@ -20,6 +20,10 @@ PROPS
     canopy.refresh()                     re-read every declared source (props.data updates)
     canopy.navigate(path)                open a canopy page: "/tasks/CON-12", "/projects/<handle>"
                                          (relative to the workspace) or "/w/<ws>/..."
+    canopy.open(url) -> Promise          an https address in a new tab, from a click (no confirm step)
+    canopy.clipboard.write(text) -> Promise   copy text, from a click
+    canopy.download(name, mime, data) -> Promise<{name}>  save a file (text, ArrayBuffer, Uint8Array
+                                         or Blob, up to 25 MB), from a click
     canopy.runAgentTask({agent, name, input, output_schema, instructions?, timeout_s?, routing?,
                          onStatus?}) -> Promise<result>
                                          give an agent a task the view DECLARES (AGENT TASKS below)
@@ -188,7 +192,8 @@ SALESFORCE CALLS
   onClick handler, never on load or on a timer. The page checks for the click itself and rejects
   "This needs a click." otherwise. The click only counts for about 5 seconds, so the write must be
   the first thing the handler does: a write that comes after several seconds of awaits in the same
-  handler is refused. One click opens up to 10 minutes and 500 writes within what the screen declared;
+  handler is refused. One click opens up to 10 minutes and 500 writes within what the screen declared (a screen whose
+  only writes are Drive label changes gets an hour, 20000 writes, 15 minutes idle; begin() says which);
   later writes in that window need no new click. The window closes 120 seconds after the last write
   (reads don't count), so keep writing or click again. To read and dedup before the first write, call
   canopy.connection.begin() first thing in the onClick instead: it opens the window and resolves
@@ -221,6 +226,23 @@ GOOGLE DRIVE CALLS
     "reads": [{"method": "GET", "path": "files"}, {"method": "GET", "path": "files/*"},
               {"method": "GET", "path": "files/*/listLabels"}],
     "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
+- Gmail, Calendar, Sheets and Docs, reads only, on the same account: the path's first segment names
+  the API and the rest is under its root.
+    gmail/profile, gmail/messages (q, maxResults, pageToken, labelIds, includeSpamTrash, fields),
+    gmail/messages/<id>, gmail/threads/<id> (format, metadataHeaders, fields) — the viewer's mailbox
+    calendar/calendars/primary, calendar/calendars/primary/events (q, timeMin, timeMax, singleEvents,
+    orderBy, maxResults, pageToken, timeZone, showDeleted, updatedMin, iCalUID, fields)
+    sheets/<id> (fields), sheets/<id>/values:batchGet (ranges — repeat it as a list —, majorDimension,
+    valueRenderOption, dateTimeRenderOption, fields)
+    docs/<id> (fields, suggestionsViewMode)
+  Declare each as a read with * for the id (gmail/messages/*, sheets/*/values:batchGet).
+- Writes (each a click, as any): POST gmail/drafts (body {message: {raw, threadId?}}; a draft or a
+  reply, never a send), POST sheets/<id>/values:batchUpdate (query valueInputOption...), POST
+  sheets/<id>/values/<A1 range>:append (valueInputOption, insertDataOption), POST
+  sheets/<id>:batchUpdate, POST docs/<id>:batchUpdate, POST files (a new file's metadata). Declare a
+  custom method with *:verb: sheets/*/values/*:append, docs/*:batchUpdate, sheets/*:batchUpdate.
+  The workspace's Google app must ask for each API's scope (Read mail, Write drafts, Read calendars,
+  Read files in Drive, Read and change spreadsheets, Read and change documents, Create files in Drive).
 - It never uses a stored Google connection: only an hour of access the viewer grants for their own
   screens. Without one (or once it ends) the call rejects with code "not_connected" (or
   "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url) in

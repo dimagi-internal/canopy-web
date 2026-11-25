@@ -284,6 +284,10 @@ export default defineConfig({
       '/auth': API_ORIGIN,
       '/admin': API_ORIGIN,
       '/static': API_ORIGIN,
+      // A workspace app's bundle pages: the sandboxed frame loads these files (apps/workspace_apps/bundles.py).
+      // Keep the browser's Host: the server names it in the files' frame-ancestors and in the origins
+      // canopy's client may talk to, and the string shorthand would rewrite it to the API's.
+      '/app-bundles': { target: API_ORIGIN, changeOrigin: false },
     },
   },
 })

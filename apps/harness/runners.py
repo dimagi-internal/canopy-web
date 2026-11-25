@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.workspaces.models import MAX_DEPTH
 
-from . import clis
+from . import clis, runner_sync
 from .models import (
     Runner,
     RunnerAdmin,
@@ -760,11 +760,15 @@ def start_runner_mint(runner, *, requested_by=None, slot="box", login_key=""):
     attempt, and "try again" is the only sensible response to a stuck sign-in.
     The old row is marked failed rather than deleted so the history stays honest.
     """
-    RunnerMint.objects.filter(runner=runner).exclude(
-        status__in=RunnerMint.FINISHED
-    ).update(status=RunnerMint.FAILED, detail="superseded by a newer request")
-    return RunnerMint.objects.create(runner=runner, requested_by=requested_by, slot=slot,
-                                     login_key=login_key)
+    with transaction.atomic():
+        RunnerMint.objects.filter(runner=runner).exclude(
+            status__in=RunnerMint.FINISHED
+        ).update(status=RunnerMint.FAILED, detail="superseded by a newer request")
+        mint = RunnerMint.objects.create(runner=runner, requested_by=requested_by, slot=slot,
+                                         login_key=login_key)
+        runner_sync.bump(runner)
+        runner_sync.ring_mint(runner)
+    return mint
 
 
 def current_runner_mint(runner):
@@ -803,7 +807,10 @@ def submit_mint_code(mint, code: str):
     """A human pasted the authorization code back."""
     mint.code = code.strip()
     mint.status = RunnerMint.COMPLETING
-    mint.save(update_fields=["code", "status", "updated_at"])
+    with transaction.atomic():
+        mint.save(update_fields=["code", "status", "updated_at"])
+        runner_sync.bump(mint.runner_id)
+        runner_sync.ring_mint(mint.runner_id)
     return mint
 
 

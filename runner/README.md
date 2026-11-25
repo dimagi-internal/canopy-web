@@ -17,7 +17,7 @@ the web image (see `.dockerignore`); the server never imports it.
 The shared libraries stay in `packages/`, because the **server imports them
 too** — moving them under `runner/` would misstate who owns them:
 
-- `packages/canopy_cron` — cron slot math; the server's schedule preview and the
-  runner's firing call the same `next_slots()`/`due_slot()` so they can't drift.
+- `packages/canopy_cron` — cron slot math; the server's schedule preview and its
+  schedule clock call the same `next_slots()`/`due_slot()` so they can't drift.
 - `packages/canopy_transcript` — Claude Code transcript core (path resolution,
   tailing, ordinals); shared verbatim by both runners and `apps/canopy_sessions`.

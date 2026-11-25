@@ -63,10 +63,12 @@ HOST_SITE = "host_site"
 #: An entry bound to one workspace app (`app_entries`): canopy's fixed tools for that app.
 APP_ENTRY = "app_entry"
 SESSION_REVIEW = "session_review"
-BRAIN_RUN = "brain_run"
+#: Canopy's own profile for a turn a Google Docs comment started: one Doc, read and replied in (`doc_comment`).
+DOC_COMMENT = "doc_comment"
 DENY_ALL = "deny_all"
 NO_AGENT = "no_agent"
-PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, HOST_SITE, APP_ENTRY, SESSION_REVIEW, BRAIN_RUN, DENY_ALL, NO_AGENT})
+PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, HOST_SITE, APP_ENTRY, SESSION_REVIEW, DOC_COMMENT, DENY_ALL,
+                           NO_AGENT})
 
 #: What a stage reports when the answer needs something only the claim knows.
 PENDING = "pending"
@@ -167,12 +169,16 @@ class Profile:
     site: str | None = None
     #: `"<workspace>/<app key>"` an `app_entry` is bound to, None for any other kind.
     app: str | None = None
+    #: The Doc a `doc_comment` profile is bound to (`doc_comment.DocComment`), None for any other kind.
+    doc: object | None = None
     _agent: object = field(default=None, compare=False, repr=False)
 
     @cached_property
     def _definition(self) -> dict | None:
         if self.kind in (WHOLE_AGENT, NO_AGENT):
             return None
+        if self.kind == DOC_COMMENT:
+            return profiles_mod.doc_comment_profile(self._agent, self.doc)
         if self.kind == DENY_ALL:
             # What the envelope already gives a stamp that no longer resolves (`caller_context._profile`).
             return {"name": self.name, "description": "", "entry": None, "tools": [], "bash": [],
@@ -376,6 +382,11 @@ def _entry_for(agent, iface: dict, permissions, requested, session_ctx, trace: l
         allowed = session_ctx.is_review and roles.holds(permissions, roles.READ)
         trace.append(TraceEntry("entry", requested if allowed else "not open", "review chat"))
         return requested if allowed else None
+    if requested == profiles_mod.DOC_COMMENT:
+        # Canopy's own, for a proven Docs-comment turn only: `read` opens it, as it opens read mode.
+        allowed = session_ctx.doc_comment is not None and roles.holds(permissions, roles.READ)
+        trace.append(TraceEntry("entry", requested if allowed else "not open", "docs comment"))
+        return requested if allowed else None
     name, how = requested, "named"
     if name is None:
         name, how = _app_selected(agent, opens, session_ctx), "app"
@@ -420,11 +431,11 @@ def _base_stage(agent, reach: _Reach, asker: Asker, requested, session_ctx, turn
     if name is None:
         published = bool(requested) and (profiles_mod.published_profile(iface, requested)[0] is not None
                                          or profiles_mod.is_read_mode(requested)
-                                         or requested == profiles_mod.SESSION_REVIEW)
+                                         or requested in profiles_mod.CANOPY_PROFILES)
         return replace(reach, code=PROFILE_NOT_OPEN, facts=(("name", requested), ("published", published)))
     # The review entry is opened by `read`; `line_opening` knows only named entries and read mode.
     # A `read` line opens the app entry of its own conversation without naming it (`_entry_for`).
-    line = (got.line_for(roles.READ) if name == profiles_mod.SESSION_REVIEW
+    line = (got.line_for(roles.READ) if name in profiles_mod.CANOPY_PROFILES
             else got.line_opening(name) or got.line_for(roles.READ))
     return replace(reach, access=CONFINED, name=name, basis=f"capability:{name}", agent_role=got.role,
                    source=f"list:{line.subject_key}", via=grants.describe(line), permissions=got.permissions,
@@ -444,16 +455,17 @@ def _review_rule(reach: _Reach, trace: list) -> _Reach:
                    may_pin_runner=False, basis=f"capability:{profiles_mod.SESSION_REVIEW}")
 
 
-def _brain_rule(reach: _Reach, trace: list) -> _Reach:
-    """A turn in a brain run's conversation runs in its own profile, for whoever started it: it only
-    narrows. What it reads is other people's words, so no later message there picks up the agent's whole
-    profile, nor a login, a token or a send."""
+def _doc_comment_rule(reach: _Reach, trace: list) -> _Reach:
+    """A turn a Google Docs comment started runs in its own profile, for everyone with any access at all,
+    and it only narrows. The notification proves Google sent it about one Doc, never who commented:
+    anyone can make a Doc and tag the agent under any name, so whatever the sender's standing would
+    otherwise give, the turn reads that Doc and answers in it, and nothing else (`doc_comment`)."""
     if reach.access == REFUSED:
-        trace.append(TraceEntry("brain_run", "already refused"))
+        trace.append(TraceEntry("docs_comment", "already refused"))
         return reach
-    trace.append(TraceEntry("brain_run", profiles_mod.BRAIN))
-    return replace(reach, access=CONFINED, name=profiles_mod.BRAIN, may_request_auto=False,
-                   may_pin_runner=False, basis=f"capability:{profiles_mod.BRAIN}")
+    trace.append(TraceEntry("docs_comment", profiles_mod.DOC_COMMENT))
+    return replace(reach, access=CONFINED, name=profiles_mod.DOC_COMMENT, may_request_auto=False,
+                   may_pin_runner=False, basis=f"capability:{profiles_mod.DOC_COMMENT}")
 
 
 def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
@@ -501,12 +513,14 @@ def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _R
     """Stages 1 and 2, in the order they have always run."""
     if session_ctx.is_review:
         requested = profiles_mod.SESSION_REVIEW
+    elif session_ctx.doc_comment is not None:
+        requested = profiles_mod.DOC_COMMENT
     reach = _no_list_stage(agent, asker, session_ctx, turn, trace)
     reach = _base_stage(agent, reach, asker, requested, session_ctx, turn, trace)
     if session_ctx.is_review:
         reach = _review_rule(reach, trace)
-    if session_ctx.is_brain:
-        reach = _brain_rule(reach, trace)
+    elif session_ctx.doc_comment is not None:
+        reach = _doc_comment_rule(reach, trace)
     return _sensitive_rule(agent, reach, requested, session_ctx, trace)
 
 
@@ -515,8 +529,8 @@ def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _R
 def _kind_of(name: str, agent=None) -> str:
     if name == profiles_mod.SESSION_REVIEW:
         return SESSION_REVIEW
-    if name == profiles_mod.BRAIN:
-        return BRAIN_RUN
+    if name == profiles_mod.DOC_COMMENT:
+        return DOC_COMMENT
     if app_entries.app_of_entry(getattr(agent, "interface", None), name):
         return APP_ENTRY
     return READ_MODE if profiles_mod.is_read_mode(name) else HOST_SITE
@@ -535,7 +549,8 @@ def _profile_of(agent, name: str, session_ctx) -> Profile:
     app = app_entries.app_of_entry(getattr(agent, "interface", None), name) if kind == APP_ENTRY else None
     return Profile(kind=kind, name=name, _agent=agent,
                    site=_site_of(agent, name, session_ctx) if kind == HOST_SITE else None,
-                   app=app_entries.stamp_of(agent.workspace_id, app) if app else None)
+                   app=app_entries.stamp_of(agent.workspace_id, app) if app else None,
+                   doc=session_ctx.doc_comment if kind == DOC_COMMENT else None)
 
 
 def stamped_profile(agent, stamp: str, session_ctx) -> Profile:
@@ -544,7 +559,12 @@ def stamped_profile(agent, stamp: str, session_ctx) -> Profile:
     that has since gone: canopy's default read profile is not what it was admitted to."""
     if stamp == profiles_mod.FULL_STAMP:
         return Profile(kind=WHOLE_AGENT, _agent=agent)
-    if stamp in (profiles_mod.SESSION_REVIEW, profiles_mod.BRAIN):
+    if stamp == profiles_mod.SESSION_REVIEW:
+        return _profile_of(agent, stamp, session_ctx)
+    if stamp == profiles_mod.DOC_COMMENT:
+        # Bound to the turn's own Doc; a turn that no longer proves one opens nothing.
+        if session_ctx.doc_comment is None:
+            return Profile(kind=DENY_ALL, name=stamp, _agent=agent)
         return _profile_of(agent, stamp, session_ctx)
     published, _cap = profiles_mod.published_profile(getattr(agent, "interface", None), stamp)
     if published is None and (not profiles_mod.is_read_mode(stamp) or session_ctx.sensitive):

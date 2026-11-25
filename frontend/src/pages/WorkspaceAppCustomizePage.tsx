@@ -17,16 +17,21 @@ import {
   getInstalledApp,
   listAppStore,
   listGrants,
+  listMaintainers,
   listVersions,
   publishDraft,
   removeChange,
   removeGrant,
+  removeMaintainer,
   rollbackTo,
+  setMaintainer,
   runChecks,
   startDraft,
   type AppDraft,
   type AppGrant,
+  type AppMaintainer,
   type AppVersionRow,
+  type MaintainerLevel,
   type InstalledApp,
 } from '@/api/workspaceApps'
 import { listMembers, type MemberOut } from '@/api/workspaces'
@@ -187,7 +192,15 @@ export default function WorkspaceAppCustomizePage() {
                 <td>{v.origin}{v.note ? ` — ${v.note}` : ''}</td>
                 <td>{v.template_version}</td>
                 <td>{v.changes}</td>
-                <td>{v.published_at ? `${v.published_at.slice(0, 10)} by ${v.published_by ?? '—'}` : '—'}</td>
+                <td>
+                  {v.published_at ? `${v.published_at.slice(0, 10)} by ${v.published_by ?? '—'}` : '—'}
+                  {v.published_under.startsWith('maintainer') && <span className="ml-1 text-xs text-muted-foreground">(as maintainer)</span>}
+                  {v.reach_changes.length > 0 && (
+                    <ul className="mt-0.5 list-disc pl-4 text-xs text-warning">
+                      {v.reach_changes.map((c) => <li key={c}>{c}</li>)}
+                    </ul>
+                  )}
+                </td>
                 <Td density="none" align="right">
                   {(v.status === 'superseded') && !draft && (
                     <button type="button" className="text-primary hover:underline" disabled={busy}
@@ -203,6 +216,7 @@ export default function WorkspaceAppCustomizePage() {
         </table>
       </Section>
 
+      {app.may_manage && <Publishers workspace={workspace} app={app} />}
       {mayGrant && <Maintainers workspace={workspace} app={app} />}
       {roleAllows(role, 'integrations') && <Privacy workspace={workspace} app={app} />}
     </div>
@@ -628,16 +642,18 @@ function Maintainers({ workspace, app }: { workspace: string; app: InstalledApp 
   const [grants, setGrants] = useState<AppGrant[]>([])
   // App roles go only to members of the workspace: pick from them, never type an address.
   const [members, setMembers] = useState<MemberOut[] | null>(null)
-  const load = useCallback(() => { listGrants(workspace, app.key).then(setGrants, () => setGrants([])) }, [workspace, app.key])
+  const load = useCallback(() => {
+    listGrants(workspace, app.key).then((gs) => setGrants(gs.filter((g) => g.role !== 'maintainer')), () => setGrants([]))
+  }, [workspace, app.key])
   useEffect(load, [load])
   useEffect(() => { listMembers(workspace).then(setMembers, () => setMembers([])) }, [workspace])
-  const roles = ['maintainer', ...Object.keys((app.manifest as { roles?: Record<string, unknown> } | null)?.roles ?? {})]
+  const roles = Object.keys((app.manifest as { roles?: Record<string, unknown> } | null)?.roles ?? {})
+  if (roles.length === 0) return null
   const candidates: Candidate[] = (members ?? []).map((m) => ({ user_id: m.user_id, email: m.email, display_name: m.email }))
   return (
     <Section title="Who has which role in this app">
       <p className="mb-2 text-sm text-muted-foreground">
-        A <b>maintainer</b> customizes the app (drafts, tests, publishes ordinary changes) without being a workspace admin — the
-        head of HR for Hiring, or the agent you ask. The app's own roles come with workspace roles; give one here to someone who needs it.
+        The app's own roles come with workspace roles; give one here to someone who needs it.
       </p>
       <ul className="mb-3 divide-y divide-border text-sm">
         {grants.map((g) => (
@@ -649,9 +665,67 @@ function Maintainers({ workspace, app }: { workspace: string; app: InstalledApp 
         ))}
         {grants.length === 0 && <li className="py-1.5 text-muted-foreground">Nobody yet.</li>}
       </ul>
-      <AddPeoplePicker candidates={candidates} loading={members === null} options={roleOptions(roles)} defaultRole="maintainer"
+      <AddPeoplePicker candidates={candidates} loading={members === null} options={roleOptions(roles)}
         onAdd={(email, role) => addGrant(workspace, app.key, email, role).then(load)} />
       <p className="mt-1 text-xs text-muted-foreground">Only members of this workspace are listed. Add someone to the workspace first to give them a role here.</p>
+    </Section>
+  )
+}
+
+const LEVELS: { value: MaintainerLevel; label: string }[] = [
+  { value: 'content', label: 'Content only' },
+  { value: 'permissions', label: 'Content and permissions' },
+]
+
+/** Who may publish new versions of this one app without an admin each time — a person, or
+ * an agent whose login is a member — and how far: content only, or permissions too. */
+function Publishers({ workspace, app }: { workspace: string; app: InstalledApp }) {
+  const [rows, setRows] = useState<AppMaintainer[]>([])
+  const [members, setMembers] = useState<MemberOut[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const load = useCallback(() => { listMaintainers(workspace, app.key).then(setRows, () => setRows([])) }, [workspace, app.key])
+  useEffect(load, [load])
+  useEffect(() => { listMembers(workspace).then(setMembers, () => setMembers([])) }, [workspace])
+  const candidates: Candidate[] = (members ?? []).map((m) => ({ user_id: m.user_id, email: m.email, display_name: m.display_name || m.email }))
+  const change = (fn: () => Promise<unknown>) => {
+    setError(null)
+    fn().then(load, (e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }
+  return (
+    <Section title="Who can publish new versions">
+      <p className="mb-2 text-sm text-muted-foreground">
+        A maintainer drafts, tests and publishes new versions of {app.name} without asking an admin each time — the person who
+        runs it, or an agent that works on it. <b>Content only</b>: versions that change nothing about who can see or do what.{' '}
+        <b>Content and permissions</b>: also versions that change its Salesforce calls, the browser tabs it opens beside, its
+        roles or its public pages — you approve that ahead of time. Every version records who published it and what it changed.
+      </p>
+      {error && <div className="mb-2 text-sm text-destructive">{error}</div>}
+      <table className="mb-3 w-full text-sm">
+        <tbody>
+          {rows.map((r) => (
+            <Tr rule="bottom-last" key={r.id}>
+              <Td density="cozy">{r.name}{r.agent && <span className="ml-1 text-xs text-muted-foreground">agent</span>}
+                <div className="text-xs text-muted-foreground">{r.email}</div></Td>
+              <td>
+                <select className="rounded-md border border-border bg-background px-2 py-1 text-sm" aria-label={`Level for ${r.name}`}
+                  value={r.level} onChange={(e) => change(() => setMaintainer(workspace, app.key, r.email, e.target.value as MaintainerLevel))}>
+                  {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                </select>
+              </td>
+              <Td density="none" tone="muted" className="text-xs">{r.granted_by ? `by ${r.granted_by}, ` : ''}{r.granted_at.slice(0, 10)}</Td>
+              <Td density="none" align="right">
+                <button type="button" className="text-xs text-muted-foreground hover:text-destructive"
+                  onClick={() => window.confirm(`Stop ${r.name} publishing new versions of ${app.name}?`)
+                    && change(() => removeMaintainer(workspace, app.key, r.id))}>Remove</button>
+              </Td>
+            </Tr>
+          ))}
+          {rows.length === 0 && <Tr><Td density="cozy" tone="muted">Only workspace admins, for now.</Td></Tr>}
+        </tbody>
+      </table>
+      <AddPeoplePicker candidates={candidates} loading={members === null} options={LEVELS} defaultRole="content"
+        onAdd={(email, level) => setMaintainer(workspace, app.key, email, level as MaintainerLevel).then(load)} />
+      <p className="mt-1 text-xs text-muted-foreground">Only members of this workspace are listed; an agent appears once its login is a member.</p>
     </Section>
   )
 }

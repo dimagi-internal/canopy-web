@@ -60,8 +60,10 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
     a zero-knowledge WORKSPACE vault waiting on it accepts their signature under
     (`workspace_vouch`).
 
-    A member cannot wrap the key (only its managers grant), but their
-    approval signs the machine: a keeper then wraps to it, with nobody else asked.
+    Their approval signs the machine, and when they hold their own copy of the vault key
+    (`my_wrap`) their browser hands the key to the machine itself
+    (`zk.add_own_device_wraps`); otherwise a keeper wraps to the signed machine, with
+    nobody else asked.
     Without this, a member who approved their own box would be told nothing and the
     agent's owner would get a "no vault-key wrap" alert. The agents `zk_agents_waiting_on` lists are left out: their
     manager grants directly."""
@@ -83,7 +85,9 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
         if role is None or (agent.is_admin(user) and vault_members.is_admin(role)):
             continue
         if device_keys.runner_serves_agent(key.runner, agent, facts) and zk.device_waits(agent, key):
-            out.append(DeviceKeyVouchOut(slug=agent.slug, agent_id=str(agent.pk)))
+            mine = zk.my_wrap(agent, user)
+            out.append(DeviceKeyVouchOut(slug=agent.slug, agent_id=str(agent.pk), kv=agent.zk_kv,
+                                         my_wrap=mine.wrap if mine is not None else None))
     # And for each zero-knowledge workspace vault waiting on the machine: the agents it
     # serves that the person signs under, whatever their kv and whoever administers them
     # (DIM-SA-W175 ran only a kv-0 agent its person owns, so nothing above named it).

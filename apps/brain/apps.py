@@ -20,6 +20,14 @@ class BrainConfig(AppConfig):
         ticks.register("brain.disclosure", _disclosure, 60 * 60)
         # A learner runs where it is aimed, on each target's own canopy schedule: its fire starts a brain run.
         targets.register()
+        # A person's record of what was read of their words, and of what they agreed to, outlives the event log's
+        # pruning: the disclosure summary is recomputed from the reads, and the cascade asks who ever agreed.
+        from apps.events import services as events  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        from . import consent, readers  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        events.keep(readers.EVENT_SOURCE, "a person's disclosure summary is recomputed from these (apps/brain)")
+        events.keep(consent.SOURCE, "who ever agreed to a learning class (apps/brain/cascade.ever_agreed)")
 
 
 def _associate() -> None:

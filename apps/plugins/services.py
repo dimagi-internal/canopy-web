@@ -71,7 +71,9 @@ def member_agents(user) -> list[Agent]:
     slugs = wsvc.user_workspace_slugs(user)
     if not slugs:
         return []
-    agents = (Agent.objects.filter(workspace_id__in=slugs).exclude(repo_url="")
+    # A stored agent is in no catalog: a laptop gets it with `canopy agent use`, which
+    # materializes it (docs/architecture/stored-agents.md).
+    agents = (Agent.objects.filter(workspace_id__in=slugs).exclude(repo_url="").exclude(source=Agent.STORED)
               .order_by("created_at", "slug"))
     return [a for a in agents if agent_repo(a)]
 

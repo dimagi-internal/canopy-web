@@ -107,6 +107,7 @@ INSTALLED_APPS = [
     "apps.session_sharing",
     "apps.push",
     "apps.approvals",
+    "apps.agent_definitions",
     "apps.agents",
     "apps.agent_runs",
     "apps.workspaces",
@@ -153,6 +154,7 @@ MIDDLEWARE = [
     # The dynamic-view frame (apps/dynamic_views/frame.py): same reason — it runs
     # generated code, so it is answered before sessions and can never set a cookie.
     "apps.dynamic_views.frame.DynamicViewFrameMiddleware",
+    "apps.workspace_apps.bundles.BundleMiddleware",  # bundle pages' files: sessionless, like the frame
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "config.static_middleware.CanopyWhiteNoiseMiddleware",  # WhiteNoise, minus `/` (see module)
@@ -360,6 +362,21 @@ HCP_VERTEX_LOCATION = env("HCP_VERTEX_LOCATION", default="us-central1")
 HCP_VERTEX_WIF_AUDIENCE = env("HCP_VERTEX_WIF_AUDIENCE", default="")
 HCP_VERTEX_SERVICE_ACCOUNT = env("HCP_VERTEX_SERVICE_ACCOUNT", default="")
 
+# --- AI for app pages (apps/workspace_apps/ai.py, `canopy.ai.complete`) ---
+# The ONE place model ids live: a page asks for an alias ("fast" | "smart"), never a model.
+# `vertex/<gemini model>` is Gemini on Vertex; `vertex/anthropic/<claude model>` is Claude on
+# Vertex (needs Claude enabled in HCP_VERTEX_PROJECT's Model Garden). Same identity and same
+# zero-retention gate as memory (HCP_VERTEX_* above); off when HCP_VERTEX_PROJECT is empty.
+APP_AI_MODELS = {
+    "fast": env("APP_AI_FAST_MODEL", default="vertex/gemini-3.5-flash"),
+    "smart": env("APP_AI_SMART_MODEL", default="vertex/gemini-3.1-pro-preview"),
+}
+# Vertex location for these calls: Gemini 3.x and Claude are served on `global`.
+APP_AI_LOCATION = env("APP_AI_LOCATION", default="global")
+# Per viewer, across every app: calls in the last hour / last day (`AppAiCall` rows).
+APP_AI_PER_HOUR = env.int("APP_AI_PER_HOUR", default=120)
+APP_AI_PER_DAY = env.int("APP_AI_PER_DAY", default=600)
+
 # --- Knowledge-base search reranker (apps/agents/kb_rerank.py) ---
 # Orders KB search's word and card matches: a Vertex AI ranking API model (e.g.
 # `semantic-ranker-default@latest`), memory's identity. Empty = off. Needs the Discovery
@@ -535,6 +552,12 @@ CANOPY_TRUSTED_PROXY_HOPS = env.int("CANOPY_TRUSTED_PROXY_HOPS", default=1)
 # Per-user write rate limit for mutating MCP tools (e.g. delete_project).
 MCP_WRITE_LIMIT = env.int("MCP_WRITE_LIMIT", default=10)
 MCP_WRITE_WINDOW_SECONDS = env.int("MCP_WRITE_WINDOW_SECONDS", default=60)
+
+# --- Contacts' sends (apps/embedding/rate_limit.py::check_contact_send) ---
+# Per contact: every message a contact sends starts a turn on a runner, and a contact
+# has no budget of their own. Over either is a 429 `rate_limited`.
+CONTACT_SEND_PER_MINUTE = env.int("CONTACT_SEND_PER_MINUTE", default=6)
+CONTACT_SEND_PER_DAY = env.int("CONTACT_SEND_PER_DAY", default=200)
 
 # --- Web Push (VAPID) ---
 # The PUBLIC key is not a secret — it ships in the JS bundle; the browser needs
@@ -826,24 +849,40 @@ else:
 MAIL_ENABLED = env.bool("MAIL_ENABLED", default=False)
 MAIL_SES_REGION = env("MAIL_SES_REGION", default=CANOPY_SES_REGION)
 
-# AWS roles canopy-web vends to agents for one hour (apps/agents/api_aws.py):
+# AWS roles canopy-web vends to agents for at most an hour at a time (apps/agents/api_aws.py):
 # name -> role ARN, JSON. Each role's trust policy must also name canopy-web's task
 # role, and the task role must be allowed to assume it (canopy-web-task-role.cfn.yaml).
-# `labs-read` is connect-labs' read-only, non-sensitive role
-# (infra/labs-observe-readonly.yml): metrics, alarms, resource and RDS metadata; no
-# log events, object bodies, secrets or task env. `labs-observe` is its old name,
-# kept so older canopy CLIs and existing profiles keep working. `labs-readwrite`
-# (infra/labs-agent-readwrite.yml) changes agent-named RDS copies of production and
-# runs one psql client task; production is source-only.
+# What each role can do is CANOPY_AWS_ROLE_SUMMARIES, the line an approver reads.
 CANOPY_AWS_ROLES = env.json("CANOPY_AWS_ROLES", default={
     "labs-read": "arn:aws:iam::858923557655:role/labs-jj-observe-readonly",
     "labs-observe": "arn:aws:iam::858923557655:role/labs-jj-observe-readonly",
     "labs-readwrite": "arn:aws:iam::858923557655:role/labs-jj-agent-readwrite",
+    "labs-config": "arn:aws:iam::858923557655:role/labs-jj-agent-config",
 })
-# Roles only some agents get: name -> agent slugs. A role not listed here goes to any
-# agent that may ask; one listed goes to those agents only (403 for the rest).
+# One line per role: what it can do, in the words the approval page shows
+# (connect-labs infra/labs-observe-readonly.yml, labs-agent-readwrite.yml, labs-agent-config.yml).
+# `labs-observe` is labs-read's old name, kept so older canopy CLIs and profiles keep working.
+CANOPY_AWS_ROLE_SUMMARIES = env.json("CANOPY_AWS_ROLE_SUMMARIES", default={
+    "labs-read": "Read everything in labs (AWS ReadOnlyAccess): raw app and load-balancer logs, S3 "
+                 "objects, task definitions, CloudTrail. No secret values, no exec, no writes.",
+    "labs-observe": "Read everything in labs (AWS ReadOnlyAccess): raw app and load-balancer logs, S3 "
+                    "objects, task definitions, CloudTrail. No secret values, no exec, no writes.",
+    "labs-readwrite": "Administer labs (AWS AdministratorAccess) minus guardrails: no org, SSO or IAM-user "
+                      "changes, no edits to the access roles, no audit tampering, production database "
+                      "and backups not deletable, no snapshot sharing.",
+    "labs-config": "Create and update labs app secrets named labs-jj-app-*. It never reads a secret "
+                   "value, deletes nothing and changes no IAM.",
+})
+# Fenced roles: name -> the agents that get the role with no approval. A listed role goes to
+# the agents named, and to any other agent only while it holds a grant a person approved with a
+# passkey (POST /api/agents/{slug}/aws-role-requests). Every role is fenced: labs-read is
+# standing only for the devops agents, Ada and Hal; the write roles are request-only for
+# every agent. labs-observe is labs-read's old name and is fenced the same.
 CANOPY_AWS_ROLE_AGENTS = env.json("CANOPY_AWS_ROLE_AGENTS", default={
-    "labs-readwrite": ["hal", "ada"],
+    "labs-read": ["ada", "hal"],
+    "labs-observe": ["ada", "hal"],
+    "labs-readwrite": [],
+    "labs-config": [],
 })
 CANOPY_AWS_STS_REGION = env("CANOPY_AWS_STS_REGION", default="us-east-1")
 MAIL_INBOUND_BUCKET = env("MAIL_INBOUND_BUCKET", default="")

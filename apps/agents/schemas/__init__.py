@@ -183,6 +183,19 @@ from .skills import (
     SkillHistoryOut,
     SkillHistorySkillOut,
 )
+from .project_files import (
+    ProjectFileChangeIn,
+    ProjectFileChangeOut,
+    ProjectFileEntryOut,
+    ProjectFileOut,
+    ProjectFilesDraftIn,
+    ProjectFilesOut,
+    ProjectFilesPublishIn,
+    ProjectFilesRevisionOut,
+    ProjectFilesRevisionSummaryOut,
+    ProjectFilesRollbackIn,
+    ProjectSkillFilesOut,
+)
 from .tasks import (
     ActionAppliedIn,
     ActOut,
@@ -313,6 +326,7 @@ from .vault import (
     ZkEndorsementOut,
     ZkEndorsementsIn,
     ZkEndorsementsOut,
+    ZkMyWrapsOut,
     ZkRecipientOut,
     ZkRecipientsOut,
     ZkRotateIn,
@@ -328,6 +342,17 @@ from .vault import (
 )
 
 __all__ = [
+    "ProjectFileChangeIn",
+    "ProjectFileChangeOut",
+    "ProjectFileEntryOut",
+    "ProjectFileOut",
+    "ProjectFilesDraftIn",
+    "ProjectFilesOut",
+    "ProjectFilesPublishIn",
+    "ProjectFilesRevisionOut",
+    "ProjectFilesRevisionSummaryOut",
+    "ProjectFilesRollbackIn",
+    "ProjectSkillFilesOut",
     "Recurrence",
     "SpawnIn",
     "AgentRoleIn",
@@ -610,6 +635,7 @@ __all__ = [
     "ZkEndorsementOut",
     "ZkEndorsementsIn",
     "ZkEndorsementsOut",
+    "ZkMyWrapsOut",
     "ZkRecipientOut",
     "ZkRecipientsOut",
     "ZkRotateIn",

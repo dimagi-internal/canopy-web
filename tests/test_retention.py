@@ -145,6 +145,9 @@ def test_vocabularies_match_their_definitions():
     assert policy.SLACK_THREAD_KEY == SLACK_THREAD_KEY
     assert policy.SLACK_DETACHED_KEY == DETACHED_KEY
     assert policy.EMAIL_THREAD_KEY == EMAIL_THREAD_KEY
+    from apps.canopy_sessions.services import RELAY_CHANNEL_KEY
+
+    assert policy.RELAY_CHANNEL_KEY == RELAY_CHANNEL_KEY
 
 
 def test_how_a_chat_is_described():
@@ -154,6 +157,7 @@ def test_how_a_chat_is_described():
     assert policy.chat_source(metadata={"slack_detached": [{}]}, origin="runner") == "slack"
     assert policy.chat_source(metadata={}, origin="runner") == "emdash"
     assert policy.chat_source(metadata={}, origin="web") == "canopy_web_chat"
+    assert policy.chat_source(metadata={"relay_channel": "personalid"}, origin="web") == "site_message"
     assert policy.chat_principal(contact_id=3, created_by_id=None) == "contact"
     assert policy.chat_principal(contact_id=None, created_by_id=1) == "member"
     assert policy.chat_principal(contact_id=None, created_by_id=None) == "system"

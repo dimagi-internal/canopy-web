@@ -210,6 +210,16 @@ def execution_statement(audience: str, facts: dict, *, access_token: str | None 
                                         jkt=dpop_jkt(), access_token=access_token, rpc=rpc)
 
 
+def subject_statement(audience: str, facts: dict, *, rpc: str | None = None) -> str:
+    """The subject statement (`Authorization: CanopySubject`) for ONE request an agent's turn
+    makes to a host for one of the host's own contacts, with no grant
+    (`host_gateway.resolve`'s subject mode): `facts` is `{sub, site, agent, turn, session,
+    capability}`, `sub` the contact's `external_id` from the turn's initiator. Signed by the
+    client key the host already trusts, bound to canopy's DPoP key and the JSON-RPC request,
+    60s, single-use."""
+    return consumer.subject_statement(_client_key(), client_id(), audience, jkt=dpop_jkt(), rpc=rpc, **facts)
+
+
 def view_statement(audience: str, *, subject: str, uri: str, session: str, access_token: str,
                    viewer: str = "", agent: str = "", rpc: str | None = None) -> str:
     """`Canopy-View` for ONE request a person's own View makes to a host
@@ -232,6 +242,17 @@ def sign_sign_off(site_name: str, *, subject: str, sign_off: dict, now: float, j
     believes it exactly as it believes the site agents list."""
     return sign_offs.sign_approval(_client_key(), client_id(), site_name, subject=subject,
                                    sign_off=sign_off, now=now, jti=jti)
+
+
+def sign_reply(audience: str, *, sub: str, site: str, session: str, turn: str, seq: int,
+               text: str, ended: bool, error: str = "", now: float | None = None) -> str:
+    """A reply pushed to a host's `reply_webhook_url` (`reply_relay.py`): the same client
+    key, so a host believes it exactly as it believes `Canopy-Execution`."""
+    from canopy_sdk.host import replies  # noqa: PLC0415 — the host half of the SDK, needed only here
+
+    return replies.sign_reply(_client_key(), client_id(), audience, sub=sub, site=site,
+                              session=session, turn=turn, seq=seq, text=text, ended=ended,
+                              error=error, now=now)
 
 
 def credentials() -> consumer.ClientCredentials:

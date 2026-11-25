@@ -25,6 +25,7 @@ import { prependHistory } from "./history";
 const UNBLOCKING_FRAMES = new Set([
   "chat.stream_start",
   "chat.delta",
+  "chat.live_text",
   "chat.tool_use",
   "chat.tool_result",
 ]);
@@ -53,13 +54,49 @@ export function comparableText(text: string): string {
 export const REDUCER_EVENTS: ReadonlySet<string> = new Set([
   "session.state", "session.activity", "session.stop", "session.menu", "session.subagents",
   "session.turn_status", "session.error", "session.title_updated", "session.queued",
-  "chat.stream_start", "chat.user_message", "chat.delta", "chat.stream_complete",
+  "chat.stream_start", "chat.user_message", "chat.delta", "chat.live_text", "chat.stream_complete",
   "chat.stream_error", "chat.stream_cancelled", "chat.tool_use", "chat.tool_result",
   "draft.updated", "draft.typing", "draft.committed", "draft.discarded",
   "presence.joined", "presence.left",
 ]);
 
+/** The id prefix of a reply being written (`chat.live_text`). */
+export const LIVE_PREFIX = "live:";
+
+/** Is `stored` the finished form of the live reply `live`? The live text is the reply
+ *  so far, so the stored one starts with it; a very short live text must match whole,
+ *  so two replies that merely open the same way are not taken for one. */
+function finishes(stored: string, live: string): boolean {
+  const s = comparableText(stored);
+  const l = comparableText(live);
+  if (!l) return false;
+  return l.length >= 24 ? s.startsWith(l) : s === l;
+}
+
+/** The live replies (`chat.live_text`) whose stored reply has arrived, dropped. Only
+ *  stored replies after the last thing a person said count: an earlier answer that
+ *  began the same way is not this one. Once the turn has settled and its stored reply
+ *  is here, every live reply goes: one the stored rows never repeat (an attempt that
+ *  failed over to another credential) must not stay on screen as if it were said. */
+export function withoutFinishedLive(state: SessionState): SessionState {
+  const messages = state.messages;
+  if (!messages.some((m) => m.id.startsWith(LIVE_PREFIX))) return state;
+  let since = 0;
+  messages.forEach((m, i) => { if (m.role === "user") since = i + 1; });
+  const stored = messages.slice(since).filter(
+    (m) => m.role === "assistant" && !m.id.startsWith(LIVE_PREFIX) && m.plaintext);
+  const settled = Boolean(state.turn_status?.settled) && stored.length > 0;
+  const kept = messages.filter(
+    (m) => !m.id.startsWith(LIVE_PREFIX)
+      || (!settled && !stored.some((s) => finishes(s.plaintext, m.plaintext))));
+  return kept.length === messages.length ? state : { ...state, messages: kept };
+}
+
 export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState {
+  return withoutFinishedLive(reduce(prev, frame));
+}
+
+function reduce(prev: SessionState, frame: WsEvent): SessionState {
   if (frame.event === "chat.stream_start" || frame.event === "draft.committed") {
     // A new turn is starting, so the previous turn's stop outcome is history —
     // leaving "your stop did not take" pinned over fresh work would be a stale
@@ -255,6 +292,33 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         ...(frame.data.automatic ? { automatic: true } : {}),
       };
       return { ...prev, messages: placeByOrdinal(prev.messages, user) };
+    }
+
+    case "chat.live_text": {
+      // Upsert, whole: a watcher that missed an update still shows all of it, and
+      // `withoutFinishedLive` drops it once the stored reply is here.
+      const { message_id, text } = frame.data;
+      if (prev.messages.some((m) => m.id === message_id)) {
+        return {
+          ...prev,
+          messages: prev.messages.map((m) =>
+            m.id === message_id ? { ...m, plaintext: text, status: "streaming" as const } : m),
+        };
+      }
+      const nowIso = new Date().toISOString();
+      const live: Message = {
+        id: message_id,
+        turn_index: Number.MAX_SAFE_INTEGER,
+        role: "assistant",
+        content: {},
+        plaintext: text,
+        status: "streaming",
+        error_detail: null,
+        started_at: nowIso,
+        completed_at: null,
+        created_at: nowIso,
+      };
+      return { ...prev, messages: [...prev.messages, live] };
     }
 
     case "chat.delta":

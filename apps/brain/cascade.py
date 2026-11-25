@@ -28,9 +28,9 @@ every later read; it destroys nothing already made. (Someone who once agreed and
 joined: that fails safe.)
 
 It is a tombstone, not a toggle: a withdrawn output stays withdrawn when the person lets the session back in
-(`consent.include`), when a replay emits it again (`emit_allowed`) or when a runner ships the rows again. Other
-stores that keep `OutputLineage` register with `register_store` and are asked to withdraw or mark stale the same
-way. The sweep is idempotent and skips what is already withdrawn."""
+(`consent.include`), when a replay emits it again (`emit_allowed`) or when a runner ships the rows again. The
+one other store that keeps lineage, personal memory, is swept by name (`hcp_store.sweep`). The sweep is idempotent and
+skips what is already withdrawn."""
 from __future__ import annotations
 
 import logging
@@ -41,7 +41,10 @@ from django.db.models import CharField, Q
 from django.db.models.functions import Cast
 from django.utils import timezone
 
-from . import participants
+from apps.canopy_sessions import content_deletion
+from apps.events.models import Event
+
+from . import hcp_store, participants
 from .eligibility import covers, rule_denies
 from .models import (
     ABOUT_A_PERSON,
@@ -58,25 +61,12 @@ from .models import (
     SourceExclusion,
     SourceLink,
     SourceParticipant,
+    person_id,
 )
 
 logger = logging.getLogger(__name__)
 
 OUTPUT_KIND = "brain.output"
-WITHDRAW, STALE = "withdraw", "stale"
-
-#: `output_kind` -> `fn(output_id, mode, reason)`. Registered by the app that owns the store (an HCP entry:
-#: the memory store registers itself beside the person's memory page; nothing here touches it).
-_STORES: dict = {}
-
-
-def register_store(kind: str, fn) -> None:
-    """Ask `fn(output_id, mode, reason)` to withdraw (`WITHDRAW`) or mark (`STALE`) what `kind` holds."""
-    _STORES[kind] = fn
-
-
-def stores() -> dict:
-    return dict(_STORES)
 
 
 def removed_reason(source: BrainSource | None, output_class: str, subject_user_id, scope, *,
@@ -131,9 +121,7 @@ def ever_agreed(user_id, cls: str, memo: dict | None = None) -> bool:
     memo = {} if memo is None else memo
     key = (user_id, cls)
     if key not in memo:
-        from apps.events.models import Event  # noqa: PLC0415 — as the other lazy imports here
-
-        from . import consent  # noqa: PLC0415 — consent imports this module
+        from . import consent  # noqa: PLC0415 — cycle: consent -> cascade
 
         held = LearningConsent.objects.filter(user_id=user_id).values_list("classes", flat=True)
         found = any(cls in (c or []) for c in held)
@@ -220,8 +208,8 @@ def sweep(source_ids=None) -> dict:
     """One pass. `source_ids` narrows it to outputs citing those sources (the prompt run after an act); none
     looks at everything not yet withdrawn (the tick). Returns counts."""
     done = {"withdrawn": 0, "stale": 0, "unchanged": 0, "sources": withdraw_sources_whose_words_are_gone()}
-    live = (BrainOutput.objects.exclude(state=BrainOutput.WITHDRAWN).annotate(key=Cast("pk", CharField()))
-            .values("key"))
+    live = (BrainOutput.objects.exclude(state=BrainOutput.WITHDRAWN).annotate(pk_text=Cast("pk", CharField()))
+            .values("pk_text"))
     lineage = OutputLineage.objects.filter(output_kind=OUTPUT_KIND, output_id__in=live)
     if source_ids is not None:
         affected = set(lineage.filter(source_id__in=list(source_ids)).values_list("output_id", flat=True))
@@ -237,7 +225,7 @@ def sweep(source_ids=None) -> dict:
         out = outputs.get(oid)
         if out is None:
             continue
-        subject = int(out.subject) if out.subject_type == "person" and out.subject.isdecimal() else None
+        subject = out.subject_user_id
         gone = []
         for r in rows:
             key = (r.source_id, out.capability_id, out.run.purpose if out.run_id else "", subject,
@@ -251,10 +239,10 @@ def sweep(source_ids=None) -> dict:
         if gone:
             done[_apply_output(out, gone, len(rows))] += 1
     scrub_link_evidence(source_ids, memo)
+    from . import lineage  # noqa: PLC0415 — cycle: lineage -> cascade
+
+    done["artifacts"] = lineage.sweep(source_ids, memo)
     done["runs"] = scrub_runs(source_ids, memo)
-    for kind, fn in _STORES.items():
-        _sweep_store(kind, fn, source_ids)
-    from . import hcp_store  # noqa: PLC0415 — contacts imports this app; the store loads late
 
     done["memory_entries"] = hcp_store.sweep(source_ids, memo)
     return done
@@ -266,22 +254,20 @@ def scrub_runs(source_ids=None, memo: dict | None = None) -> int:
     scrubbed source by source. Who is in the source now is the scope, less anyone who joined since
     (`removed_reason`). Only runs whose conversation is still there are looked at, each distinct (source, feature,
     purpose, subject) once. A run whose turn is still working is left for the next sweep."""
-    from apps.canopy_sessions import content_deletion  # noqa: PLC0415 — canopy_sessions imports this app
-
     memo = {} if memo is None else memo
     reads = BrainRunRead.objects.filter(run__session__isnull=False, run__session__content_deleted_at__isnull=True)
     if source_ids is not None:
         reads = reads.filter(source_id__in=list(source_ids))
     rows = list(reads.values_list("run_id", "source_id", "run__capability_id", "run__capability__purpose_class",
-                                  "run__capability__slug", "run__purpose", "run__subject").distinct())
+                                  "run__capability__slug", "run__purpose", "run__subject_type", "run__subject").distinct())
     srcs = {s.pk: s for s in BrainSource.objects.filter(pk__in={r[1] for r in rows}).select_related("session")}
     people: dict[int, list[int]] = {}
     seen: dict = {}
     doomed: set[int] = set()
-    for run_id, source_id, cap_id, cls, slug, purpose, run_subject in rows:
+    for run_id, source_id, cap_id, cls, slug, purpose, subject_type, run_subject in rows:
         if run_id in doomed:
             continue
-        subject = int(run_subject) if cls in ABOUT_A_PERSON and (run_subject or "").isdecimal() else None
+        subject = person_id(subject_type, run_subject)
         key = (source_id, cap_id, purpose, subject)
         if key not in seen:
             src = srcs.get(source_id)
@@ -301,23 +287,6 @@ def scrub_runs(source_ids=None, memo: dict | None = None) -> int:
         except Exception:  # noqa: BLE001 — one run must not stop the sweep; the next one tries again
             logger.exception("could not delete the conversation of brain run %s", run.pk)
     return n
-
-
-def _sweep_store(kind: str, fn, source_ids) -> None:
-    qs = OutputLineage.objects.filter(output_kind=kind)
-    if source_ids is not None:
-        qs = qs.filter(source_id__in=list(source_ids))
-    grouped = defaultdict(list)
-    for row in qs.select_related("source__session"):
-        grouped[row.output_id].append(row)
-    for oid, rows in grouped.items():
-        gone = [r for r in rows if removed_reason(r.source, "memory", None, r.participant_scope or []) in
-                ("withdrawn", "sealed")]
-        if gone:
-            try:
-                fn(oid, WITHDRAW if len(gone) == len(rows) else STALE, "a source was removed")
-            except Exception:  # noqa: BLE001 — one store must not stop the sweep
-                logger.exception("could not withdraw %s %s", kind, oid)
 
 
 def after_commit(source_ids=None) -> None:

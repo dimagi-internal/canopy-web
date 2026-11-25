@@ -66,7 +66,11 @@ class ApprovalCardOut(StrictModel):
     summary: str
     status: Status
     workspace: str
-    url: str
+    url: str = Field(description="The request's page, app-relative.")
+    page_url: str = Field(description="The request's page, absolute: the link to give a person.")
+    step_up: bool = Field(description="Approving needs the approver's passkey, so only the request's page "
+                                      "(`page_url`), in a browser, can approve it; Slack, an alert, a token and "
+                                      "an agent can only decline it.")
     requested_by: str
     reason: str
     evidence: list[ApprovalEvidenceOut]

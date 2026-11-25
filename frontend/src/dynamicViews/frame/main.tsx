@@ -4,15 +4,20 @@ import { createRoot } from 'react-dom/client'
 import './frame.css'
 import {
   CHANNEL,
+  CONNECTION_CAPABILITIES,
   frameRejection,
   isMessage,
   type AgentTaskStatus,
   type AppContext,
   type AppOp,
+  type AiAnswer,
+  type AiRequest,
   type AppTaskFilters,
   type BrowserInfo,
   type FrameMessage,
+  type GoogleCatalogue,
   type HostMessage,
+  type ModeInfo,
   type ReadRequest,
   type ViewScope,
 } from '../protocol'
@@ -77,6 +82,68 @@ function ask(msg: (id: number) => FrameMessage): Promise<unknown> {
   })
 }
 
+/** Values to strings, nulls dropped: page params as the URL holds them. */
+function strings(params: Record<string, unknown> = {}): Record<string, string> {
+  return Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))
+}
+
+// ---- canopy.mode and canopy.google (docs/architecture/local-and-server-modes.md) --------------------
+
+let modeNow: ModeInfo = { current: 'server', available: ['server'] }
+let catalogue: GoogleCatalogue = {}
+const modeHandlers = new Set<(mode: ModeInfo) => void>()
+
+function withCode<T>(p: Promise<T>): Promise<T> {
+  return p.catch((e: Error & { error?: string; code?: string }) => {
+    if (e.error) e.code = e.error
+    throw e
+  })
+}
+
+/** The page's mode, chosen by the person: what `canopy.google` runs in. Never switched by a failure. */
+const modeApi = {
+  /** 'local' (the tab beside the extension's panel) or 'server' (through canopy-web). */
+  get current() { return modeNow.current },
+  /** The modes this page may be in: ['server'] anywhere but the extension's panel. */
+  get available() { return [...modeNow.available] },
+  /** Switch this app's mode, from a click (the panel's own switch does the same). */
+  set: (mode: 'local' | 'server') =>
+    withCode(ask((id) => ({ channel: CHANNEL, type: 'mode-set', id, mode }))) as Promise<ModeInfo>,
+  /** Hear a switch of mode. Returns an unsubscribe. */
+  on(handler: (mode: ModeInfo) => void) {
+    if (typeof handler !== 'function') throw new Error('canopy.mode.on(handler): handler must be a function')
+    modeHandlers.add(handler)
+    return () => { modeHandlers.delete(handler) }
+  },
+}
+
+/** Google operations by name, run in the page's mode. Each answer carries the `mode` it ran in; an
+ *  operation the mode lacks rejects `not_in_mode`, a local one with nothing on screen `not_on_screen`. */
+const run = (op: string, args: Record<string, unknown> = {}) =>
+  withCode(ask((id) => ({ channel: CHANNEL, type: 'google', id, op, args })))
+const googleApi = {
+  /** {op: {modes, act, summary}}: what each operation does and where it runs. */
+  get ops() { return JSON.parse(JSON.stringify(catalogue)) as GoogleCatalogue },
+  /** Whether `op` runs in the page's mode now. */
+  can: (op: string) => !!catalogue[op]?.modes.includes(modeNow.current),
+  run,
+  gmail: {
+    /** {mode, threadId, subject, gmailUrl, messages: [...]}, oldest first. Local: the thread on screen. */
+    thread: (args: { threadId?: string } = {}) => run('gmail.thread', args),
+    /** A new email or a reply, never sent, from a click. Local: open on screen; server: saved in Drafts. */
+    draft: (args: Record<string, unknown>) => run('gmail.draft', args),
+    /** Local only: the email open on screen. */
+    openEmail: () => run('gmail.open_email'),
+    /** Local only: write into the compose window on screen, from a click. */
+    fillCompose: (args: { bodyText: string; mode?: 'insert' | 'replace'; subject?: string }) => run('gmail.fill_compose', args),
+    /** Local only: the compose window's recipients. */
+    composeRecipients: () => run('gmail.compose_recipients'),
+  },
+}
+
+/** The app page drawn now, for `canopy.open(page)` and `canopy.page.setParams` (null on a plain view). */
+let currentApp: AppApi | null = null
+
 const canopy = {
   /** The tab beside the extension's panel (`browserApi`); null outside the panel. */
   browser: null as ReturnType<typeof browserApi> | null,
@@ -88,6 +155,36 @@ const canopy = {
   },
   navigate(path: string) {
     if (typeof path === 'string' && path) toHost({ channel: CHANNEL, type: 'navigate', path })
+  },
+  /** An https address in a new tab (from a click), or, on an app page, another page of the app by slug
+   * (`{newTab: true}` for a tab). Resolves once canopy opened it; rejects with the reason. */
+  open(target: string, params: Record<string, unknown> = {}, options: { newTab?: boolean } = {}): Promise<unknown> {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(String(target ?? ''))) {
+      return ask((id) => ({ channel: CHANNEL, type: 'open-url', id, url: String(target) }))
+    }
+    if (!currentApp) return Promise.reject(new Error('canopy.open(page) works on a workspace app\'s page; give an https address otherwise'))
+    currentApp.go(target, params, options)
+    return Promise.resolve(null)
+  },
+  /** `canopy.open(url)` for an https address, by a name that says so. */
+  openExternal(url: string): Promise<unknown> {
+    return ask((id) => ({ channel: CHANNEL, type: 'open-url', id, url: String(url ?? '') }))
+  },
+  /** Copy text to the viewer's clipboard, from a click. */
+  clipboard: {
+    write(text: string): Promise<unknown> {
+      return ask((id) => ({ channel: CHANNEL, type: 'clipboard', id, text: String(text ?? '') }))
+    },
+  },
+  /** canopy's AI model, for a member page of an app that declares `ai` (docs/architecture/app-ai.md). */
+  ai: {
+    complete(request: AiRequest): Promise<AiAnswer> {
+      return ask((id) => ({ channel: CHANNEL, type: 'app', id, request: { op: 'ai', request } })) as Promise<AiAnswer>
+    },
+  },
+  /** Save a file (text, an ArrayBuffer, a Uint8Array or a Blob), from a click. Resolves {name}. */
+  download(name: string, mime: string, data: unknown): Promise<unknown> {
+    return ask((id) => ({ channel: CHANNEL, type: 'download', id, name, mime, data }))
   },
   /** Give an agent a task the view declares; resolves with its result (see the guide). */
   runAgentTask(request: Record<string, unknown> & { onStatus?: (task: AgentTaskStatus) => void }): Promise<unknown> {
@@ -126,10 +223,14 @@ const canopy = {
   /** Call a connected account the view declares (`connections`), through canopy: resolves {status, body}
    * or rejects with a sentence (`e.message`; `e.error`, and `e.connect_url` when connecting would fix it).
    * A write needs a real click on the page; a read does not. */
+  mode: modeApi,
+  google: googleApi,
   connection: {
-    request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string }) {
+    request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string; allowDuplicates?: boolean; allow_duplicates?: boolean }) {
       return ask((id) => ({ channel: CHANNEL, type: 'connection-call', id, request: req }))
     },
+    /** What this canopy can do for a call, to feature-check: `allow_duplicates`, `gesture_leases`. */
+    capabilities: [...CONNECTION_CAPABILITIES] as string[],
     /** Open this click's window first, to read and dedup before writing: {expires_at, hard_limit_at, writes}. */
     begin() {
       return ask((id) => ({ channel: CHANNEL, type: 'connection-begin', id }))
@@ -161,6 +262,15 @@ const canopy = {
       pageActions.delete(name)
       toHost({ channel: CHANNEL, type: 'page-action-unregister', name })
     },
+    /** Replace this app page's URL parameters (the address bar, a reload, a copied link), with no reload and
+     * no new frame. `app.params` follows. Resolves the params as written. */
+    setParams(params: Record<string, unknown>): Promise<unknown> {
+      const p = strings(params)
+      return ask((id) => ({ channel: CHANNEL, type: 'page-params', id, params: p })).then((written) => {
+        if (currentApp) currentApp.params = written as Record<string, string>
+        return written
+      })
+    },
     /** Open the panel with this question, from a click on the view. */
     ask(text: string) {
       if (typeof text === 'string' && text.trim()) toHost({ channel: CHANNEL, type: 'page-ask', text })
@@ -174,6 +284,8 @@ const canopy = {
 
 /** Handlers a page registered with `canopy.browser.on(event, handler)`, by event. */
 const browserHandlers = new Map<string, Set<(data: unknown) => void>>()
+
+
 
 /**
  * `canopy.browser`: the tab beside the browser extension's panel, for an app page whose
@@ -190,10 +302,12 @@ function browserApi(info: BrowserInfo) {
   return {
     adapter: info.adapter,
     capabilities: [...info.capabilities],
+    /** The capabilities that change the page: call one straight from a click, or it rejects `needs_click`. */
+    acts: [...(info.acts ?? [])],
     events: [...info.events],
     /** `{tab: {url, title}}` while the tab in front matches this page, else null. */
     context: () => call({ op: 'context' }) as Promise<{ tab: { url: string; title: string } } | null>,
-    /** Ask the tab's adapter for a declared capability: resolves its result, or rejects (`e.code`). */
+    /** Ask the tab's adapter for a declared capability: resolves its result, or rejects (`e.code`). An act needs a click. */
     request: (capability: string, args: Record<string, unknown> = {}) => call({ op: 'request', capability, args }),
     /** Hear a declared adapter event (or `context`, when the tab changes). Returns an unsubscribe. */
     on(event: string, handler: (data: unknown) => void) {
@@ -227,9 +341,8 @@ function appApi(ctx: AppContext): AppApi {
       return call({ op: 'upload', collection, field: name, name: file.name, type: file.type, bytes }) as Promise<{ id: number; name: string }>
     },
     openFile: (id) => void call({ op: 'open_file', id }),
-    go(page, params = {}) {
-      const p = Object.fromEntries(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))
-      toHost({ channel: CHANNEL, type: 'go', page, params: p })
+    go(page, params = {}, options = {}) {
+      toHost({ channel: CHANNEL, type: 'go', page, params: strings(params), ...(options?.newTab ? { newTab: true } : {}) })
     },
     refresh: canopy.refresh,
     field,
@@ -293,9 +406,13 @@ function App() {
         document.documentElement.classList.toggle('dark', msg.theme === 'dark')
         browserHandlers.clear()
         canopy.browser = msg.browser ? browserApi(msg.browser) : null
+        modeNow = msg.mode ?? { current: 'server', available: ['server'] }
+        catalogue = msg.google ?? {}
         try {
           const View = compile(msg.code)
-          setState({ kind: 'ready', View, data: msg.data ?? {}, scope: msg.scope, code: msg.code, api: msg.app ? appApi(msg.app) : null })
+          const api = msg.app ? appApi(msg.app) : null
+          currentApp = api
+          setState({ kind: 'ready', View, data: msg.data ?? {}, scope: msg.scope, code: msg.code, api })
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e)
           toHost({ channel: CHANNEL, type: 'error', message })
@@ -308,6 +425,15 @@ function App() {
           statusListeners.get(msg.id)?.(msg.task)
         } catch (e) {
           toHost({ channel: CHANNEL, type: 'error', message: e instanceof Error ? e.message : String(e) })
+        }
+      } else if (msg.type === 'mode') {
+        modeNow = msg.mode
+        for (const handler of modeHandlers) {
+          try {
+            handler({ ...modeNow, available: [...modeNow.available] })
+          } catch (e) {
+            toHost({ channel: CHANNEL, type: 'error', message: e instanceof Error ? e.message : String(e) })
+          }
         }
       } else if (msg.type === 'browser-event') {
         for (const handler of browserHandlers.get(msg.event) ?? []) {
@@ -356,6 +482,18 @@ document.addEventListener('click', (ev) => {
   ev.preventDefault()
   canopy.navigate(href)
 })
+
+// A pointerdown or keydown: the page believes it only if it sees a live click on this frame (gestures.ts),
+// so a drag's drop can still write. At most one message every quarter second.
+let lastGesture = 0
+const gesture = () => {
+  const t = Date.now()
+  if (t - lastGesture < 250) return
+  lastGesture = t
+  toHost({ channel: CHANNEL, type: 'gesture' })
+}
+document.addEventListener('pointerdown', gesture, { capture: true, passive: true })
+document.addEventListener('keydown', gesture, { capture: true, passive: true })
 
 const root = document.getElementById('dv-root')
 if (window.self === window.top || !root) {

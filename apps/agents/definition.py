@@ -1,5 +1,12 @@
 """Which agents share a definition — and what a "definition" even is here.
 
+**A STORED agent is the exception** (`Agent.source == "stored"`): it has no repo, and its
+definition is a file tree canopy-web keeps in revisions (`AgentDefinitionRevision`,
+docs/architecture/stored-agents.md). Its key is `canopy:<workspace>/<slug>`
+(`agent_definition_key`), it shares its definition with no other instance, and runners
+materialize it into a local git repository, so everything below that reads "the repo"
+still has one to read. The rest of this docstring is about repo agents.
+
 **THE DEFINITION IS THE REPO, NOT A DATABASE ROW.** An `Agent` row is one
 tenant's running INSTANCE: its board, its credentials, its turns, its runner
 assignments, its mailbox. What the agent *is* — persona, skills, config — lives
@@ -93,6 +100,14 @@ def definition_key(repo_url: str, repo_ref: str = "") -> str:
     return key
 
 
+def agent_definition_key(agent) -> str:
+    """`definition_key` of an agent: its repo's, or `canopy:<workspace>/<slug>` for a stored
+    agent, whose definition is its own and named by where canopy keeps it."""
+    if getattr(agent, "source", "repo") == "stored":
+        return f"canopy:{agent.workspace_id}/{agent.slug}"
+    return definition_key(agent.repo_url, agent.repo_ref)
+
+
 def siblings(agent):
     """Other agent instances running the SAME definition, across all tenants.
 
@@ -108,7 +123,7 @@ def siblings(agent):
     """
 
     key = definition_key(agent.repo_url, agent.repo_ref)
-    if not key:
+    if not key or agent.source == Agent.STORED:
         return Agent.objects.none()
     same = [
         a.pk

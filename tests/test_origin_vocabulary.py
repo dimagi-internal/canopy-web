@@ -1,4 +1,4 @@
-"""The source vocabulary: six values, legacy aliases normalized at the boundary.
+"""The source vocabulary: eight values, legacy aliases normalized at the boundary.
 
 `origin` is now a ROUTING input, so the set of values a caller
 may supply is deliberately narrower than the set the column holds.
@@ -25,10 +25,11 @@ def _ext() -> str:
 pytestmark = [pytest.mark.django_db, pytest.mark.guard]
 
 
-def test_the_vocabulary_is_exactly_seven_values():
+def test_the_vocabulary_is_exactly_eight_values():
     assert {v for v, _label in Turn.ORIGIN_CHOICES} == {
         "api", "ace_web", "canopy_web_chat", "canopy_scheduler", "email", "slack",
         "local",  # a person's own session on their private runner (apps/harness/local_turns.py)
+        "site_message",  # a host site's relay of a person's message (contact_api.send)
     }
 
 
@@ -85,8 +86,17 @@ def test_an_unknown_origin_is_still_rejected():
 
 def test_routable_sources_exclude_nothing_produced_and_include_the_real_cases():
     assert set(Turn.ROUTABLE_ORIGINS) == {
-        "ace_web", "email", "canopy_scheduler", "canopy_web_chat", "slack", "api",
+        "ace_web", "email", "canopy_scheduler", "canopy_web_chat", "slack", "api", "site_message",
     }
+
+
+def test_only_a_relay_send_may_name_the_site_message_source():
+    from apps.harness.schemas import chat_send_origin
+
+    with pytest.raises(ValueError):
+        chat_send_origin("site_message")
+    assert chat_send_origin("site_message", relay=True) == "site_message"
+    assert Turn.CHAT_SEND_ORIGINS < Turn.RELAY_SEND_ORIGINS
 
 
 def test_both_origin_columns_hold_the_longest_value():

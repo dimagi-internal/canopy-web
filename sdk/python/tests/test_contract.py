@@ -173,6 +173,34 @@ def test_an_oversized_or_unsigned_token_is_refused_before_any_check():
         unverified_header(unsigned)
 
 
+def test_the_site_agents_cap_is_not_every_tokens_cap():
+    # Only the site agents response gets the larger cap; a normal assertion of the
+    # same size is still refused before any check.
+    from canopy_sdk.keys import generate_private_key
+
+    assert contract.MAX_SITE_AGENTS_BYTES > contract.MAX_JWT_BYTES
+    key = generate_private_key("EdDSA")
+    token = jwt.encode({"pad": "x" * (contract.MAX_JWT_BYTES + 1)}, key, algorithm="EdDSA")
+    assert contract.MAX_JWT_BYTES < len(token) < contract.MAX_SITE_AGENTS_BYTES
+    with pytest.raises(ContractError) as exc:
+        unverified_header(token, algorithms=("EdDSA",))
+    assert exc.value.code == "malformed"
+    assert unverified_header(token, algorithms=("EdDSA",),
+                             max_bytes=contract.MAX_SITE_AGENTS_BYTES)["alg"] == "EdDSA"
+
+
+def test_a_visitor_assertion_over_8k_is_still_refused():
+    from canopy_sdk.host import sign_visitor_assertion
+
+    from .helpers import World
+
+    token = sign_visitor_assertion(World().config, "42", extra={"pad": "x" * contract.MAX_JWT_BYTES})
+    assert len(token) > contract.MAX_JWT_BYTES
+    with pytest.raises(ContractError) as exc:
+        unverified_header(token, algorithms=contract.ASSERTION_ALGORITHMS)
+    assert exc.value.code == "malformed"
+
+
 def test_the_only_flag_today_is_sensitive_data():
     assert contract.RUNNER_FLAGS == frozenset({"sensitive_data"})
 

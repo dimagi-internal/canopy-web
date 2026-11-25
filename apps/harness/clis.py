@@ -253,6 +253,20 @@ def confines(report: CliReport) -> bool:
     return report.profiles >= PROFILES_VERSION and report.envelope >= ENVELOPE_VERSION
 
 
+def laptop_cannot_confine_stored(turn, runner) -> bool:
+    """Whether `runner` is a laptop whose code cannot run `turn`, a caller's turn of a
+    stored agent. A laptop confines a caller's turn only on the emdash path (profile
+    files and native deny rules). A laptop that reports `stored_projects` makes the
+    agent's checkout its emdash project and runs the turn there
+    (`stored_agents.ensure_emdash_project` on the runner); an older one has no emdash
+    project for it and fails the turn at create, so it is never handed one."""
+    from apps.harness import stored_agents  # noqa: PLC0415 — models import this module
+    from apps.harness.models import Runner  # noqa: PLC0415 — models import this module
+
+    return (runner.kind == Runner.EMDASH and stored_agents.is_stored(turn.acting_agent)
+            and not int((runner.capabilities or {}).get("stored_projects") or 0))
+
+
 def choose(turn, runner, *, reports: dict[str, CliReport] | None = None,
            ignore_signed_in: bool = False, ignore_requirements: bool = False) -> str | None:
     """The CLI `runner` runs `turn` on, or None when it may not take it at all.
@@ -265,6 +279,8 @@ def choose(turn, runner, *, reports: dict[str, CliReport] | None = None,
     tell a runner-requirement block from any other. Never bypassed by a pin: it is
     a security property for a confined turn, and a turn on a CLI a box lacks cannot
     run at all."""
+    if turn.capability and laptop_cannot_confine_stored(turn, runner):
+        return None
     have = reports if reports is not None else reported(runner)
     sensitive = not ignore_requirements and rr.SENSITIVE_DATA in rr.requirements_of(turn)
     for cli in allowed(turn):
@@ -299,6 +315,10 @@ def blocker(turn, runners) -> str:
         return (f"it holds sensitive data, which runs on {ok} only, and it may run only on "
                 f"{_or(wants)}")
     reports = [reported(r) for r in runners]
+    if turn.capability and runners and all(laptop_cannot_confine_stored(turn, r) for r in runners):
+        return (f"it is a caller's turn of {who}, a stored agent, and the laptops that would take it "
+                f"run an older runner that cannot confine one — update the runner on one of them, "
+                f"or add a cloud runner to {who}'s runner order")
     if turn.capability:
         has = [c for c in wants if any(c in rep for rep in reports)]
         if has:

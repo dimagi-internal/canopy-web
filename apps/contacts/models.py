@@ -356,6 +356,25 @@ class Contact(models.Model):
         "nothing here may be the thing that grants.",
     )
 
+    # --- what the host site owns ---------------------------------------------
+    #
+    # A host site is the SYSTEM OF RECORD for the people it brings
+    # (docs/architecture/host-systems-of-record.md). These four are the host's, written
+    # only by its signed `POST /api/sites/contacts` (`services.apply_host_record`) and
+    # never by a workspace editor; `notes` and `attributes` above stay the workspace's own.
+    #: Where the host's record of this person lives: `<site.person_scheme>://<id>`
+    #: (`canopy_sdk.contacts.check_record_uri`), "" when the host has named none.
+    record_uri = models.CharField(max_length=256, blank=True, default="")
+    #: The host's cache of this person: labels an agent may see on every turn (stage,
+    #: language, programme, consent), never history. At most 40 keys and 4096 bytes
+    #: (`canopy_sdk.contacts.check_profile`).
+    host_profile = models.JSONField(default=dict, blank=True)
+    #: The host's version of the three fields above; a write with a version no newer is
+    #: `stale` and changes nothing, so retries and reordering are safe.
+    host_profile_version = models.BigIntegerField(default=0)
+    #: When the host's signed update that set them was issued (`iat`).
+    host_profile_signed_at = models.DateTimeField(null=True, blank=True)
+
     #: Set to stop this person reaching an agent at all.
     #:
     #: A contact is the one principal an outsider can cause canopy to create —
@@ -455,6 +474,37 @@ class Contact(models.Model):
         whoever later finds it matching a widget visitor.
         """
         return self.AUTH_RANK.get(self.auth_result, 0) >= self.AUTH_RANK[grade]
+
+
+class ContactErasure(models.Model):
+    """A host site made canopy forget one of its people (`services.erase`, its signed
+    `POST /api/sites/contacts/erase`): the record that it did, and nothing about the person
+    but the host's own id for them.
+
+    The host is the system of record (docs/architecture/host-systems-of-record.md), so
+    when it says a person is gone canopy deletes the contact, its conversations and their
+    words, its tokens and act-as-you permissions, the facts recorded about them in that
+    workspace, and the `Person` when nothing else holds it. This row is what stays: so an
+    erasure is provable, so an update the host signed BEFORE it cannot bring the person
+    back (`services.apply_host_record`), and so a later arrival is visibly a new one.
+    Keyed `(app, external_id)`, the contact's own key; erasing again only moves `erased_at`.
+    """
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="contact_erasures")
+    app = models.ForeignKey("tokens.AppCredential", on_delete=models.CASCADE, related_name="contact_erasures")
+    #: The host's own id for the person: the contact's `external_id`.
+    external_id = models.CharField(max_length=200)
+    erased_at = models.DateTimeField()
+    #: Who asked: `host` (the site's signed erasure) or `retention`.
+    reason = models.CharField(max_length=32, default="host")
+
+    class Meta:
+        db_table = "contact_erasures"
+        constraints = [models.UniqueConstraint(fields=["app", "external_id"], name="one_erasure_per_app_person")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"erased {self.app_id}:{self.pk} at {self.erased_at:%Y-%m-%d}"
 
 
 # --- the fleet brain: what agents know about a person --------------

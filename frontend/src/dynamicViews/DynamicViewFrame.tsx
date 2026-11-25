@@ -26,6 +26,9 @@ import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, ty
 import { connectReturnTo, resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
 import { ViewPagePanel } from './pagePanel'
 import { runTaskAction, type TaskAction } from './taskActions'
+import { Gestures } from './gestures'
+import { OpError, opsCatalogue, runGoogleOp } from './googleOps'
+import { checkDownload, cleanParams, externalUrl, MAX_CLIPBOARD_CHARS, type Download } from './frameOut'
 import { currentAssistant } from '@/widget/assistant'
 import {
   CHANNEL,
@@ -34,8 +37,11 @@ import {
   type AppContext,
   type AppOp,
   type BrowserInfo,
+  type BundleInfo,
   type FrameMessage,
   type HostMessage,
+  type Mode,
+  type ModeInfo,
   type ReadRequest,
   type ViewScope,
 } from './protocol'
@@ -51,7 +57,15 @@ export interface FrameView {
   task_actions?: readonly string[]
   /** Drawn from unsaved edits: there is no revision to call as. */
   preview?: boolean
+  /** A workspace app's bundle page: the frame loads `src` (one of the app's own HTML files, served
+   *  sandboxed by apps/workspace_apps/bundles.py) instead of compiling `code`. */
+  bundle?: BundleInfo & { src: string }
 }
+
+/** A bundle page keeps its own `<form>` submit handlers: the submit event needs `allow-forms`, and the
+ *  bundle's CSP (`form-action 'none'`) keeps anything from being submitted. Never `allow-same-origin`. */
+const BUNDLE_SANDBOX = 'allow-scripts allow-forms'
+
 
 /** What the frame is told about a task: its progress, not the request it was sent. */
 function statusOf(t: AgentTask): AgentTaskStatus {
@@ -74,10 +88,18 @@ function message(e: unknown): string {
 export interface BrowserHost {
   info: BrowserInfo
   context(): { tab: { url: string; title: string } } | null
-  request(capability: unknown, args: unknown): Promise<unknown>
+  /** `clicked`: a click on this frame, read by the page when the call arrived (an act needs one). */
+  request(capability: unknown, args: unknown, clicked: boolean): Promise<unknown>
   open(url: unknown): void
   /** Admitted adapter events, and `context` when the tab changes; returns an unsubscribe. */
   subscribe(listener: (event: string, data: unknown) => void): () => void
+  /** The person's mode for this app (`ext/modeStore.ts`): what `canopy.google` runs in. */
+  mode: { get(): Mode; set(mode: Mode): void; subscribe(listener: (mode: Mode) => void): () => void }
+}
+
+/** The page's mode as the frame is told it: only `server` anywhere but the extension's panel. */
+function modeInfo(browser: BrowserHost | undefined): ModeInfo {
+  return browser ? { current: browser.mode.get(), available: ['local', 'server'] } : { current: 'server', available: ['server'] }
 }
 
 interface Props {
@@ -99,6 +121,10 @@ interface Props {
     load: () => Promise<Record<string, unknown>>
     call: (op: AppOp) => Promise<unknown>
     go: (page: string, params: Record<string, string>) => void
+    /** `canopy.page.setParams`: put these params in the canopy page's own URL, without a reload or a new frame. */
+    setParams?: (params: Record<string, string>) => void
+    /** The canopy URL of another page of the app, for `go` with `newTab` (a bundle page's `canopy.open`). */
+    href?: (page: string, params: Record<string, string>) => string
     /** May the page use canopy.read (the dynamic-view catalog)? Never on the public page. */
     canopyReads: boolean
     /** May the page use connections? Only a signed-in member's page. */
@@ -108,6 +134,24 @@ interface Props {
   }
   /** Drawn in the browser extension's panel: what `canopy.browser` reaches. */
   browser?: BrowserHost
+  /** A full-bleed page (`layout: "full"`): the frame fills its box (the host sizes it to the viewport) and
+   *  scrolls itself, so `position: fixed` inside it is the viewport's; the frame's own height is ignored. */
+  fill?: boolean
+}
+
+/** Save a file from this page: a blob URL of canopy's origin, typed so it never renders (frameOut.ts), clicked
+ *  with `download` and revoked. */
+function saveFile(d: Download): void {
+  const url = URL.createObjectURL(d.data instanceof Blob ? d.data : new Blob([d.data as BlobPart], { type: d.type }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = d.name
+  a.rel = 'noopener'
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 30_000)
 }
 
 async function readAs(url: string): Promise<unknown> {
@@ -145,8 +189,11 @@ function theme(): 'light' | 'dark' {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
 }
 
-export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false, browser }: Props) {
+export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false, browser, fill = false }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
+  // A pointerdown/keydown the page saw a live click for, so a drop or a post-dialog write can still open a lease.
+  const gestures = useRef<Gestures | null>(null)
+  if (gestures.current === null) gestures.current = new Gestures(() => pageClickedFrame(frame.current))
   const loads = useRef(0)
   const [height, setHeight] = useState(240)
   const [gone, setGone] = useState(false)
@@ -192,7 +239,7 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
         declared: v.connections ?? [],
         canConnect: true,
       }
-    }, { isActive: () => pageClickedFrame(frame.current) })
+    }, { isActive: () => pageClickedFrame(frame.current), recentGesture: () => gestures.current!.recent(true) })
   }
   // canopy's panel, on a view's own page: what it shows and what it offers the agent.
   const panel = useRef<ViewPagePanel | null>(null)
@@ -225,15 +272,25 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
 
   const draw = useCallback(async () => {
     const data = await load()
-    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context, browser: browser?.info })
+    const bundle = view.bundle ? { pages: view.bundle.pages } : undefined
+    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context, browser: browser?.info, bundle,
+      mode: modeInfo(browser), google: opsCatalogue() })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [post, load, view.code, ctxKey, scope.view.version, app?.context, browser])
+  }, [post, load, view.code, view.bundle, ctxKey, scope.view.version, app?.context, browser])
 
   // The tab's declared events (and changes of tab) reach the frame while it is drawn.
   useEffect(() => {
     if (!browser) return
     return browser.subscribe((event, data) => {
       if (!gone) post({ channel: CHANNEL, type: 'browser-event', event, data })
+    })
+  }, [browser, post, gone])
+
+  // A switch of mode reaches the frame as it happens; the next `canopy.google` call runs in it.
+  useEffect(() => {
+    if (!browser) return
+    return browser.mode.subscribe(() => {
+      if (!gone) post({ channel: CHANNEL, type: 'mode', mode: modeInfo(browser) })
     })
   }, [browser, post, gone])
 
@@ -263,9 +320,69 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
           }
           return
         }
-        case 'go':
-          if (app && typeof msg.page === 'string') app.go(msg.page, msg.params ?? {})
+        case 'go': {
+          if (!app || typeof msg.page !== 'string') return
+          const params = msg.params ?? {}
+          // A new tab only from a click on this page (read now, before anything else); else this tab.
+          if (msg.newTab && app.href && pageClickedFrame(frame.current)) {
+            window.open(app.href(msg.page, params), '_blank', 'noopener,noreferrer')
+          } else app.go(msg.page, params)
           return
+        }
+        case 'gesture':
+          gestures.current!.note()
+          return
+        case 'open-url': {
+          // A new tab only from a live click on this page, read now; https only, never with an opener.
+          const clicked = pageClickedFrame(frame.current)
+          const url = externalUrl(msg.url)
+          const fail = (error: string) => post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error })
+          if (!url) return fail('canopy.open opens only an https address')
+          if (!clicked) return fail(NEEDS_CLICK)
+          try {
+            if (browser) browser.open(url)
+            else window.open(url, '_blank', 'noopener,noreferrer')
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: true, data: null })
+          } catch (e) {
+            fail(message(e))
+          }
+          return
+        }
+        case 'page-params': {
+          const params = cleanParams(msg.params)
+          if (typeof params === 'string') return post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: params })
+          if (!app?.setParams) {
+            return post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: 'only a workspace app\'s page has URL parameters' })
+          }
+          app.setParams(params)
+          post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: true, data: params })
+          return
+        }
+        case 'clipboard': {
+          const clicked = pageClickedFrame(frame.current) || gestures.current!.recent()
+          const fail = (error: string) => post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error })
+          if (typeof msg.text !== 'string' || msg.text.length > MAX_CLIPBOARD_CHARS) return fail('canopy.clipboard.write takes text, at most a million characters')
+          if (!clicked) return fail(NEEDS_CLICK)
+          if (!navigator.clipboard?.writeText) return fail('This browser has no clipboard here.')
+          navigator.clipboard.writeText(msg.text)
+            .then(() => post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: true, data: null }))
+            .catch((e) => fail(`Couldn't copy: ${message(e)}`))
+          return
+        }
+        case 'download': {
+          const clicked = gestures.current!.active()
+          const d = checkDownload(msg.name, msg.mime, msg.data)
+          const fail = (error: string) => post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error })
+          if (typeof d === 'string') return fail(d)
+          if (!clicked) return fail(NEEDS_CLICK)
+          try {
+            saveFile(d)
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: true, data: { name: d.name } })
+          } catch (e) {
+            fail(message(e))
+          }
+          return
+        }
         case 'browser': {
           const id = msg.id
           const req = (msg.request ?? {}) as { op?: unknown; capability?: unknown; args?: unknown; url?: unknown }
@@ -278,7 +395,7 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
           }
           if (req.op === 'open') {
             // Read the click NOW, before any await: a page may open a tab only from a click on it.
-            if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK)
+            if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK, 'needs_click')
             try {
               browser.open(req.url)
               post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: null })
@@ -288,12 +405,42 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
             return
           }
           if (req.op === 'request') {
-            browser.request(req.capability, req.args)
+            // The click too is read NOW, by this page: the gate relays an act only with one.
+            browser.request(req.capability, req.args, pageClickedFrame(frame.current))
               .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
               .catch((e) => fail(message(e), (e as { code?: string }).code ?? 'adapter_error'))
             return
           }
           return fail('unknown canopy.browser call')
+        }
+        case 'google': {
+          const id = msg.id
+          // The click is read NOW, in the message event: a local act and a server write both need it.
+          const clicked = pageClickedFrame(frame.current)
+          const calls = connectionCalls.current!
+          runGoogleOp(msg.op, msg.args, {
+            mode: browser ? browser.mode.get() : 'server',
+            local: browser ? { request: (capability, args, c) => browser.request(capability, args, c) } : undefined,
+            server: { call: (r) => calls.handle(r), begin: () => calls.begin() },
+            clicked,
+            viewerEmail: scope.viewer.email,
+          })
+            .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
+            .catch((e) => post({
+              channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e),
+              ...refusalMembers(e), ...(e instanceof OpError ? { code: e.code } : (e as { code?: string })?.code ? { code: (e as { code: string }).code } : {}),
+            }))
+          return
+        }
+        case 'mode-set': {
+          const id = msg.id
+          const fail = (error: string, code = 'bad_request') => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error, code })
+          if (!browser) return fail('Only server mode is available outside the Dimagi Canopy extension\'s panel.', 'not_in_mode')
+          if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK, 'needs_click')
+          if (msg.mode !== 'local' && msg.mode !== 'server') return fail('A mode is "local" or "server".')
+          browser.mode.set(msg.mode)
+          post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: modeInfo(browser) })
+          return
         }
         case 'read': {
           if (app && !app.canopyReads) {
@@ -488,12 +635,14 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
     )}
     <iframe
       ref={frame}
-      title="Dynamic view"
-      src={apiUrl(`/dynamic-views/frame/?theme=${theme()}`)}
-      sandbox="allow-scripts"
+      title={view.bundle ? scope.view.title : 'Dynamic view'}
+      src={view.bundle ? apiUrl(view.bundle.src) : apiUrl(`/dynamic-views/frame/?theme=${theme()}`)}
+      sandbox={view.bundle ? BUNDLE_SANDBOX : 'allow-scripts'}
       referrerPolicy="no-referrer"
       className="block w-full border-0"
-      style={{ height }}
+      // Full-bleed: the host's box is the viewport and the frame scrolls itself. Otherwise a bundle page, an
+      // existing UI that often lays itself out to the window, gets one; a JSX page is as tall as it draws.
+      style={fill ? { height: '100%', width: '100%' } : view.bundle ? { height, minHeight: 'calc(100vh - 12rem)' } : { height }}
       onLoad={() => {
         loads.current += 1
         // The first load is the frame; any later one means the view's code
@@ -502,6 +651,7 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
           tasks.current?.cancelAll()
           connectionCalls.current?.closeAll()
           panel.current?.dispose()
+          gestures.current?.forget()
           setGone(true)
         }
       }}

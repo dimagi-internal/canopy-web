@@ -133,12 +133,16 @@ class HostConfig:
     #: without going through an agent. Empty = not named (canopy then needs an
     #: agent, or a name only one tenant holds).
     workspace: str = ""
+    #: Where canopy POSTs this host's agents' replies (its host site's
+    #: ``reply_webhook_url``): the ``aud`` ``canopy_sdk.host.replies.verify_reply``
+    #: requires. Empty = the host takes no reply push.
+    reply_url: str = ""
 
     def __post_init__(self):
         set_ = object.__setattr__
         set_(self, "signing_key", load_private_key(self.signing_key, what="the host signing key"))
         for name in ("canopy_base_url", "issuer", "resource", "token_endpoint",
-                     "canopy_client_id", "canopy_audience"):
+                     "canopy_client_id", "canopy_audience", "reply_url"):
             set_(self, name, (getattr(self, name) or "").strip())
         set_(self, "canopy_base_url", contract.normalize_url(self.canopy_base_url))
         set_(self, "issuer", contract.normalize_url(self.issuer))

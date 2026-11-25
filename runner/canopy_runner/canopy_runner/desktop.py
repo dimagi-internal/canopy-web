@@ -79,7 +79,7 @@ from pathlib import Path
 
 from canopy_transcript.result_note import cap, turn_url
 
-from . import caller, claude_model, session_naming, transfer
+from . import caller, claude_model, session_naming, stored_agents, transfer
 from .cancel import CANCELLED_TURNS
 from .platform_jobs import no_window
 
@@ -166,10 +166,30 @@ def observe(me: dict | None) -> None:
             except Exception:  # noqa: BLE001 — a turn will say so if the mod is missing
                 logger.warning("could not register the canopy-desktop mod", exc_info=True)
         if engine == CLAUDE_CLI:
-            # An npm install can take a minute; the heartbeat must not wait on it.
-            from . import headless
-            threading.Thread(target=headless.ensure_adapter, daemon=True,
-                             name="claude-cli-adapter").start()
+            _kick_adapter(force=True)
+    if engine == EMDASH:
+        # An emdash box needs the adapter too: without emdash on it, a stored agent's new
+        # thread runs headless here (maybe_execute). Installed once, on the first heartbeat.
+        _kick_adapter()
+
+
+#: Has this process started an adapter install? (once per process on an emdash box)
+_adapter_kicked = False
+
+
+def _kick_adapter(force: bool = False) -> None:
+    """Install the ACP adapter in the background (an npm install can take a minute; the
+    heartbeat and the claim loop must not wait on it).
+
+    Every runtime needs it, emdash included: on a box without emdash a stored agent's new
+    threads run headless, and without the adapter they cannot run at all."""
+    global _adapter_kicked
+    if _adapter_kicked and not force:
+        return
+    _adapter_kicked = True
+    from . import headless
+    threading.Thread(target=headless.ensure_adapter, daemon=True,
+                     name="claude-cli-adapter").start()
 
 
 def in_flight() -> list[str]:
@@ -346,10 +366,16 @@ def transcript_for(session_key: str, *, home: Path, claude_home: Path) -> Path |
 
 # ── project checkouts ───────────────────────────────────────────────────────
 
-def project_repo(cfg, project: str) -> tuple[Path, str]:
+def project_repo(cfg, project: str, turn: dict | None = None) -> tuple[Path, str]:
     """(checkout, base ref) for a project: runner.json's `project_paths` first,
     else the repo emdash registers for it — the same two sources the heartbeat
-    reports (sessions.reported_projects), so a claimed turn always finds one."""
+    reports (sessions.reported_projects), so a claimed turn always finds one.
+
+    A STORED agent's turn (`turn`) has no repo: its checkout is ~/.canopy/agents/<slug>,
+    brought to the live revision first (`stored_agents.ensure_checkout`, which raises
+    StoredAgentError rather than let the turn run a stale or missing one)."""
+    if turn is not None and stored_agents.is_stored(turn) and project == turn.get("agent_slug"):
+        return stored_agents.ensure_checkout(project), "HEAD"
     override = project_paths(cfg).get(project)
     if override:
         return Path(os.path.expanduser(override)), "HEAD"
@@ -641,7 +667,12 @@ def ensure_app() -> bool:
 # Reading it is what turns rechecking the gates from unpacking the app bundle and
 # probing from a mod into one `canopy-runner runtime`.
 
+# "CLF", a format-version byte, then four fixed bytes. The version moves with the
+# app (2 until late 2026, 3 on Claude 6.28899) while the gzip body after it keeps
+# its shape, so the version byte is not compared: pinning it made the gate line
+# read "unknown" on every account the moment the app bumped it.
 FCACHE_MAGIC = bytes([67, 76, 70, 2, 0, 154, 183, 226])
+FCACHE_VERSION_AT = 3
 GATE_START_SESSION = "2371478310"
 GATE_IDLE_TIMEOUT = "4041267332"
 
@@ -659,7 +690,9 @@ def app_features(path: Path | None = None) -> dict | None:
 
     try:
         raw = (path or fcache_path()).read_bytes()
-        if not raw.startswith(FCACHE_MAGIC):
+        head, magic = raw[:len(FCACHE_MAGIC)], FCACHE_MAGIC
+        if (len(head) < len(magic) or head[:FCACHE_VERSION_AT] != magic[:FCACHE_VERSION_AT]
+                or head[FCACHE_VERSION_AT + 1:] != magic[FCACHE_VERSION_AT + 1:]):
             return None
         data = json.loads(gzip.decompress(raw[len(FCACHE_MAGIC):]))
         features = data.get("features") or {}
@@ -1175,7 +1208,13 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
     which turns are which)."""
     if caller.confined_profile(turn) is not None:
         return None
-    if _current == EMDASH and not _index(cfg):
+    # A stored agent's checkout (~/.canopy/agents/<slug>) is its emdash project wherever
+    # emdash is (`stored_agents.ensure_emdash_project`), so emdash drives it like a repo
+    # agent. On an emdash-runtime box WITHOUT emdash, a new thread of it runs here,
+    # headless, in a worktree of that checkout.
+    stored = stored_agents.is_stored(turn) and bool(turn.get("agent_slug"))
+    headless_stored = stored and _current == EMDASH and not stored_agents.emdash_present(cfg)
+    if _current == EMDASH and not headless_stored and not _index(cfg):
         return None  # an emdash-only box: no extra round trip, no behaviour change
     plan = client.resolve_session(runner_id, turn.get("agent_slug") or "", thread_key,
                                   project=turn.get("project") or "",
@@ -1190,11 +1229,12 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
         key = ""
     if key and is_desktop_session(cfg, key):
         run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse=key)
-    elif key or _current not in (CLAUDE_DESKTOP, CLAUDE_CLI):
+    elif key or (_current not in (CLAUDE_DESKTOP, CLAUDE_CLI) and not headless_stored):
         return None  # an emdash thread continues in emdash
-    elif _current == CLAUDE_CLI and _adapter_missing():
+    elif (_current == CLAUDE_CLI or headless_stored) and _adapter_missing():
         logger.error("claude-cli runtime: the ACP adapter is not installed on this runner — turn %s "
                      "runs on emdash instead", turn.get("id"))
+        _kick_adapter()  # so the next try can run headless
         return None
     elif claude_cli() is None:
         # A new desktop session needs the CLI (seed + mod install). Without it the
@@ -1204,7 +1244,7 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
                      "runs on emdash instead", turn.get("id"))
         return None
     else:
-        run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse="")
+        run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse="", cli=headless_stored)
     th = threading.Thread(target=run.run, daemon=True, name=f"desktop-{str(turn['id'])[:8]}")
     with _lock:
         IN_FLIGHT[str(turn["id"])] = th
@@ -1243,9 +1283,12 @@ def _adapter_missing() -> bool:
 
 class TurnRun:
     def __init__(self, cfg, client, runner_id: str, turn: dict, thread_key: str,
-                 plan: dict, reuse: str):
+                 plan: dict, reuse: str, cli: bool = False):
         self.cfg, self.client, self.rid = cfg, client, runner_id
         self.turn, self.thread_key, self.plan, self.reuse = turn, thread_key, plan, reuse
+        # Headless whatever the box's runtime (a stored agent's new thread on an emdash-runtime
+        # box without emdash).
+        self.cli = cli
         self.id = str(turn["id"])
         self.chat = bool((turn.get("origin_ref") or {}).get("chat_session_id"))
         self.target = turn.get("agent_slug") or turn.get("project") or ""
@@ -1284,6 +1327,9 @@ class TurnRun:
     def run(self) -> None:
         try:
             self._run()
+        except stored_agents.StoredAgentError as exc:
+            logger.error("desktop turn=%s: %s", self.id, exc)
+            self.finish(False, str(exc))
         except Exception as exc:  # noqa: BLE001 — one turn must never take the loop down
             logger.exception("desktop turn=%s crashed", self.id)
             try:
@@ -1294,7 +1340,7 @@ class TurnRun:
                 logger.exception("desktop turn=%s: could not report the failure", self.id)
 
     def _run(self) -> None:
-        if (is_cli_session(self.cfg, self.reuse) if self.reuse else _current == CLAUDE_CLI):
+        if (is_cli_session(self.cfg, self.reuse) if self.reuse else (_current == CLAUDE_CLI or self.cli)):
             self._run_cli()
             return
         if not ensure_app():
@@ -1322,7 +1368,7 @@ class TurnRun:
                 open_session(sid)  # its process stopped: idle timeout or app restart
             self.status("reused_session", runtime=CLAUDE_DESKTOP, session=sid, woke=woke)
         else:
-            repo, base = project_repo(self.cfg, self.target)
+            repo, base = project_repo(self.cfg, self.target, self.turn)
             name = session_naming.build_task_name(self.target, self.turn)
             wt = make_worktree(self.cfg, repo, base, name)
             prepare_settings(self.cfg, wt, model=claude_model.for_turn(self.turn))
@@ -1393,7 +1439,7 @@ class TurnRun:
 
             self._headless(prompt, wt, resume=sid, offset=offset, on_session=resumed)
             return
-        repo, base = project_repo(self.cfg, self.target)
+        repo, base = project_repo(self.cfg, self.target, self.turn)
         name = session_naming.build_task_name(self.target, self.turn)
         wt = make_worktree(self.cfg, repo, base, name)
         prepare_settings(self.cfg, wt, model=claude_model.for_turn(self.turn))

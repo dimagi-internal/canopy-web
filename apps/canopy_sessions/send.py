@@ -30,6 +30,8 @@ from . import (
 from . import placement as session_placement
 from .models import Message, Session
 
+IDEMPOTENCY_KEY_MAX = Turn._meta.get_field("idempotency_key").max_length
+
 
 def _contact_of(initiator):
     """The contact behind a send, when it is one (`harness.initiator`)."""
@@ -348,7 +350,9 @@ def _enqueue_chat_turn(
     turn, _created = harness_services.enqueue_turn(
         session=session,
         origin=origin,
-        idempotency_key=f"chat:{session.id.hex}:{client_id or fallback_key}",
+        # Cut to the column: the 38-character prefix plus a 100-character client_id is 138,
+        # which SQLite stores and PostgreSQL refuses (a 400 on send). Still one key per id.
+        idempotency_key=f"chat:{session.id.hex}:{client_id or fallback_key}"[:IDEMPOTENCY_KEY_MAX],
         prompt=text,
         origin_ref=ref,
         # WHO sent it. Not decoration: this is the actor half of the routing key,

@@ -7,10 +7,15 @@
  * `canopy.browser` relayed through the gate in `extensionBridge.ts`.
  * Design: docs/architecture/browser-extension.md.
  *
+ * A page with `layout: "full"` fills the panel below the picker (shown only when several apps match),
+ * with no padding, its frame scrolling itself. The panel has no address bar: `canopy.page.setParams`
+ * only updates the page's own `app.params`.
+ *
  * Signed out it cannot send the person to Google (a framed sign-in is refused), so it
  * asks the extension to open the sign-in in a tab and checks again when the panel gets
  * focus, the tab changes, or the person presses the button.
  */
+import { bootstrapCsrf } from '@/api/csrf'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getMe, type MeOut } from '@/api/me'
 import { getInstalledApp, listBrowserApps, type BrowserApp, type InstalledApp } from '@/api/workspaceApps'
@@ -19,6 +24,9 @@ import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import type { BrowserHost } from '@/dynamicViews/DynamicViewFrame'
 import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
 import { AppFrame } from '@/workspaceApps/AppFrame'
+import { scopedPath } from '@/lib/scopedLinks'
+import { ModeStore, modeKey } from './modeStore'
+import type { Mode } from '@/dynamicViews/protocol'
 import { BrowserGate, ExtensionLink, allowedOrigins, visibleContext, type Context } from './extensionBridge'
 
 /** Where the sign-in tab lands: a page that says to come back here. */
@@ -76,6 +84,8 @@ export function ExtPanelPage() {
 
   const check = useCallback(async () => {
     lastCheck.current = Date.now()
+    // A sign-in in another tab changed the CSRF token, and this frame can't read the cookie.
+    await bootstrapCsrf().catch(() => {})
     const me = await getMe().catch(() => null)
     setSession(me ? { kind: 'in', me } : { kind: 'out' })
   }, [])
@@ -187,9 +197,9 @@ function SignedInPanel({ link, context, listeners, me }: SignedInProps) {
     )
   }
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="flex h-screen flex-col bg-background text-foreground">
       {apps.length > 1 && (
-        <div className="border-b border-border p-2">
+        <div className="shrink-0 border-b border-border p-2">
           <label className="sr-only" htmlFor="ext-app-picker">App</label>
           <select id="ext-app-picker" className="w-full rounded-md border border-border bg-card px-2 py-1 text-sm"
             value={appId(current)} onChange={(e) => setChosen(e.target.value)}>
@@ -222,15 +232,20 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
   // The declaration of the page on screen, as the server listed it for this tab; none → no canopy.browser.
   const decl = apps.find((a) => a.workspace === entry.workspace && a.app_key === entry.app_key && a.page_slug === pageSlug) ?? null
   const contextListeners = useRef(new Set<(visible: unknown) => void>())
+  // The person's mode for this app (docs/architecture/local-and-server-modes.md), shared by its pages.
+  const modes = useMemo(() => new ModeStore(modeKey(entry.workspace, entry.app_key)), [entry.workspace, entry.app_key])
+  const [mode, setMode] = useState<Mode>(() => modes.get())
+  useEffect(() => modes.subscribe(setMode), [modes])
   const host: BrowserHost | undefined = useMemo(() => {
     if (!decl) return undefined
     // The gate reads the tab as the extension last described it (`link.context`), on every call.
     const gate = new BrowserGate(decl, link)
     return {
-      info: { adapter: decl.adapter, capabilities: [...decl.capabilities], events: [...decl.events] },
+      info: { adapter: decl.adapter, capabilities: [...decl.capabilities], acts: [...decl.acts], events: [...decl.events] },
       context: () => gate.context(),
-      request: (capability, args) => gate.request(capability, args),
+      request: (capability, args, clicked) => gate.request(capability, args, clicked),
       open: (url) => gate.open(url),
+      mode: modes,
       subscribe(listener) {
         const onEvent = (event: string, data: unknown, tabId: number, adapter: string) => {
           if (gate.admits({ event, data, tabId, adapter })) listener(event, data)
@@ -245,7 +260,7 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [decl?.workspace, decl?.app_key, decl?.page_slug, link])
+  }, [decl?.workspace, decl?.app_key, decl?.page_slug, link, modes])
 
   // A change of tab reaches the page as the `context` event (what it may see of the new one).
   const seen = useRef<string>('')
@@ -263,9 +278,14 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
   if (!app) return <p className="p-4 text-sm text-muted-foreground">Loading…</p>
   const page = app.pages.find((p) => p.slug === pageSlug && p.audience === 'member')
   if (!page) return <p className="p-4 text-sm text-muted-foreground">This page is not available to you.</p>
+  const full = page.layout === 'full'
   return (
-    <div className="p-2">
+    <>
+    {decl && <ModeSwitch mode={mode} onChange={(m) => modes.set(m)} />}
+    <div className={full ? 'relative min-h-0 flex-1 overflow-hidden' : 'min-h-0 flex-1 overflow-auto p-2'}>
       <AppFrame
+        fill={full}
+        onParams={() => undefined}
         key={`${page.slug}?${JSON.stringify(params)}`}
         workspace={{ slug: entry.workspace, name: entry.workspace_name }}
         app={{ key: app.key, name: app.name }}
@@ -283,8 +303,43 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
             setParams(p)
           }
         }}
+        // A bundle page opening another in a new tab gets the full canopy page, in a browser tab.
+        pageHref={(slug, p) => {
+          const qs = new URLSearchParams(p).toString()
+          return `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}${scopedPath(entry.workspace, `/apps/${app.key}/${slug}${qs ? `?${qs}` : ''}`)}`
+        }}
+        pages={app.pages}
         browser={host}
       />
+    </div>
+    </>
+  )
+}
+
+/**
+ * Where this app's Google work runs: in this browser (the tab, through the extension) or through
+ * canopy-web. The person's choice, kept per app; nothing switches it for them.
+ */
+export function ModeSwitch({ mode, onChange }: { mode: Mode; onChange: (mode: Mode) => void }) {
+  const option = (m: Mode, label: string, title: string) => (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={mode === m}
+      title={title}
+      onClick={() => onChange(m)}
+      className={`rounded px-2 py-0.5 ${mode === m ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <div className="flex items-center justify-end gap-2 border-b px-2 py-1 text-xs">
+      <span className="text-muted-foreground">Google</span>
+      <div role="radiogroup" aria-label="Where Google work runs" className="flex rounded-md bg-muted p-0.5">
+        {option('local', 'Local', 'In this browser: the Gmail tab beside the panel. Nothing goes through canopy-web.')}
+        {option('server', 'Server', 'Through canopy-web, with your Google connection. Works without the tab open.')}
+      </div>
     </div>
   )
 }

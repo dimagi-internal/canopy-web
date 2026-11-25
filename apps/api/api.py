@@ -125,6 +125,7 @@ api = CanopyNinjaAPI(
 # `SettingChange` row commit together. Registered here, before any router is
 # added, so it reaches every route — and so every entry point (web UI, CLI,
 # script, MCP tool) through the one place they all pass.
+from apps.brain import lineage as _brain_lineage  # noqa: E402
 from apps.events import audit as _audit  # noqa: E402
 
 
@@ -142,6 +143,8 @@ def _operation_id_of(func) -> str:
 
 _audit.register_operation_id(_operation_id_of)
 api.add_decorator(_audit.audited)
+# What a learning run's turn makes through any route is recorded against the sessions it read (apps/brain/lineage.py).
+api.add_decorator(_brain_lineage.capturing)
 
 
 def _problem_response(request: HttpRequest, problem: Problem, members: dict | None = None) -> HttpResponse:
@@ -299,6 +302,7 @@ from apps.brain.api_graph import router as brain_graph_router  # noqa: E402
 from apps.brain.api_manage import router as brain_manage_router  # noqa: E402
 from apps.brain.api_run import router as brain_run_router  # noqa: E402
 from apps.brain.api_state import router as brain_state_router  # noqa: E402
+from apps.agent_definitions.api import router as agent_definitions_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
 from apps.agents.api import turns_router as agent_turns_router  # noqa: E402
 from apps.agents.api_board import router as agent_board_router  # noqa: E402
@@ -322,10 +326,12 @@ from apps.agents.api_contributors import router as contributors_router  # noqa: 
 from apps.agents.credentials.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agents.api_aws import router as agent_aws_router  # noqa: E402
+from apps.approvals.api_aws_roles import router as agent_aws_roles_router  # noqa: E402
 from apps.agents.api_engagement import router as engagement_router  # noqa: E402
 from apps.agents.api_fleet import router as fleet_tasks_router  # noqa: E402
 from apps.agents.api_tasks import router as workspace_tasks_router  # noqa: E402
 from apps.agents.api_kb import router as kb_router  # noqa: E402
+from apps.agents.api_project_files import router as project_files_router  # noqa: E402
 from apps.agents.api_proposals import router as proposals_router  # noqa: E402
 from apps.attention.alerts_api import router as alerts_router  # noqa: E402
 from apps.attention.api import router as attention_router  # noqa: E402
@@ -362,6 +368,7 @@ from apps.host_grants.api import sites_router  # noqa: E402
 from apps.host_grants.runner_attestations_api import router as runner_attestations_router  # noqa: E402
 from apps.host_grants.sign_offs_api import router as sign_offs_router  # noqa: E402
 from apps.host_grants.sign_offs_api import sites_router as site_sign_offs_router  # noqa: E402
+from apps.host_grants.contact_records_api import router as site_contacts_router  # noqa: E402
 from apps.host_grants.sign_offs_api import embed_router as embed_sign_offs_router  # noqa: E402
 from apps.host_grants.grants_api import embed_grant_router  # noqa: E402
 from apps.host_grants.grants_api import me_router as host_grants_me_router  # noqa: E402
@@ -481,6 +488,8 @@ api.add_router("/sessions", sessions_router)
 # Before the agents router: `…/projects/propose/` must not be read as a project ref.
 api.add_router("/agents", proposals_router)  # proposed projects + backings
 api.add_router("/agents", checkins_project_router)  # a project's check-ins + its timeline
+# Before the agents router: `POST /stored` must never be read as a slug.
+api.add_router("/agents", agent_definitions_router)  # a stored agent's definition
 api.add_router("/agents", agents_router)
 # The rest of apps/agents' surface, split by subdomain. Mounted in the order the
 # routes were written in, which is the order of /api/openapi.json's paths.
@@ -509,7 +518,8 @@ api.add_router("/a2a", a2a_router)
 api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the agents namespace
 api.add_router("/agent-runs", agent_run_docs_router)  # run documents (DDD runs), cross-agent
 api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
-api.add_router("/agents", agent_aws_router)  # one hour of a named AWS role (labs-read, labs-readwrite)
+api.add_router("/agents", agent_aws_router)  # at most an hour of a named AWS role (labs-read, labs-readwrite, labs-config)
+api.add_router("/agents", agent_aws_roles_router)  # ask a person for a fenced AWS role; the grant aws-credentials reads
 # The mint's callback is NOT agent-scoped: Google requires every redirect URI
 # to be registered exactly, so one fixed path serves the whole fleet and the
 # agent rides in signed state. A per-agent URI would mean a console edit per
@@ -532,6 +542,7 @@ api.add_router("", fleet_tasks_router)
 # must not be read as a key.
 api.add_router("", workspace_tasks_router)
 api.add_router("", kb_router)
+api.add_router("", project_files_router)  # a project's files (its git repository)
 api.add_router("/workspaces", workspaces_router)
 api.add_router("/workspaces", retention_router)  # /{slug}/retention… (workspace settings, served by the retention app)
 api.add_router("/workspaces", admission_rules_router)  # /{slug}/admission-… (served by the admission app)
@@ -545,6 +556,7 @@ api.add_router("/workspaces", member_profile_router)  # one member's page, by th
 api.add_router("/sites", sites_router)
 api.add_router("/sites/sign-offs", site_sign_offs_router)
 api.add_router("/sites/runner-attestations", runner_attestations_router)
+api.add_router("/sites/contacts", site_contacts_router)
 api.add_router("/sign-offs", sign_offs_router)
 api.add_router("/embed/sign-offs", embed_sign_offs_router)  # the same, decided in the site's frame
 api.add_router("/timeline", timeline_router)

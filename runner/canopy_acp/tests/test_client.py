@@ -10,11 +10,12 @@ think it speaks — is in test_live_adapter.py, which skips when it isn't
 installed.
 """
 import json
+import pathlib
 import threading
 
 import pytest
 
-from canopy_acp.client import AcpConnection, PermissionDecision
+from canopy_acp.client import AcpAgent, AcpConnection, PermissionDecision
 
 
 class FakeAgent:
@@ -302,8 +303,6 @@ def test_form_elicitation_is_advertised_only_when_someone_can_answer(tmp_path):
     """The adapter disables AskUserQuestion outright unless the client says it
     can render a form, and a box with nobody to ask must keep it disabled — an
     unattended turn would otherwise block on a question no one sees."""
-    from canopy_acp.client import AcpAgent
-
     headless = AcpAgent(cwd=tmp_path, argv=["true"]).initialize_params()
     assert "elicitation" not in headless["clientCapabilities"]
     asked = AcpAgent(cwd=tmp_path, argv=["true"],
@@ -328,8 +327,6 @@ def test_a_dead_adapter_says_why(tmp_path):
     an OOM kill, a crash and a clean exit all read the same."""
     import sys
 
-    from canopy_acp.client import AcpAgent
-
     agent = AcpAgent(cwd=tmp_path, argv=[
         sys.executable, "-c",
         "import sys; sys.stderr.write('FATAL heap out of memory\\n'); sys.stderr.flush(); sys.exit(134)",
@@ -345,8 +342,6 @@ def test_a_dead_adapter_says_why(tmp_path):
 def test_a_running_adapter_reports_no_exit(tmp_path):
     import sys
 
-    from canopy_acp.client import AcpAgent
-
     agent = AcpAgent(cwd=tmp_path, argv=[sys.executable, "-c", "import time; time.sleep(30)"])
     agent.proc = None
     assert agent.exit_report() == ""
@@ -359,8 +354,6 @@ def test_the_adapter_pipes_are_utf8_whatever_the_locale(tmp_path, monkeypatch):
     to cp1252, as on Windows."""
     import subprocess
     import sys
-
-    from canopy_acp.client import AcpAgent
 
     real = subprocess.Popen
 
@@ -525,9 +518,39 @@ def test_kill_tree_is_taskkill_with_no_window(monkeypatch):
 def test_a_windows_crash_code_is_said_in_words(tmp_path, code, words):
     """Windows exit codes are unsigned NTSTATUS values: "exit code 3221225786" says
     nothing to whoever reads the note."""
-    from canopy_acp.client import AcpAgent
-
     agent = AcpAgent(cwd=tmp_path, argv=["adapter"])
     agent.proc = _FakeProc(exits_after=1, code=code)
     report = agent.exit_report()
     assert f"exit code {code}" in report and words in report
+
+
+def _agent_over(conn, **kw):
+    agent = AcpAgent.__new__(AcpAgent)
+    agent.cwd = pathlib.Path("/tmp/s")
+    agent.conn = conn
+    agent.session_id = ""
+    agent._session_meta = kw.get("session_meta")
+    return agent
+
+
+@pytest.mark.parametrize("meta", [None, {"claudeCode": {"options": {"settingSources": ["user"]}}}])
+def test_session_meta_rides_session_new_and_load(wired, meta):
+    """A caller that starts a session with less than the adapter's defaults (a lean page
+    turn) says so in `_meta`; without one nothing extra is sent."""
+    conn, fake = wired
+    agent = _agent_over(conn, session_meta=meta)
+    got = []
+    t = threading.Thread(target=lambda: got.append(agent.new_session(timeout=2)), daemon=True)
+    t.start()
+    req = fake.read_request()
+    assert req["method"] == "session/new"
+    assert req["params"].get("_meta") == meta
+    fake.reply(req["id"], {"sessionId": "sid-1"})
+    t.join(2)
+    assert got == ["sid-1"]
+    t = threading.Thread(target=lambda: agent.load_session("sid-1", timeout=2), daemon=True)
+    t.start()
+    req = fake.read_request()
+    assert req["method"] == "session/load" and req["params"].get("_meta") == meta
+    fake.reply(req["id"], {})
+    t.join(2)

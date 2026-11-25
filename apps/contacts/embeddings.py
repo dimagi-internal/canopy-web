@@ -213,6 +213,16 @@ def _check_retention(model_id: str) -> tuple[bool, str]:
     return False, "Bedrock model-invocation logging is on for the account; it would keep memory text"
 
 
+def check_retention(model_id: str) -> tuple[bool, str]:
+    """`_check_retention`, uncached and never raising — for a caller that keeps its own
+    cache (app pages' model calls, `apps/workspace_apps/ai.py`), so it does not churn
+    memory's one-model cache below."""
+    try:
+        return _check_retention(model_id)
+    except Exception as exc:  # noqa: BLE001 — unverifiable is the same as not verified
+        return False, f"could not verify retention: {exc.__class__.__name__}: {exc}"
+
+
 def retention_ok(*, force: bool = False, model_id: str | None = None) -> tuple[bool, str]:
     """Is the provider of `model_id` (default: memory's model) verified to keep
     nothing? Cached for RETENTION_TTL."""

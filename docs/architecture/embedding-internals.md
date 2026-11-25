@@ -182,8 +182,13 @@ page within their own access. The lifecycle is the docstring of
   something needs the grant — a send never waits for it.** When the agent's turn
   calls the site and `lookup` says `UNCONFIRMED`, the gateway marks the page's
   waiting rows `requested_at` / `requested_reason` (`host_grants.ask`, carried across
-  re-mints by `_inherit`), tells the agent to retry shortly
-  (`host_gateway.page_grant_asked`) and **pushes** `host_grant.requested` (the grant id
+  re-mints by `_inherit`), and the call **waits for the person**
+  (`host_gateway.resolve_waiting`: looks again every 2 s without asking twice, goes on
+  the moment they confirm, at most `GRANT_WAIT_SECONDS` = 120 s a turn and
+  `CALL_WAIT_SECONDS` = 45 s a request; then `page_grant_not_given` tells the agent to
+  say approval was not given and to ask them to approve and ask again; a refused,
+  expired or stopped grant never waits), shows "Waiting for your approval…" in the
+  panel (a `chat.live_text` note of its own, `WAIT_NOTE_MESSAGE`), and **pushes** `host_grant.requested` (the grant id
   only) down the conversation's socket (`_push_ask` →
   `SessionConsumer.host_grant_requested`, which passes it only to the grant's own
   person); the panel opens `PageGrantConfirm` (`EmbedApp.tsx`). **Confirm with
@@ -226,6 +231,13 @@ page within their own access. The lifecycle is the docstring of
   one for you) and `/api/embed/host-grant` (the panel's line, its prompt, and Stop). A
   Stop pressed on Settings can race one re-mint of an open tab, which then shows in
   both places to stop again.
+- **An agent's own login confirms without a passkey only under its agent test key**
+  (`Agent.test_vault_key`, `apps/agents/credentials/login_test_key.py`): its own token or browser
+  session on `/api/me/host-grants/{id}/confirm-as-agent`, never the panel's token, never a
+  person's grant, never another agent's page unless it is a sibling in the same workspace
+  with its own test key on; the same `host_grants.confirm` and View index refresh as a passkey
+  confirm. Rule and limits: [access-confinement-and-act-as.md](access-confinement-and-act-as.md)
+  § Acting as the person on a host site.
 - **A View's card button says it is the person's.** `host_gateway.view_call` carries
   `Canopy-View` on the View's own `tools/call` (when the listed tool's
   `_meta.ui.resourceUri` is that View), as a View's `resources/read` does. An agent's

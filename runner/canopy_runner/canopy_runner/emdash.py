@@ -420,6 +420,26 @@ def list_projects(db_path: str) -> list[str]:
     return [r["name"] for r in rows if r["name"]]
 
 
+def project_path(db_path: str, name: str) -> str | None:
+    """READ-ONLY: the checkout emdash registers for project `name`, or None when it holds
+    no such project. Raises EmdashReadError on a real read failure, like `list_projects`:
+    the caller decides from it whether to add the project, and a failed read must never
+    read as "absent"."""
+    if not name or not _present(db_path):
+        return None
+    try:
+        with _db(db_path) as conn:
+            row = conn.execute(
+                "SELECT w.path AS path FROM projects p JOIN workspaces w "
+                "ON w.id = p.repository_workspace_id WHERE p.name = ?"
+                f"{_not_deleted(conn, 'projects', 'p')} LIMIT 1",
+                (name,),
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise EmdashReadError(f"emdash project read failed: {exc}") from exc
+    return row["path"] if row is not None and row["path"] else None
+
+
 def list_recently_archived_tasks(db_path: str, limit: int = 100) -> list[str]:
     """READ-ONLY: the NAMES of recently-archived emdash tasks, newest-archived first.
 

@@ -513,6 +513,10 @@ class ConnectionCallIn(StrictModel):
         default="viewer", alias="as", description="Whose connection: the viewer's own, or one an agent shared.")
     agent: str | None = Field(default=None, description="With `as: shared`, the agent whose connection it is.")
     operation_id: str | None = Field(default=None, max_length=100, description="The click a write belongs to.")
+    allow_duplicates: bool = Field(default=False, description="Salesforce only, on a `POST` or `PATCH` of "
+                                                              "`sobjects/<type>` or `sobjects/<type>/<id>`: save even "
+                                                              "though the org's duplicate rules warned (\"Create "
+                                                              "anyway\"). Refused on any other call.")
 
 
 class ConnectionOperationIn(StrictModel):
@@ -528,10 +532,16 @@ class OperationWriteOut(StrictModel):
 
 class ConnectionOperationOut(StrictModel):
     operation_id: uuid.UUID = Field(description="Send this with each write.")
-    expires_at: datetime = Field(description="When it ends unless a write comes first: each write moves this to 120 "
-                                             "seconds from then.")
-    hard_limit_at: datetime = Field(description="When it ends whatever is written: 10 minutes from the click.")
+    expires_at: datetime = Field(description="When it ends unless a write comes first: each write moves this "
+                                             "`idle_seconds` from then.")
+    hard_limit_at: datetime = Field(description="When it ends whatever is written: 10 minutes from the click (an "
+                                                 "hour on a screen that only changes Drive labels).")
     writes: list[OperationWriteOut] = Field(description="What this screen may write. Each write is still checked.")
+    max_writes: int = Field(description="How many writes this click covers: 500, or 20000 on a screen that only "
+                                        "changes Drive labels.")
+    idle_seconds: int = Field(description="How long after its last write it ends: 120, or 900 on a screen that only "
+                                          "changes Drive labels.")
+    hard_limit_seconds: int = Field(description="How long after the click it ends, whatever is written.")
 
 
 class SurfaceLineOut(StrictModel):

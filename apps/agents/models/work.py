@@ -678,7 +678,7 @@ class AgentTask(models.Model):
         "self", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="subtasks",
     )
-    #: Set, this task is a recurring TEMPLATE: `{"every": "day"|"week"|"2weeks"|"month"|"as_needed",
+    #: Set, this task is a recurring TEMPLATE: `{"every": "day"|"weekdays"|"week"|"2weeks"|"month"|"as_needed",
     #: "weekday": "mon".."sun" (week and 2weeks only), "auto": bool}` (`services.recurrence.clean`).
     #: A template stays in backlog and never completes; its periods' work is its instances.
     #: Null: an ordinary task.

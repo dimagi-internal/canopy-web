@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { SiteNeeds } from '@/api/hostSites'
 
-const { SiteNeedsTable } = await import('./hostSites/SiteNeedsTable')
+const { SiteNeedsTable, ReplyPushSource } = await import('./hostSites/SiteNeedsTable')
 
 afterEach(cleanup)
 
@@ -37,9 +37,36 @@ const NEEDS: SiteNeeds = {
     },
   ],
   not_allowed: ['ghost'],
+  surfaces: [],
 }
 
 describe('SiteNeedsTable', () => {
+  it('shows the surfaces the site declares, and which agents serve each', () => {
+    render(
+      <SiteNeedsTable
+        needs={{
+          ...NEEDS,
+          surfaces: [
+            {
+              name: 'workers', title: 'Connect Worker messaging', sensitive: false,
+              mcp_resource: 'https://labs.test/messaging/canopy/mcp/', person_scheme: 'labs-worker',
+              agents: ['connect-helper'],
+            },
+          ],
+        }}
+      />,
+    )
+    const row = screen.getByText(/Connect Worker messaging/).closest('tr')!
+    expect(row.textContent).toContain('labs-worker://')
+    expect(row.textContent).toContain('https://labs.test/messaging/canopy/mcp/')
+    expect(row.textContent).toContain('connect-helper')
+  })
+
+  it('shows no surfaces section for a site that declares none', () => {
+    render(<SiteNeedsTable needs={NEEDS} />)
+    expect(screen.queryByText('Surfaces')).toBeNull()
+  })
+
   it('leads with the agents and says only what the owner can act on', () => {
     const { container } = render(<SiteNeedsTable needs={NEEDS} />)
     expect(screen.getByText('Can handle sensitive data')).toBeTruthy()
@@ -97,5 +124,31 @@ describe('SiteNeedsTable', () => {
   it('marks a stale copy', () => {
     render(<SiteNeedsTable needs={{ ...NEEDS, stale: true, reason: 'unreachable: timeout' }} />)
     expect(screen.getByText(/last copy canopy could verify/)).toBeTruthy()
+  })
+})
+
+describe('ReplyPushSource', () => {
+  const base = { url: '', mode: '', source: '', set_by: '', declared_url: '', declared_mode: '', declared_reason: '' }
+
+  it('says a webhook is the site\'s own when canopy adopted its declaration', () => {
+    const url = 'https://labs.test/messaging/canopy/replies/'
+    render(<ReplyPushSource push={{ ...base, url, mode: 'final', source: 'site', declared_url: url, declared_mode: 'final' }} />)
+    expect(screen.getByText(/declared by the site/)).toBeTruthy()
+  })
+
+  it('names the person whose webhook wins', () => {
+    render(
+      <ReplyPushSource
+        push={{ ...base, url: 'https://labs.test/r/', mode: 'stream', source: 'person', set_by: 'jj@dimagi.com',
+                declared_url: 'https://labs.test/messaging/canopy/replies/' }}
+      />,
+    )
+    expect(screen.getByText(/set by jj@dimagi.com/)).toBeTruthy()
+    expect(screen.getByText(/wins over the one the site declares/)).toBeTruthy()
+  })
+
+  it('says why a declared webhook is not used', () => {
+    render(<ReplyPushSource push={{ ...base, declared_url: 'https://elsewhere.test/r/', declared_reason: 'not on its origin' }} />)
+    expect(screen.getByText(/not on its origin/)).toBeTruthy()
   })
 })

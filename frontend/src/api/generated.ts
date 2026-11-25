@@ -451,7 +451,8 @@ export interface paths {
          *     whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
          *     `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
          *     `rate_limited`, `provider_rate_limited` (Salesforce is limiting calls: `retry_after` and `limits` when it
-         *     said them), `session_ended`, `request_too_large`, `response_too_large`, `response_unreadable`,
+         *     said them), `session_ended`, `scope_added` (the app now asks for a permission the viewer's hour lacks),
+         *     `request_too_large`, `response_too_large`, `response_unreadable`,
          *     `provider_unavailable`. Salesforce's own count of the org's API use comes back as `limits`.
          *
          *     `GET query/<locator>` is a query's next page (the locator from its `nextRecordsUrl`), covered by the
@@ -485,7 +486,9 @@ export interface paths {
          *     that reaches this route with the person's session gets a lease too. What the lease does is limit how
          *     far that goes: only what this screen declared, at most 500 writes, for this person, this screen and
          *     this revision. It ends 120 seconds after its last write, or after it opened if there is none, and in
-         *     any case 10 minutes after it opened. Each write is still checked against the declaration, so on a page
+         *     any case 10 minutes after it opened. A screen whose only writes are Drive label changes on the
+         *     viewer's own Google account gets 20000 writes, 15 minutes idle and an hour (`max_writes`,
+         *     `idle_seconds`, `hard_limit_seconds` say which). Each write is still checked against the declaration, so on a page
          *     behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
          *
          *     Only a person signed in here: a personal access token or OAuth token is refused 403
@@ -621,7 +624,11 @@ export interface paths {
          *     `statement_missing_owner_agent`), that `expect` is what is stored (409
          *     `zk_value_changed`), that it is sealed only to the owner and allowed machines
          *     (422 `foreign_reader`) and that its writer MACs are the owner's (422
-         *     `bad_writer_sig`). From a browser this needs a fresh passkey check.
+         *     `bad_writer_sig`). From a browser this needs a fresh passkey check. An agent's
+         *     own login, while its agent test key is on, shares only its own connection, lent to
+         *     nobody (it may name canopy-web), and with no passkey, from anywhere
+         *     (`login_test_key.may_share_own_connection`; 403 `not_a_person` /
+         *     `share_too_broad` otherwise).
          */
         readonly put: operations["share_connection"];
         readonly post?: never;
@@ -2272,6 +2279,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/embed/prepare": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The panel opened: let the agent's runner get ready for a question
+         * @description Say the panel is open with this agent, before anything is asked.
+         *
+         *     An agent set up for fast page answers on this site gets its runner ready now, so the
+         *     first question is answered sooner. Nothing is started, created or read: the question
+         *     still starts the conversation. An agent this site does not offer you is a 404.
+         */
+        readonly post: operations["embed_prepare"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/embed/ws-ticket": {
         readonly parameters: {
             readonly query?: never;
@@ -2478,6 +2509,56 @@ export interface paths {
          *     minutes, the agent may act as you on that page. The page's panel sees it at once.
          */
         readonly post: operations["finish_confirm_my_host_grant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/host-grants/waiting": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The pages whose act-as-you permission is waiting for me to confirm it
+         * @description Your unexpired act-as-you permissions that no one has confirmed yet, one per page,
+         *     newest first: what a page's panel is waiting on. `requested` says an agent's turn
+         *     already needs it. An agent's own login uses this to find the id it confirms with
+         *     `confirm-as-agent`.
+         */
+        readonly get: operations["list_my_waiting_host_grants"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/host-grants/{grant_id}/confirm-as-agent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * As an agent's own login, confirm my own page's act-as-you permission without a passkey (agent test key)
+         * @description FOR TESTING. Only an agent's own canopy login, with its own token or browser
+         *     session (never a site's panel token), while an admin of the agent has turned on its
+         *     agent test key (`PUT /api/agents/{slug}/test-vault-key`), confirms its
+         *     OWN waiting permission on a host site's page — for its own agent's page, one for
+         *     any agent, or a sibling agent's in its workspace whose test key is also on —
+         *     without a passkey. From then, for the usual 30 minutes, the agent may act
+         *     as its own login on that page. A person confirms with their passkey and is refused
+         *     here; no one confirms anyone else's permission.
+         */
+        readonly post: operations["confirm_my_host_grant_as_agent"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3845,8 +3926,35 @@ export interface paths {
          * Install an app
          * @description `template` installs one from the store (`list_app_store`); `manifest`
          *     installs one you wrote. Either way it starts enabled and NOT public.
+         *
+         *     `files` carries a manifest's bundle pages (`"kind": "bundle"`, `"entry": "<file>.html"`): a list
+         *     of `{path, content_base64 | text | sha256}`, at most 10 MB in all. Files over one request's size
+         *     go first to `upload_workspace_app_bundle_blobs` and are named here by `sha256`.
          */
         readonly post: operations["install_workspace_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-app-bundles/{workspace}/blobs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Upload files for an app's bundle pages, to name by hash when releasing a version
+         * @description Each `{path, content_base64 | text}` is stored by its sha256 and answered `{path, sha256, size}`.
+         *     Send a bundle too large for one request in batches here, then the whole list by `sha256` with the
+         *     version (`install_workspace_app` `files`). It grants nothing: a file no version names is removed
+         *     after a day.
+         */
+        readonly post: operations["upload_workspace_app_bundle_blobs"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3906,7 +4014,18 @@ export interface paths {
         /** Every version of an app, newest first */
         readonly get: operations["list_workspace_app_versions"];
         readonly put?: never;
-        readonly post?: never;
+        /**
+         * Publish a new version of your workspace's own app from its whole manifest (a repo's build)
+         * @description `manifest` is the app's whole manifest, pages included, in the shape installing
+         *     your own app takes; it is validated the same way (connections and `browser` too) and
+         *     goes live over the workspace's changes as a new version, so every earlier version
+         *     can be restored. Only for an app whose template this workspace owns. For its
+         *     maintainers and admins. A version that changes who can see or do what (403 names
+         *     each change) needs a workspace admin, or a maintainer at the `permissions` level;
+         *     409 while a draft is open, a check fails or the version string is taken; 422 for
+         *     a manifest that does not validate.
+         */
+        readonly post: operations["publish_workspace_app_version"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4067,7 +4186,8 @@ export interface paths {
         /**
          * Publish the draft: it becomes the live app
          * @description Refused while a change is set aside or a check fails. A change to what the
-         *     public sees or who can do what needs a workspace admin.
+         *     public sees or who can do what needs a workspace admin, or a maintainer an admin
+         *     allowed to change this app's permissions.
          */
         readonly post: operations["publish_workspace_app_draft"];
         readonly delete?: never;
@@ -4085,9 +4205,58 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Make an earlier version live again (as a new version) */
+        /**
+         * Make an earlier version live again (as a new version)
+         * @description Going back is judged like going forward: a version that would change who can see
+         *     or do what needs a workspace admin, or a maintainer allowed to change permissions.
+         */
         readonly post: operations["rollback_workspace_app"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/maintainers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who may publish new versions of this app, and at which level
+         * @description `content`: versions that change nothing about who can see or do what.
+         *     `permissions`: those too (connections, browser, roles, readers, public pages).
+         */
+        readonly get: operations["list_workspace_app_maintainers"];
+        readonly put?: never;
+        /**
+         * Let a person or an agent publish new versions of this app, or change their level
+         * @description Name a workspace member by `email`, or an agent by `agent` (its slug; its login must
+         *     already be a member here). `level` is `content` (versions that leave who can see or do
+         *     what unchanged) or `permissions` (any version: you approve widening this app ahead of
+         *     time). Naming someone who already maintains it changes their level.
+         */
+        readonly post: operations["set_workspace_app_maintainer"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/maintainers/{grant_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Stop someone publishing new versions of this app */
+        readonly delete: operations["remove_workspace_app_maintainer"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -4172,6 +4341,29 @@ export interface paths {
          *     not declared; 403 without the action's role; 409 in a draft or on a task in the wrong state.
          */
         readonly post: operations["act_workspace_app_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/ai/complete": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask canopy's AI model, from a page of an app that declares AI use
+         * @description `canopy.ai.complete` from a member page: the app's manifest must declare `ai`. `model` is
+         *     an alias (`fast`, `smart`), never a model id. Answers `{text, content, stop_reason, model,
+         *     usage}` (plus `json` when `json_schema` was asked). 403 without the declaration, 429 over
+         *     the per-viewer limit, 502/503 when the model fails or AI is off.
+         */
+        readonly post: operations["ai_complete_workspace_app"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5496,6 +5688,342 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/stored": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Create an agent whose definition canopy stores (no GitHub repository)
+         * @description Stamps the agent from the canopy agent factory (the same scaffold `/canopy:create-agent`
+         *     writes) and stores it as revision 1, published. No repository and no GitHub token: its
+         *     runners materialize the definition from canopy. The creator owns it. An agent's own login
+         *     creates it for a person, never for itself: the person who asked for the turn it works in
+         *     (known from its turn login, or the `X-Canopy-Parent-Turn` it sends), else the agent's
+         *     owner; 403 `no_owner` when neither may create agents in the workspace. 409 `exists` when
+         *     the slug is taken.
+         *
+         *     With `files`, revision 1 is the scaffold with those files laid over it, held to the file
+         *     policy, and the files canopy writes itself rewritten: one the policy refuses refuses the
+         *     create (422 `policy` with `problems`), or with `drop_refused` is left out and listed in
+         *     `dropped`. With `bundle_b64` (a `git bundle` of a branch) the source's history is kept, as
+         *     `convert` keeps it: under `refs/heads/imported`, every blob scanned for secrets first (422
+         *     `secret`), revision 1 a commit on its tip. Files and history together are held to one
+         *     request's size (413 `too_large`).
+         */
+        readonly post: operations["create_stored_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/convert": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Turn a repo agent into a stored one, from its files
+         * @description The uploaded files (a repo's tracked files) become revision 1, published, and the agent
+         *     stops pointing at a repository (`repo_url` becomes ""). The file policy applies to every file:
+         *     one outside it refuses the whole conversion (422 with `problems`). The files canopy writes
+         *     itself (`.claude-plugin/`, `.claude/settings.json`, `bin/<slug>-email`, `.gitignore`) are
+         *     ignored if uploaded and rewritten. 409 for an agent that is already stored.
+         *
+         *     `bundle_b64` (a `git bundle` of the branch) keeps the repository's history: it is kept
+         *     under `refs/heads/imported` and revision 1 is a commit on its tip. Every blob in it is
+         *     scanned for secrets first (422 `secret` with `problems`). Files and history together are
+         *     held to one request's size: more is 413 — convert the files only.
+         */
+        readonly post: operations["convert_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move a stored agent's definition, with its history, to an empty GitHub repository
+         * @description Pushes `main` — every commit and every `r<N>` tag — to the EMPTY GitHub repository `repo`
+         *     with `github_token` (the exporting person's, used for this push only), then switches the
+         *     agent to `source=repo` there: `repo_url=https://github.com/<repo>`, `repo_ref=ref`, no live
+         *     revision. Its runners clone it from GitHub from then on. Without `github_token`, 422 `no_token`:
+         *     canopy cannot open the agent's delegated token. canopy's repository stays,
+         *     read-only: every later draft or publish is 409 `exported`. 409 `not_empty` when the GitHub
+         *     repository has any ref; 502 when it cannot be reached or refuses the push. Create the
+         *     repository first.
+         */
+        readonly post: operations["export_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/detach": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Point a stored agent at the GitHub repository its definition was pushed to
+         * @description For a person who pushed the definition to GitHub themselves (`canopy agent definition
+         *     export --push-myself`): the same switch as `export`, with nothing pushed by canopy. The
+         *     agent runs from `repo_url` @ `ref` from then on and its canopy repository is a read-only
+         *     archive.
+         */
+        readonly post: operations["detach_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An agent's stored definition: live, draft, policy
+         * @description `source` says where the definition lives. For a stored agent, the live revision, the one
+         *     draft (if any) and the file policy every write is held to. `can_draft` / `can_publish` say
+         *     what the caller may do here: `can_publish` is a person who administers the agent, or
+         *     another agent that does, signed in as itself.
+         */
+        readonly get: operations["get_agent_definition"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Every revision of a stored agent's definition, newest first */
+        readonly get: operations["list_agent_definition_revisions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One revision of a stored agent's definition, with its file tree
+         * @description `tree` is `{path: {sha256, size, executable}}`; `root_sha256` is its manifest root
+         *     (`canopy_sdk.agent_definition.manifest_root`).
+         */
+        readonly get: operations["get_agent_definition_revision"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}/files/{path}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One file of a revision, as it is stored
+         * @description The file's bytes as `text/plain; charset=utf-8` (every stored file is UTF-8 text). 404
+         *     for a path the revision does not hold.
+         */
+        readonly get: operations["get_agent_definition_file"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}/diff": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What changed in a revision, file by file
+         * @description A unified diff per changed file, from `against` to `number`. Without `against`, the
+         *     revision is compared with the one it was made on (its parent), or with nothing.
+         */
+        readonly get: operations["diff_agent_definition_revisions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/drafts": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Propose changes to a stored agent's definition (creates or replaces its one draft)
+         * @description `changes` are applied to the LIVE revision `base`: `content` (text) or `content_b64`
+         *     writes a file, `content: null` deletes one. The result replaces any earlier draft (whose
+         *     approval request, if any, is withdrawn). A `base` that is not live is 409 `stale_base`; a
+         *     change the file policy refuses is 422 with `problems`. Nothing goes live: whoever may
+         *     publish it does (`publish`). When an agent writes it (its own login, or any turn's token),
+         *     canopy files an approval request (`approval_id`) to the agent's owner and admins, who
+         *     approve it from its page with a passkey, unless that agent may publish it itself:
+         *     another agent that administers this one, signed in as itself, asks for no approval.
+         */
+        readonly post: operations["draft_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}/publish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Publish a stored agent's draft: it becomes what its runners run
+         * @description Draft `number` goes live and the old live revision is superseded; the files canopy writes
+         *     itself are rewritten for it, and the agent's skill catalog is read again from it. 409 when
+         *     `number` is not the draft, or was drafted on a revision that is no longer live. Its owner
+         *     or an admin publishes it, as themselves or through an agent they let act as them (an
+         *     act-as-you permission, read + write, named in `acted_by`); so may ANOTHER agent that
+         *     administers this one, signed in as itself (named in `published_by_agent`). 403 for the
+         *     agent's own login, a caller token, or an agent that is not its admin. An approval the
+         *     draft waited on is closed as superseded.
+         */
+        readonly post: operations["publish_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}/discard": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Discard a stored agent's draft
+         * @description The draft is kept, marked discarded, and its approval request (if any) is withdrawn.
+         */
+        readonly post: operations["discard_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/rollback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Roll a stored agent back to an earlier revision
+         * @description A NEW revision with revision `revision`'s files is created and published; history is
+         *     never rewritten. Any open draft is discarded. 409 for a revision that was never published.
+         *     Who may: the same as `publish`.
+         */
+        readonly post: operations["rollback_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/archive": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A revision of a stored agent as a gzip'd tar
+         * @description `application/gzip`: a tar of the revision's files (regular files only, mode 0644 or
+         *     0755), with `X-Canopy-Revision`, `X-Canopy-Root-Sha256`, `X-Canopy-Published-At`
+         *     (ISO 8601, UTC) and `X-Canopy-Workspace`. `revision` is a number or `live`. A runner's own token reads it for an
+         *     agent its box may hold, live or published revisions only; a person, any revision of an
+         *     agent they can see. It holds no credential.
+         */
+        readonly get: operations["get_agent_definition_archive"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/": {
         readonly parameters: {
             readonly query?: never;
@@ -5954,7 +6482,8 @@ export interface paths {
          *     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
          *     cloud boxes that take its turns are asked to re-run their bootstrap, as a
          *     repo change through the upsert does.
-         *     A value that is not a github.com repository is a 422.
+         *     A value that is not a github.com repository is a 422; a stored agent has no
+         *     repository (409).
          */
         readonly patch: operations["set_repository"];
         readonly trace?: never;
@@ -6027,10 +6556,11 @@ export interface paths {
          *     login), so a headless harness signed in as the agent can take part in its own
          *     sensitive conversations. That key receives only copies of the keys of
          *     conversations the login is itself in — never a copy of any vault's key, never
-         *     an endorsement, never a device approval. Turning it on needs an owner or admin
-         *     of the agent at a browser with a fresh passkey step-up; 409 `no_agent_login`
-         *     when the agent has no login of its own. Turning it off deletes the key and every
-         *     conversation-key copy wrapped to it.
+         *     an endorsement, never a device approval. Here an owner or admin of the agent turns
+         *     it on at a browser with a fresh passkey step-up; the agent's own login may also turn
+         *     its own on or off with no passkey (`PUT /api/vault/test-key`). 409 `no_agent_login`
+         *     when the agent has no login of its own. Turning it off deletes the key and
+         *     everything it held; an admin's off is the kill switch.
          */
         readonly put: operations["set_test_vault_key"];
         readonly post?: never;
@@ -6399,6 +6929,10 @@ export interface paths {
         /**
          * Add or change one host site: only the fields sent change. dry_run checks without saving
          * @description A field of the wrong shape (an empty or over-long `bash` entry, a malformed path) is a 422.
+         *
+         *     `contact_scoped: true` also offers the agent to the site's own contacts, whose turns then reach
+         *     the site's tools bound to that one contact (a canopy-signed subject statement, no grant); the site
+         *     authorizes every call against them.
          */
         readonly put: operations["put_agent_host_site"];
         readonly post?: never;
@@ -6604,7 +7138,10 @@ export interface paths {
         };
         /** List the agent's skill catalog */
         readonly get: operations["list_skills"];
-        /** Replace the agent's skill catalog */
+        /**
+         * Replace the agent's skill catalog
+         * @description 409 for a stored agent: its catalog is read from its live revision when it is published.
+         */
         readonly put: operations["replace_skills"];
         readonly post?: never;
         readonly delete?: never;
@@ -7211,6 +7748,29 @@ export interface paths {
          *     wrap at this kv. The recovery wrap is set only by enable and rotate.
          */
         readonly post: operations["add_agent_zk_wraps"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/zk/wraps/mine": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Give your own approved machine the vault key, from your own copy
+         * @description `{kv, wraps: [{kind: device, target, wrap}]}`: device wraps, each to a machine of
+         *     yours this agent waits on, made in your browser from your own copy of the vault key.
+         *     You must hold that copy (409 `zk_no_copy`); a machine that is not yours is 403
+         *     `zk_not_your_machine`, and one that already holds a copy is 409 `zk_not_pending`.
+         */
+        readonly post: operations["add_my_device_zk_wraps"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -8099,16 +8659,70 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * One hour of a named AWS role, as this agent
-         * @description Short-lived AWS keys for ONE role named in canopy-web's settings
-         *     (`labs-read` = read-only, non-sensitive labs observability; `labs-readwrite` =
-         *     agent-named RDS copies and a psql client task, for listed agents only), with the
-         *     agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). 404 for a role
-         *     name canopy-web does not vend; 403 for a browser session or an agent the role is
-         *     not for; 502 when AWS refused.
+         * At most an hour of a named AWS role, as this agent
+         * @description Short-lived AWS keys for ONE role named in canopy-web's settings (`labs-read` = read-only,
+         *     `labs-readwrite` = admin minus guardrails, `labs-config` = app secrets; all fenced), with
+         *     the agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). A fenced role goes to
+         *     the agents listed for it, and to another agent only while it holds a live grant a person
+         *     approved (`POST /api/agents/{slug}/aws-role-requests`), for at most the grant's remaining time.
+         *     404 for a role name canopy-web does not vend; 403 for a browser session, or `approval_required`
+         *     (with `request_with`) for a fenced role and no live grant; 502 when AWS refused.
          */
         readonly post: operations["agent_aws_credentials"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/aws-role-requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This agent's AWS role requests and grants, newest first
+         * @description The agent's requests for fenced AWS roles (optionally one `role`), newest first, each with its
+         *     status as of now: `approved` is a live grant until `expires_at`.
+         */
+        readonly get: operations["list_aws_role_requests"];
+        readonly put?: never;
+        /**
+         * Ask a person to let this agent take a fenced AWS role
+         * @description File a request for a role in `settings.CANOPY_AWS_ROLE_AGENTS` (a fenced role), with the
+         *     reason and how long it should last. It files an approval (kind `agent.aws_role`) that an owner of
+         *     the agent's workspace or a canopy superuser approves on its page (`approval_url`) with a passkey;
+         *     then `POST aws-credentials` vends the role to this agent until the grant ends. 404 for a role
+         *     canopy-web does not vend; 422 for a role vended on ask (none today: every role is fenced) or one
+         *     this agent already gets with no approval. While a request for the same role is pending, asking again returns it (200).
+         */
+        readonly post: operations["request_aws_role"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/aws-role-requests/{request_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Revoke a grant, or withdraw a request still waiting
+         * @description An approved grant: revoked at once, so `aws-credentials` refuses the role from now (keys already
+         *     handed out last until their own expiry, at most an hour). By the person who approved it, an owner
+         *     of the agent's workspace, or a canopy superuser. A pending request: withdrawn, with its approval,
+         *     by those people or whoever asked. 409 for one already closed.
+         */
+        readonly delete: operations["revoke_aws_role_request"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -9225,12 +9839,43 @@ export interface paths {
          *     stored one is 409 `zk_keyset_exists` unless `replace` is true, which also
          *     drops every agent's member wrap to the old key.
          *
-         *     An agent's own login, while an admin has turned its test vault key on, makes
-         *     its FIRST key here with passphrase seals only, and with no passkey step-up (it
-         *     has no passkey, and may hold none); anything else from such a login is refused
-         *     (403 `not_a_person`, 409 `test_key_exists`, 422 `test_key_passphrase_only`).
+         *     An agent's own login, while its test vault key is on (`PUT /api/vault/test-key`),
+         *     makes its key here with passphrase seals only, and with no passkey step-up (it
+         *     has no passkey, and may hold none). A second key must send `replace: true`, which
+         *     drops everything the old one held: its conversation copies, page permissions and
+         *     connections. Anything else from such a login is refused (403 `not_a_person`,
+         *     409 `test_key_exists`, 422 `test_key_passphrase_only`).
          */
         readonly put: operations["put_vault_keyset"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vault/test-key": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * My agent test vault key (an agent's own login)
+         * @description For an agent's own login only: whether its test vault key is on, and the key if
+         *     one was made. 403 for a person or any credential that is not the login's own.
+         */
+        readonly get: operations["get_own_test_key"];
+        /**
+         * Turn my agent test vault key on or off (agent login)
+         * @description `{enabled}`. An agent's own login turns its own test vault key on or off, with no
+         *     passkey: the key only ever receives copies of conversations the agent is already in,
+         *     and its own connections are for logins its harness already holds (docs/architecture/
+         *     vault.md § An agent login's test vault key). Turning it off deletes the key and
+         *     everything it held. An admin of the agent can do the same from the agent page.
+         */
+        readonly put: operations["put_own_test_key"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -10232,6 +10877,143 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A project's files: the live revision, the draft waiting to be published, and its skills
+         * @description The draft is shown to those who may change the project; everyone who reads the
+         *     project sees the live files.
+         */
+        readonly get: operations["get_project_files"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/revisions/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Every revision of a project's files, newest first */
+        readonly get: operations["list_project_file_revisions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/content": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One file of a project, from its live files or a given revision
+         * @description `revision` omitted reads the live files. A draft or discarded revision is read only
+         *     by those who may change the project.
+         */
+        readonly get: operations["get_project_file"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/draft": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Make or replace a project's draft of its files
+         * @description `{base, changes: [{path, content | null}], message}`: the changes are made on the
+         *     live revision `base` (0 while nothing is live) and replace any earlier draft. Nothing
+         *     runs until a person who may publish it does. Every file is held to the policy
+         *     (`policy` on `GET …/files/`): text only, no executable, nothing shaped like a secret.
+         */
+        readonly put: operations["put_project_files_draft"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/draft/{number}/publish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Publish a project's draft of its files
+         * @description What is published runs in the project's member agents' turns, with every vault
+         *     attached to the project, so only the people those vaults open to publish it.
+         */
+        readonly post: operations["publish_project_files"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/draft/{number}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Discard a project's draft of its files */
+        readonly delete: operations["discard_project_files_draft"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/files/revisions/{number}/rollback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Publish an earlier revision of a project's files again, as a new revision */
+        readonly post: operations["rollback_project_files"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/": {
         readonly parameters: {
             readonly query?: never;
@@ -11073,9 +11855,9 @@ export interface paths {
         /**
          * Change what a host site may do
          * @description Change what a host site may do. A change to what it may sign — its
-         *     public keys, key URL or issuer — needs a person at a browser who just
-         *     confirmed with their passkey (403 `step_up_required` otherwise); a token is
-         *     refused it.
+         *     public keys, key URL or issuer — or to where its contacts' replies are sent
+         *     (`reply_webhook_url`) needs a person at a browser who just confirmed with their
+         *     passkey (403 `step_up_required` otherwise); a token is refused it.
          */
         readonly patch: operations["update_host_site"];
         readonly trace?: never;
@@ -11393,6 +12175,71 @@ export interface paths {
          *     one wording whatever the reason.
          */
         readonly post: operations["attest_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/sites/contacts": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A host site writes its own record of its people, signed
+         * @description The host site is the system of record for the people it brings; this keeps canopy's
+         *     copy of them current.
+         *
+         *     The body is a compact JWS signed by the site's own key (`Content-Type:
+         *     application/jwt`): `typ` `canopy-contact-update+jwt`, `iss` = its host-site name,
+         *     `aud` = this URL, at most 60 s, single-use `jti`, optional `canopy_workspace`, and
+         *     `contacts` — 1 to 100 of `{sub, display_name?, record_uri?, profile?, version}`. Build
+         *     and send it with `canopy_sdk.host.contacts.update_contacts`.
+         *
+         *     A missing person is created (keyed by the site and `sub`, granted nothing). Only
+         *     `display_name`, `record_uri` (under the site's `site.person_scheme`) and `profile` (at
+         *     most 40 keys, 4096 bytes) are written, and only when `version` is newer than the one
+         *     canopy holds; otherwise the item is `stale`. Each item is answered on its own:
+         *     `{results: [{sub, contact_id, status, reason?}]}`.
+         */
+        readonly post: operations["update_contacts"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/sites/contacts/erase": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A host site makes canopy forget some of its people, signed
+         * @description The host site, the system of record for its people, makes canopy forget them.
+         *
+         *     The body is a compact JWS signed by the site's own key (`Content-Type:
+         *     application/jwt`): `typ` `canopy-contact-erase+jwt`, `iss` = its host-site name, `aud` =
+         *     this URL, at most 60 s, single-use `jti`, optional `canopy_workspace`, and `subs` — 1
+         *     to 100 of the site's own ids. Send it with `canopy_sdk.host.contacts.erase_contacts`.
+         *
+         *     For each person this site vouches for: their conversations and every word, file and
+         *     turn in them, their contact tokens and act-as-you permissions, the facts recorded about
+         *     them in this workspace, and the person record when nothing else holds it, are deleted;
+         *     a tombstone keeps only the site's id and when. Nobody else's data is touched.
+         *     Idempotent: `{results: [{sub, status: erased|not_found}]}`. 503 when a stored file could
+         *     not be deleted: what is done stays done, and sending again finishes the rest.
+         */
+        readonly post: operations["erase_contacts"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -15172,6 +16019,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every piece of work this runner owes, behind an ETag
+         * @description The drains in one read. `ETag` is the runner's sync version; send it back as
+         *     `If-None-Match` and an unchanged version answers 304 with nothing else read.
+         *     Every list is whole (never a diff since the last read), so a box that missed a
+         *     doorbell, or a bump, finds the work on its next read.
+         */
+        readonly get: operations["get_runner_sync"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/unclaimable": {
         readonly parameters: {
             readonly query?: never;
@@ -15290,6 +16160,53 @@ export interface paths {
         readonly put?: never;
         /** Append Turn Events */
         readonly post: operations["append_turn_events"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/turns/{turn_id}/page-brief": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Turn Page Brief
+         * @description A LEAN page turn's opening context, for the runner to add to its session's system prompt:
+         *     the conversation's page and the site's tools, exactly as `current_page` and
+         *     `site_tools` would answer this turn — through the gateway, as the person who sent,
+         *     under their own act-as-you permission. Only for the box running the turn, only while it
+         *     runs, and only for a turn whose agent asked for lean page turns (`page_lean:`).
+         */
+        readonly get: operations["get_turn_page_brief"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/turns/{turn_id}/live-text": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Turn Live Text
+         * @description The reply the agent is writing right now, whole so far, for the people watching its
+         *     chat: fanned out to the conversation's socket as `chat.live_text` and never stored. The
+         *     stored reply arrives as it always has and takes its place. A sensitive conversation's
+         *     words never stream.
+         */
+        readonly post: operations["post_turn_live_text"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -15875,15 +16792,13 @@ export interface paths {
         };
         /**
          * What is waiting on you
-         * @description Everything waiting on the caller in scope — chats whose agent needs your
-         *     next message, tasks asking you to decide or parked on you, requests to join a
-         *     workspace you manage — as `now` (something happened in the last few days),
-         *     `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
-         *     each returns when something new happens on it), plus `running` — not
-         *     waiting on you, but yours and being worked right now. Newest first. Branch
-         *     on each row's `state` (asking, your_move, parked, stalled, running,
-         *     running_auto);
-         *     `reason` is display text.
+         * @description Everything waiting on the caller in scope — tasks asking you to decide or
+         *     parked on you, requests to join a workspace you manage, sign-offs — as `now`
+         *     (something happened in the last few days), `quiet` (nothing has for a while)
+         *     and `hidden` (taken off your list by you; each returns when something new
+         *     happens on it). Newest first. Branch on each row's `state` (asking,
+         *     your_move); `reason` is display text. Sessions are not listed here: the
+         *     sessions you started are `/api/me/sessions/` rows with `started_by_you`.
          */
         readonly get: operations["list_attention"];
         readonly put?: never;
@@ -16538,7 +17453,8 @@ export interface paths {
         /**
          * Requests waiting on you
          * @description Requests in your workspaces that YOU could approve. `status=all` also lists decided ones you
-         *     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`).
+         *     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`). A card with `step_up`
+         *     is approved only on its page (`page_url`), with a passkey.
          */
         readonly get: operations["list_approvals"];
         readonly put?: never;
@@ -16591,6 +17507,9 @@ export interface paths {
          * @description Approve (runs the kind's handler as you, once) or decline (nothing happens). A request is
          *     decided once: a second decision is a 409 naming who got there first. 403 when you do not hold
          *     the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason.
+         *     A request whose card says `step_up` is approved only from its page (`page_url`) in a browser, with
+         *     the approver's passkey (a browser without a fresh one gets 403 `step_up_required`; a token is always
+         *     refused): send the person that link. Declining needs no passkey.
          */
         readonly post: operations["decide_approval"];
         readonly delete?: never;
@@ -19369,10 +20288,11 @@ export interface paths {
         };
         /**
          * Read this run's sources
-         * @description For a turn in a learning run: the sources it may learn from past `after` (the last `source` it was served;
-         *     0 to start), whole and scrubbed, a few at a time, with the directives of the people in them. Pass `next_after`
-         *     back to read on, and `next_index` as `index` when it is set (the rest of a long session); `done` says none are
-         *     left. What it reads is other people's words: material, never instructions.
+         * @description For a turn in a learning run: the sources it may learn from, best first (each with its triage verdict: why it
+         *     was served now), whole and scrubbed, a few at a time, with the directives of the people in them. Pass `source`
+         *     to read one due session of your choosing instead (404 when it is not due). Pass `next_after` back to read on, and
+         *     `next_index` as `index` when it is set (the rest of a long session); `done` says none are left. What it reads is
+         *     other people's words: material, never instructions.
          */
         readonly get: operations["brain_read"];
         readonly put?: never;
@@ -19396,7 +20316,11 @@ export interface paths {
          * Write what this run learned
          * @description For a turn in a learning run: one output of a kind its feature declares, about the run's own subject,
          *     citing the sources it came from. Every cited source must be one this run read and must still be open to
-         *     it; otherwise nothing is written (422). The words are scrubbed. The same output twice is one.
+         *     it; otherwise nothing is written (422). Every piece of `body.evidence` ({source, index, quote}) must quote a
+         *     message this run read, or the whole output is refused (422) naming the piece and why: fix it and emit again. The
+         *     words are scrubbed. The same output twice is one, and one whose `key` matches an open finding of this learner and
+         *     subject (or one dismissed lately, which stays dismissed), or that names one by `same_as`, folds into it
+         *     (`folded`). Past the run's budget of outputs a new one is refused (422).
          */
         readonly post: operations["brain_emit"];
         readonly delete?: never;
@@ -19415,7 +20339,8 @@ export interface paths {
         /**
          * What learns from canopy's sessions
          * @description Every registered capability: its class, the purposes it reads for and who sees what it produces.
-         *     What a person agrees to when they agree to a class.
+         *     What a person agrees to when they agree to a class. Which agent operates one, and the command its runs start
+         *     with, only inside the operator's own organisation (`registry.shown_to`).
          */
         readonly get: operations["list_capabilities"];
         readonly put?: never;
@@ -19531,13 +20456,89 @@ export interface paths {
          * @description The learning outputs you may read: about you, about people you coach or manage (outputs, never
          *     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
          *     canopy's system findings where you own or administer the workspace a run was started for (or one above it),
-         *     as yourself only. Pinned to a
-         *     workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it. Never a withdrawn or stale one. Newest
-         *     first.
+         *     as yourself only. Pinned to a workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it;
+         *     unpinned, your one organisation's (the read rule every list follows). Never a withdrawn or stale one. `status`
+         *     narrows to open, accepted, dismissed, done or duplicate (one merged into another, left out unless asked for).
+         *     Newest first, a faded finding (no run re-saw it within its fade window) below the fresh ones.
          */
         readonly get: operations["list_outputs"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/outputs/{output_id}/status": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Say where a finding stands: open, accepted, dismissed or done
+         * @description Your call on something learning produced: `accepted` (someone takes it up), `dismissed` (not worth acting on),
+         *     `done` (acted on) or back to `open`. Yours only if you see it and act for its audience: a system finding's
+         *     workspace owners and admins (or an ancestor's), a project output's members who may read the project, an output
+         *     about you; an admin agent in its own turn, a system or project finding where it and its person manage learning.
+         *     A repeat later folds into it while it is open or accepted. Every change is in its workspace's log.
+         */
+        readonly post: operations["set_output_status"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/outputs/{output_id}/fix": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What asking for a finding's fix would do
+         * @description Before the button is pressed: which agent is asked (the learner's operator), the words on the button, exactly
+         *     what happens, and the brief it sends word for word. Changes nothing.
+         */
+        readonly get: operations["get_output_fix_plan"];
+        readonly put?: never;
+        /**
+         * Ask the learner's operator agent to fix a finding
+         * @description Starts your conversation with the learner's operator agent (or continues the one you have about this finding)
+         *     with the brief `GET …/fix` shows; the agent fixes it, opens a pull request and sets the finding done once it ships.
+         *     The finding becomes `accepted` (Fixing). Only a person asks: an agent would be starting itself.
+         */
+        readonly post: operations["ask_output_fix"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/outputs/{output_id}/merge": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Merge a duplicate finding into this one
+         * @description Two findings that are one problem: fold `duplicate` into this one. This one takes its sightings (`seen` adds up),
+         *     the sessions it came from and a note of it (`merged_from`); the duplicate's status becomes `duplicate`
+         *     (`merged_into` this one), and a later repeat of its key folds here. Both must be of the same learner, subject and
+         *     workspace, and yours to set by the rule that sets a status (`set_output_status`). Recorded in the workspace's
+         *     log.
+         */
+        readonly post: operations["merge_outputs"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -19634,6 +20635,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/brain/scorecard": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How each learner target's findings land, over the last eight weeks (counts)
+         * @description Per learner target here and below: the findings its runs made each week by where each stands now, the share
+         *     taken up (precision: accepted and done over those decided), how many are open and how many faded, and how many came
+         *     back after they were done. Only findings you may read are counted (the Findings tab's rule).
+         */
+        readonly get: operations["brain_scorecard"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/brain/learning-reads": {
         readonly parameters: {
             readonly query?: never;
@@ -19676,10 +20699,31 @@ export interface paths {
          *     much of a session it reads, from the workspace the request is pinned to. Only a learner whose operator (if it has
          *     one) is an agent of this workspace or below, and only to such an agent, which must also live where every target
          *     of it is or above (its targets' schedules move to it). Enabling one that nobody active answers for makes you its
-         *     accountable admin: its targets' schedules act for you. What it may learn
+         *     accountable admin: its targets' schedules act for you (an agent's turn: the person it answers to). What it may learn
          *     and who sees it (its class, purposes, audience) are a canopy admin's, at its registration.
          */
         readonly patch: operations["configure_learner"];
+        readonly trace?: never;
+    };
+    readonly "/api/brain/flags/{flag_id}/acknowledge": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Acknowledge something a removal could not undo (its owner or the workspace's managers)
+         * @description You have seen what a learning run made that canopy could not take back after a session it came from was
+         *     removed, and decided what to do with it: the alert raised to its owner closes.
+         */
+        readonly post: operations["acknowledge_learning_flag"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
         readonly trace?: never;
     };
     readonly "/api/brain/targets": {
@@ -19743,6 +20787,83 @@ export interface paths {
          *     (learning reads off there, the learner disabled or without an operator or entry, a run still open, nothing new).
          */
         readonly post: operations["run_learning_target"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/targets/{target_id}/budget": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a target's budget (its owners and admins)
+         * @description How much one run of this target may read (sessions) and write (outputs), and how many runs, outputs and tokens
+         *     it may spend in a UTC day, how far back its runs read (`lookback_days`: only sessions active that recently), how
+         *     long an open finding nobody re-sees stays fresh (`fade_days`, and by its type, `fade_days_by_type`) and how long a
+         *     dismissed finding takes its repeats in and stays dismissed (`dismiss_cooldown_days`). A run stops cleanly at a cap:
+         *     nothing more is read or written, and a fire past a daily cap starts nothing and says why. Fields left out keep their
+         *     value; `clear_tokens` removes the token cap.
+         */
+        readonly patch: operations["set_target_budget"];
+        readonly trace?: never;
+    };
+    readonly "/api/brain/why/{session_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Why a learner may or may not read a session (yours, or one you read)
+         * @description Whether `learner` (default: a project's readers) may read this session now, and if not, why, by the same rule
+         *     every learning read asks (`eligibility.explain`). Only for a session in this workspace or below that you are in or
+         *     read yourself (an admin agent here: one its own login reads). A reason about a person says whether it is you or
+         *     "someone in it", never who.
+         */
+        readonly get: operations["why_not_read"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/consent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who here has agreed to which learning (its owners and admins)
+         * @description Every member of the pinned workspace and those below it who has agreed to any learning, with their classes
+         *     and the workspaces it covers (empty: all of theirs).
+         */
+        readonly get: operations["list_consent"];
+        readonly put?: never;
+        /**
+         * Opt people in to learning (its owners and admins)
+         * @description Add learning classes to the consent of members of the pinned workspace or below: those named (`people`, by
+         *     email) and, with `already_agreed`, everyone there who agreed to any class already. It only adds: taking a class
+         *     away, narrowing and withdrawing a session stay each person's own, in Settings → Learning, where the change shows
+         *     as made by you. A person with no consent gets one covering only their workspaces you manage; one whose consent
+         *     reaches a workspace you do not manage is refused (`refused`). Each person's change is on their own audit log.
+         */
+        readonly post: operations["opt_people_in"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -21560,6 +22681,12 @@ export interface components {
              * @description The click a write belongs to.
              */
             readonly operation_id?: string | null;
+            /**
+             * Allow Duplicates
+             * @description Salesforce only, on a `POST` or `PATCH` of `sobjects/<type>` or `sobjects/<type>/<id>`: save even though the org's duplicate rules warned ("Create anyway"). Refused on any other call.
+             * @default false
+             */
+            readonly allow_duplicates: boolean;
         };
         /** ViewSurfaceIn */
         readonly ViewSurfaceIn: {
@@ -21590,13 +22717,13 @@ export interface components {
             /**
              * Expires At
              * Format: date-time
-             * @description When it ends unless a write comes first: each write moves this to 120 seconds from then.
+             * @description When it ends unless a write comes first: each write moves this `idle_seconds` from then.
              */
             readonly expires_at: string;
             /**
              * Hard Limit At
              * Format: date-time
-             * @description When it ends whatever is written: 10 minutes from the click.
+             * @description When it ends whatever is written: 10 minutes from the click (an hour on a screen that only changes Drive labels).
              */
             readonly hard_limit_at: string;
             /**
@@ -21604,6 +22731,21 @@ export interface components {
              * @description What this screen may write. Each write is still checked.
              */
             readonly writes: readonly components["schemas"]["OperationWriteOut"][];
+            /**
+             * Max Writes
+             * @description How many writes this click covers: 500, or 20000 on a screen that only changes Drive labels.
+             */
+            readonly max_writes: number;
+            /**
+             * Idle Seconds
+             * @description How long after its last write it ends: 120, or 900 on a screen that only changes Drive labels.
+             */
+            readonly idle_seconds: number;
+            /**
+             * Hard Limit Seconds
+             * @description How long after the click it ends, whatever is written.
+             */
+            readonly hard_limit_seconds: number;
         };
         /** OperationWriteOut */
         readonly OperationWriteOut: {
@@ -24825,6 +25967,16 @@ export interface components {
              */
             readonly host_grant: boolean;
         };
+        /** EmbedPrepareOut */
+        readonly EmbedPrepareOut: {
+            /** Rung */
+            readonly rung: boolean;
+        };
+        /** EmbedPrepareIn */
+        readonly EmbedPrepareIn: {
+            /** Agent Slug */
+            readonly agent_slug: string;
+        };
         /** WsTicketOut */
         readonly WsTicketOut: {
             /** Ticket */
@@ -25054,6 +26206,14 @@ export interface components {
             readonly window_seconds?: number | null;
         };
         /**
+         * AgentConfirmIn
+         * @description Optionally a SHORTER window than the usual 30 minutes (`host_grants.window_for`).
+         */
+        readonly AgentConfirmIn: {
+            /** Window Seconds */
+            readonly window_seconds?: number | null;
+        };
+        /**
          * MyDelegatedCredentialOut
          * @description One credential from your own account, delegated to an agent. Never the value.
          */
@@ -25241,6 +26401,8 @@ export interface components {
              * @default
              */
             readonly origin: string;
+            /** Context */
+            readonly context?: string | null;
         };
         /**
          * MessageAppOut
@@ -27392,7 +28554,7 @@ export interface components {
              * Every
              * @enum {string}
              */
-            readonly every: "day" | "week" | "2weeks" | "month" | "as_needed";
+            readonly every: "day" | "weekdays" | "week" | "2weeks" | "month" | "as_needed";
             /** Weekday */
             readonly weekday?: ("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun") | null;
             /**
@@ -27470,6 +28632,8 @@ export interface components {
             readonly versions: readonly components["schemas"]["StoreVersionOut"][];
             /** Installed */
             readonly installed: boolean;
+            /** Ai */
+            readonly ai?: string | null;
         };
         /** StoreEmailOut */
         readonly StoreEmailOut: {
@@ -27722,6 +28886,41 @@ export interface components {
              * @default template
              */
             readonly origin: string;
+            /**
+             * Kind
+             * @default jsx
+             */
+            readonly kind: string;
+            /**
+             * Entry
+             * @default
+             */
+            readonly entry: string;
+            /**
+             * Bundle Url
+             * @default
+             */
+            readonly bundle_url: string;
+            /**
+             * Layout
+             * @default page
+             */
+            readonly layout: string;
+        };
+        /**
+         * BundleFileIn
+         * @description One file of a bundle page's file set: its path in the bundle and exactly one of its bytes
+         *     (base64), its text, or the sha256 of bytes already sent to `upload_workspace_app_bundle_blobs`.
+         */
+        readonly BundleFileIn: {
+            /** Path */
+            readonly path: string;
+            /** Content Base64 */
+            readonly content_base64?: string | null;
+            /** Text */
+            readonly text?: string | null;
+            /** Sha256 */
+            readonly sha256?: string | null;
         };
         /** InstallIn */
         readonly InstallIn: {
@@ -27734,6 +28933,22 @@ export interface components {
             readonly manifest?: {
                 readonly [key: string]: unknown;
             } | null;
+            /** Files */
+            readonly files?: readonly components["schemas"]["BundleFileIn"][] | null;
+        };
+        /** BundleBlobOut */
+        readonly BundleBlobOut: {
+            /** Path */
+            readonly path: string;
+            /** Sha256 */
+            readonly sha256: string;
+            /** Size */
+            readonly size: number;
+        };
+        /** BundleBlobsIn */
+        readonly BundleBlobsIn: {
+            /** Files */
+            readonly files: readonly components["schemas"]["BundleFileIn"][];
         };
         /** InstallationPatch */
         readonly InstallationPatch: {
@@ -27778,6 +28993,30 @@ export interface components {
             readonly published_by?: string | null;
             /** Published At */
             readonly published_at?: string | null;
+            /**
+             * Reach Changes
+             * @default []
+             */
+            readonly reach_changes: readonly string[];
+            /**
+             * Published Under
+             * @default
+             */
+            readonly published_under: string;
+        };
+        /** ReleaseIn */
+        readonly ReleaseIn: {
+            /** Manifest */
+            readonly manifest: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /** Files */
+            readonly files?: readonly components["schemas"]["BundleFileIn"][] | null;
         };
         /** DraftOut */
         readonly DraftOut: {
@@ -27880,6 +29119,45 @@ export interface components {
             /** Number */
             readonly number: number;
         };
+        /** MaintainerOut */
+        readonly MaintainerOut: {
+            /** Id */
+            readonly id: number;
+            /** Email */
+            readonly email: string;
+            /** Agent */
+            readonly agent?: string | null;
+            /** Name */
+            readonly name: string;
+            /** Level */
+            readonly level: string;
+            /** Granted By */
+            readonly granted_by?: string | null;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            readonly granted_at: string;
+        };
+        /** MaintainerIn */
+        readonly MaintainerIn: {
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Level
+             * @default content
+             * @enum {string}
+             */
+            readonly level: "content" | "permissions";
+        };
         /** ActionIn */
         readonly ActionIn: {
             /** Record */
@@ -27910,6 +29188,47 @@ export interface components {
             readonly input: {
                 readonly [key: string]: unknown;
             };
+        };
+        /** AiCompleteIn */
+        readonly AiCompleteIn: {
+            /**
+             * Model
+             * @default fast
+             * @enum {string}
+             */
+            readonly model: "fast" | "smart";
+            /**
+             * System
+             * @default
+             */
+            readonly system: string;
+            /** Messages */
+            readonly messages: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Max Tokens */
+            readonly max_tokens?: number | null;
+            /** Json Schema */
+            readonly json_schema?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Web Search
+             * @default false
+             */
+            readonly web_search: boolean;
+            /**
+             * Feature
+             * @default
+             */
+            readonly feature: string;
         };
         /** FileOut */
         readonly FileOut: {
@@ -28047,6 +29366,8 @@ export interface components {
             readonly adapter: string;
             /** Capabilities */
             readonly capabilities: readonly string[];
+            /** Acts */
+            readonly acts: readonly string[];
             /** Events */
             readonly events: readonly string[];
             /** Matches */
@@ -30172,6 +31493,366 @@ export interface components {
              */
             readonly projects: readonly components["schemas"]["SpawnedProjectOut"][];
         };
+        /**
+         * DefinitionActedByOut
+         * @description An agent that did a person's act AS them, under an act-as-you permission the person
+         *     approved with their passkey.
+         */
+        readonly DefinitionActedByOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Person */
+            readonly person: string;
+            /**
+             * Act As Grant
+             * @default
+             */
+            readonly act_as_grant: string;
+        };
+        /** StoredAgentOut */
+        readonly StoredAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Source
+             * @default stored
+             * @constant
+             */
+            readonly source: "stored";
+            /** Revision */
+            readonly revision: number;
+            /** Root Sha256 */
+            readonly root_sha256: string;
+            /**
+             * Owner
+             * @default
+             */
+            readonly owner: string;
+            readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
+            /** Dropped */
+            readonly dropped?: readonly string[];
+        };
+        /** DefinitionNewFileIn */
+        readonly DefinitionNewFileIn: {
+            /** Path */
+            readonly path: string;
+            /** Content */
+            readonly content?: string | null;
+            /** Content B64 */
+            readonly content_b64?: string | null;
+            /**
+             * Executable
+             * @default false
+             */
+            readonly executable: boolean;
+        };
+        /** StoredAgentIn */
+        readonly StoredAgentIn: {
+            /** Name */
+            readonly name: string;
+            /** Slug */
+            readonly slug: string;
+            /** Mandate */
+            readonly mandate: string;
+            /**
+             * Stakeholders
+             * @default
+             */
+            readonly stakeholders: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Files */
+            readonly files?: readonly components["schemas"]["DefinitionNewFileIn"][];
+            /** Bundle B64 */
+            readonly bundle_b64?: string | null;
+            /**
+             * Drop Refused
+             * @default false
+             */
+            readonly drop_refused: boolean;
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
+        /** DefinitionAuthorOut */
+        readonly DefinitionAuthorOut: {
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * By Agent
+             * @default false
+             */
+            readonly by_agent: boolean;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+        };
+        /** DefinitionRevisionSummaryOut */
+        readonly DefinitionRevisionSummaryOut: {
+            /** Number */
+            readonly number: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "draft" | "published" | "superseded" | "discarded";
+            /** Root Sha256 */
+            readonly root_sha256: string;
+            /**
+             * Commit
+             * @default
+             */
+            readonly commit: string;
+            /** Message */
+            readonly message: string;
+            /** Parent */
+            readonly parent?: number | null;
+            readonly author: components["schemas"]["DefinitionAuthorOut"];
+            /** Files */
+            readonly files: number;
+            /** Size */
+            readonly size: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Published At */
+            readonly published_at?: string | null;
+            /** Published By */
+            readonly published_by?: string | null;
+            /** Published By Agent */
+            readonly published_by_agent?: string | null;
+            /** Approval Id */
+            readonly approval_id?: number | null;
+            readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
+        };
+        /** DefinitionConvertIn */
+        readonly DefinitionConvertIn: {
+            /** Files */
+            readonly files: readonly components["schemas"]["DefinitionFileIn"][];
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+            /** Bundle B64 */
+            readonly bundle_b64?: string | null;
+        };
+        /** DefinitionFileIn */
+        readonly DefinitionFileIn: {
+            /** Path */
+            readonly path: string;
+            /** Content B64 */
+            readonly content_b64: string;
+            /**
+             * Executable
+             * @default false
+             */
+            readonly executable: boolean;
+        };
+        /** DefinitionMovedOut */
+        readonly DefinitionMovedOut: {
+            /** Repo */
+            readonly repo: string;
+            /** Repo Url */
+            readonly repo_url: string;
+            /** Repo Ref */
+            readonly repo_ref: string;
+            /** Commit */
+            readonly commit: string;
+            /** Revision */
+            readonly revision: number;
+            /** Tags */
+            readonly tags?: readonly string[];
+            readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
+        };
+        /** DefinitionExportIn */
+        readonly DefinitionExportIn: {
+            /** Repo */
+            readonly repo: string;
+            /**
+             * Ref
+             * @default main
+             */
+            readonly ref: string;
+            /**
+             * Github Token
+             * @default
+             */
+            readonly github_token: string;
+        };
+        /** DefinitionDetachIn */
+        readonly DefinitionDetachIn: {
+            /** Repo Url */
+            readonly repo_url: string;
+            /**
+             * Ref
+             * @default main
+             */
+            readonly ref: string;
+        };
+        /** DefinitionOut */
+        readonly DefinitionOut: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
+            /** Git Url */
+            readonly git_url?: string | null;
+            /**
+             * Exported To
+             * @default
+             */
+            readonly exported_to: string;
+            readonly live?: components["schemas"]["DefinitionRevisionSummaryOut"] | null;
+            readonly draft?: components["schemas"]["DefinitionRevisionSummaryOut"] | null;
+            readonly policy: components["schemas"]["DefinitionPolicyOut"];
+            /**
+             * Can Draft
+             * @default false
+             */
+            readonly can_draft: boolean;
+            /**
+             * Can Publish
+             * @default false
+             */
+            readonly can_publish: boolean;
+        };
+        /** DefinitionPolicyOut */
+        readonly DefinitionPolicyOut: {
+            /** Max Files */
+            readonly max_files: number;
+            /** Max File Bytes */
+            readonly max_file_bytes: number;
+            /** Max Tree Bytes */
+            readonly max_tree_bytes: number;
+            /** Editable */
+            readonly editable: readonly string[];
+            /** Generated */
+            readonly generated: readonly string[];
+        };
+        /** DefinitionRevisionOut */
+        readonly DefinitionRevisionOut: {
+            /** Number */
+            readonly number: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "draft" | "published" | "superseded" | "discarded";
+            /** Root Sha256 */
+            readonly root_sha256: string;
+            /**
+             * Commit
+             * @default
+             */
+            readonly commit: string;
+            /** Message */
+            readonly message: string;
+            /** Parent */
+            readonly parent?: number | null;
+            readonly author: components["schemas"]["DefinitionAuthorOut"];
+            /** Files */
+            readonly files: number;
+            /** Size */
+            readonly size: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Published At */
+            readonly published_at?: string | null;
+            /** Published By */
+            readonly published_by?: string | null;
+            /** Published By Agent */
+            readonly published_by_agent?: string | null;
+            /** Approval Id */
+            readonly approval_id?: number | null;
+            readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
+            /** Tree */
+            readonly tree: {
+                readonly [key: string]: components["schemas"]["DefinitionTreeEntryOut"];
+            };
+        };
+        /** DefinitionTreeEntryOut */
+        readonly DefinitionTreeEntryOut: {
+            /** Sha256 */
+            readonly sha256: string;
+            /** Size */
+            readonly size: number;
+            /** Executable */
+            readonly executable: boolean;
+        };
+        /** DefinitionDiffOut */
+        readonly DefinitionDiffOut: {
+            /** Revision */
+            readonly revision: number;
+            /** Against */
+            readonly against: number;
+            /** Files */
+            readonly files: readonly components["schemas"]["DefinitionFileDiffOut"][];
+        };
+        /** DefinitionFileDiffOut */
+        readonly DefinitionFileDiffOut: {
+            /** Path */
+            readonly path: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "added" | "deleted" | "modified" | "mode";
+            /** Diff */
+            readonly diff: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            readonly truncated: boolean;
+        };
+        /** DefinitionChangeIn */
+        readonly DefinitionChangeIn: {
+            /** Path */
+            readonly path: string;
+            /** Content */
+            readonly content?: string | null;
+            /** Content B64 */
+            readonly content_b64?: string | null;
+            /** Executable */
+            readonly executable?: boolean | null;
+        };
+        /** DefinitionDraftIn */
+        readonly DefinitionDraftIn: {
+            /** Base */
+            readonly base: number;
+            /** Changes */
+            readonly changes: readonly components["schemas"]["DefinitionChangeIn"][];
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
+        /** DefinitionRollbackIn */
+        readonly DefinitionRollbackIn: {
+            /** Revision */
+            readonly revision: number;
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
         /** AgentOut */
         readonly AgentOut: {
             /** Id */
@@ -30225,6 +31906,12 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
+            /**
+             * Source
+             * @default repo
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
         };
         /**
@@ -30499,6 +32186,20 @@ export interface components {
              * @description Workspace slugs of OTHER instances running this same definition. Cross-tenant on purpose — 'would this fix reach them?' is a fleet question. Names tenants only: no board, credentials or turns are disclosed.
              */
             readonly shared_with?: readonly string[];
+            /**
+             * Source
+             * @default repo
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
+            /** Revision */
+            readonly revision?: number | null;
+            /** Root Sha256 */
+            readonly root_sha256?: string | null;
+            /** Commit */
+            readonly commit?: string | null;
+            /** Git Url */
+            readonly git_url?: string | null;
         };
         /** AgentDetailOut */
         readonly AgentDetailOut: {
@@ -30553,6 +32254,12 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
+            /**
+             * Source
+             * @default repo
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly read_mode?: components["schemas"]["ReadModeSettingOut"] | null;
@@ -30668,6 +32375,31 @@ export interface components {
              * @default false
              */
             readonly sensitive: boolean;
+            /**
+             * Contact Scoped
+             * @default false
+             */
+            readonly contact_scoped: boolean;
+            /**
+             * Surface
+             * @default
+             */
+            readonly surface: string;
+            /**
+             * Page Lean
+             * @default false
+             */
+            readonly page_lean: boolean;
+            /**
+             * Page Model
+             * @default
+             */
+            readonly page_model: string;
+            /**
+             * Page Guidance
+             * @default
+             */
+            readonly page_guidance: string;
         };
         /**
          * AgentLoginRequestOut
@@ -31081,8 +32813,9 @@ export interface components {
         };
         /**
          * TestVaultKeyIn
-         * @description Turn an agent login's TEST vault key on or off. Its own endpoint, never on the
-         *     agent-repo upsert: an agent must not be able to give its own login a key.
+         * @description Turn an agent login's TEST vault key on or off, as an admin of the agent. Its own
+         *     endpoint, never on the agent-repo upsert. The agent's own login turns its own on or
+         *     off at `PUT /api/vault/test-key`.
          */
         readonly TestVaultKeyIn: {
             /** Enabled */
@@ -31119,6 +32852,28 @@ export interface components {
             readonly cli_models: {
                 readonly [key: string]: string;
             };
+            readonly definition?: components["schemas"]["AgentSourceOut"];
+        };
+        /**
+         * AgentSourceOut
+         * @description Where a runner gets the agent's definition: its repo (`repo`), or the stored
+         *     revision `revision` named by `root_sha256` (`stored`, docs/architecture/stored-agents.md).
+         */
+        readonly AgentSourceOut: {
+            /**
+             * Source
+             * @default repo
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
+            /** Revision */
+            readonly revision?: number | null;
+            /** Root Sha256 */
+            readonly root_sha256?: string | null;
+            /** Commit */
+            readonly commit?: string | null;
+            /** Git Url */
+            readonly git_url?: string | null;
         };
         /**
          * AgentRunnerOut
@@ -31381,7 +33136,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            readonly source: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api";
+            readonly source: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api" | "site_message";
             /**
              * Actor
              * @default
@@ -31496,7 +33251,7 @@ export interface components {
              */
             readonly strict: boolean;
             /** Sources */
-            readonly sources?: readonly ("ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api")[] | null;
+            readonly sources?: readonly ("ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api" | "site_message")[] | null;
             /**
              * Turn Mode
              * @default
@@ -31795,6 +33550,31 @@ export interface components {
              * @default false
              */
             readonly sensitive: boolean;
+            /**
+             * Contact Scoped
+             * @default false
+             */
+            readonly contact_scoped: boolean;
+            /**
+             * Surface
+             * @default
+             */
+            readonly surface: string;
+            /**
+             * Page Lean
+             * @default false
+             */
+            readonly page_lean: boolean;
+            /**
+             * Page Model
+             * @default
+             */
+            readonly page_model: string;
+            /**
+             * Page Guidance
+             * @default
+             */
+            readonly page_guidance: string;
         };
         /** AgentHostSiteIn */
         readonly AgentHostSiteIn: {
@@ -31821,6 +33601,16 @@ export interface components {
             readonly own_login?: readonly string[] | null;
             /** Sensitive */
             readonly sensitive?: boolean | null;
+            /** Contact Scoped */
+            readonly contact_scoped?: boolean | null;
+            /** Surface */
+            readonly surface?: string | null;
+            /** Page Lean */
+            readonly page_lean?: boolean | null;
+            /** Page Model */
+            readonly page_model?: string | null;
+            /** Page Guidance */
+            readonly page_guidance?: string | null;
         };
         /** AgentAppEntriesOut */
         readonly AgentAppEntriesOut: {
@@ -33763,6 +35553,10 @@ export interface components {
             };
             /** Delegated Withheld */
             readonly delegated_withheld?: readonly components["schemas"]["DelegatedWithheldOut"][];
+            /** Definition */
+            readonly definition?: {
+                readonly [key: string]: unknown;
+            };
         };
         /**
          * DelegatedEntryOut
@@ -33862,7 +35656,7 @@ export interface components {
              * @default no_valid_proof
              * @enum {string}
              */
-            readonly reason: "not_routed" | "no_valid_proof";
+            readonly reason: "not_routed" | "key_pending" | "no_valid_proof";
         };
         /**
          * ZkWrapMissingOut
@@ -33953,6 +35747,15 @@ export interface components {
             readonly slug: string;
             /** Agent Id */
             readonly agent_id: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /** My Wrap */
+            readonly my_wrap?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * RunnerDeviceKeyOut
@@ -34376,6 +36179,11 @@ export interface components {
             readonly kv: number;
             /** Wraps */
             readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
+        };
+        /** ZkMyWrapsOut */
+        readonly ZkMyWrapsOut: {
+            /** Granted */
+            readonly granted: number;
         };
         /** VaultKeeperPinsIn */
         readonly VaultKeeperPinsIn: {
@@ -35836,6 +37644,76 @@ export interface components {
         readonly AwsCredentialsIn: {
             /** Role */
             readonly role: string;
+        };
+        /** AwsRoleRequestOut */
+        readonly AwsRoleRequestOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent */
+            readonly agent: string;
+            /** Role */
+            readonly role: string;
+            /** Reason */
+            readonly reason: string;
+            /** Minutes */
+            readonly minutes: number;
+            /**
+             * Status
+             * @description pending | approved | declined | cancelled | expired | revoked
+             */
+            readonly status: string;
+            /** Approval Id */
+            readonly approval_id?: number | null;
+            /**
+             * Approval Url
+             * @default
+             */
+            readonly approval_url: string;
+            /**
+             * Requested By
+             * @default
+             */
+            readonly requested_by: string;
+            /**
+             * Approved By
+             * @default
+             */
+            readonly approved_by: string;
+            /** Approved At */
+            readonly approved_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Revoked By
+             * @default
+             */
+            readonly revoked_by: string;
+            /** Revoked At */
+            readonly revoked_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** AwsRoleRequestIn */
+        readonly AwsRoleRequestIn: {
+            /**
+             * Role
+             * @description A fenced role canopy-web vends, e.g. `labs-readwrite`.
+             */
+            readonly role: string;
+            /**
+             * Reason
+             * @description Why the agent needs it now, in your own words. Shown to the approver as yours.
+             */
+            readonly reason: string;
+            /**
+             * Minutes
+             * @description How long the grant lasts once approved (15 to 480; default 60).
+             * @default 60
+             */
+            readonly minutes: number;
         };
         /** ScheduleOut */
         readonly ScheduleOut: {
@@ -37570,6 +39448,45 @@ export interface components {
             readonly replace: boolean;
         };
         /**
+         * OwnTestKeyOut
+         * @description The agent login's own test vault key: the switch, and the key if one was made.
+         *     `conversations` counts the sensitive conversations it holds a copy of the key to.
+         */
+        readonly OwnTestKeyOut: {
+            /**
+             * Agent
+             * @description The slug of the agent whose login this is.
+             */
+            readonly agent: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /**
+             * Has Key
+             * @default false
+             */
+            readonly has_key: boolean;
+            /**
+             * Key Jkt
+             * @default
+             */
+            readonly key_jkt: string;
+            /** Key Made At */
+            readonly key_made_at?: string | null;
+            /**
+             * Conversations
+             * @default 0
+             */
+            readonly conversations: number;
+        };
+        /**
+         * OwnTestKeyIn
+         * @description An agent's own login turns its own test vault key on or off.
+         */
+        readonly OwnTestKeyIn: {
+            /** Enabled */
+            readonly enabled: boolean;
+        };
+        /**
          * VaultClientReportIn
          * @description What the browser saw while unlocking or setting up. Never a secret.
          */
@@ -38962,6 +40879,134 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /** ProjectFileChangeOut */
+        readonly ProjectFileChangeOut: {
+            /** Path */
+            readonly path: string;
+            /** Change */
+            readonly change: string;
+        };
+        /** ProjectFileEntryOut */
+        readonly ProjectFileEntryOut: {
+            /** Path */
+            readonly path: string;
+            /** Size */
+            readonly size: number;
+            /** Sha256 */
+            readonly sha256: string;
+        };
+        /** ProjectFilesOut */
+        readonly ProjectFilesOut: {
+            /** Project */
+            readonly project: string;
+            readonly live: components["schemas"]["ProjectFilesRevisionOut"] | null;
+            readonly draft: components["schemas"]["ProjectFilesRevisionOut"] | null;
+            /** Skills */
+            readonly skills: readonly components["schemas"]["ProjectSkillFilesOut"][];
+            /** May Draft */
+            readonly may_draft: boolean;
+            /** May Publish */
+            readonly may_publish: boolean;
+            /** Policy */
+            readonly policy: readonly string[];
+        };
+        /** ProjectFilesRevisionOut */
+        readonly ProjectFilesRevisionOut: {
+            /** Number */
+            readonly number: number;
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /** Root Sha256 */
+            readonly root_sha256: string;
+            /** Commit */
+            readonly commit: string;
+            /** Author */
+            readonly author: string;
+            /** Author Agent */
+            readonly author_agent: string | null;
+            /** Published By */
+            readonly published_by: string | null;
+            /** Published At */
+            readonly published_at: string | null;
+            /** Created At */
+            readonly created_at: string;
+            /** Files */
+            readonly files: readonly components["schemas"]["ProjectFileEntryOut"][];
+            /** Changes */
+            readonly changes: readonly components["schemas"]["ProjectFileChangeOut"][];
+        };
+        /** ProjectSkillFilesOut */
+        readonly ProjectSkillFilesOut: {
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Files */
+            readonly files: readonly string[];
+        };
+        /** ProjectFilesRevisionSummaryOut */
+        readonly ProjectFilesRevisionSummaryOut: {
+            /** Number */
+            readonly number: number;
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /** Author */
+            readonly author: string;
+            /** Published By */
+            readonly published_by: string | null;
+            /** Published At */
+            readonly published_at: string | null;
+            /** Created At */
+            readonly created_at: string;
+        };
+        /** ProjectFileOut */
+        readonly ProjectFileOut: {
+            /** Path */
+            readonly path: string;
+            /** Revision */
+            readonly revision: number;
+            /** Content */
+            readonly content: string;
+        };
+        /** ProjectFileChangeIn */
+        readonly ProjectFileChangeIn: {
+            /** Path */
+            readonly path: string;
+            /** Content */
+            readonly content?: string | null;
+        };
+        /** ProjectFilesDraftIn */
+        readonly ProjectFilesDraftIn: {
+            /** Base */
+            readonly base: number;
+            /** Changes */
+            readonly changes: readonly components["schemas"]["ProjectFileChangeIn"][];
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
+        /** ProjectFilesPublishIn */
+        readonly ProjectFilesPublishIn: {
+            /**
+             * Expect Root
+             * @default
+             */
+            readonly expect_root: string;
+        };
+        /** ProjectFilesRollbackIn */
+        readonly ProjectFilesRollbackIn: {
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
             /** Slug */
@@ -39382,6 +41427,10 @@ export interface components {
             readonly messages: number;
             /** Active Users */
             readonly active_users: number;
+            /** Active Agents */
+            readonly active_agents: number;
+            /** Built Agents */
+            readonly built_agents: number;
             /** Done */
             readonly done: number;
             /** Failed */
@@ -39440,6 +41489,10 @@ export interface components {
             readonly active_users: number;
             /** Active Agents */
             readonly active_agents: number;
+            /** Built Agents */
+            readonly built_agents: number;
+            /** New Agents */
+            readonly new_agents: number;
             /** Active Repositories */
             readonly active_repositories: number;
             /** Input Tokens */
@@ -39712,7 +41765,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            readonly source: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "emdash";
+            readonly source: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "site_message" | "emdash";
             /**
              * Principal
              * @default
@@ -39756,6 +41809,11 @@ export interface components {
             readonly runner_kinds: readonly components["schemas"]["AdmissionChoice"][];
             /** Reaches */
             readonly reaches: readonly components["schemas"]["AdmissionChoice"][];
+            /**
+             * Kinds
+             * @default []
+             */
+            readonly kinds: readonly components["schemas"]["AdmissionChoice"][];
             /** Actions */
             readonly actions: readonly components["schemas"]["AdmissionChoice"][];
         };
@@ -39785,6 +41843,13 @@ export interface components {
             readonly reach: string;
             /** Wait Hours */
             readonly wait_hours: number;
+            /**
+             * Kind
+             * @default
+             */
+            readonly kind: string;
+            /** Max Turns */
+            readonly max_turns?: number | null;
             /** Action */
             readonly action: string;
             /** Reason */
@@ -39844,7 +41909,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            readonly origin: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack";
+            readonly origin: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "site_message";
             /**
              * Principal
              * @default
@@ -39893,6 +41958,15 @@ export interface components {
              */
             readonly wait_hours: number;
             /**
+             * Kind
+             * @description What the rule counts. `agent_daily_turns`: it matches only once the agent has started `max_turns` turns in the last 24 hours. Reject only.
+             * @default
+             * @enum {string}
+             */
+            readonly kind: "" | "agent_daily_turns";
+            /** Max Turns */
+            readonly max_turns?: number | null;
+            /**
              * Action
              * @default reject
              * @enum {string}
@@ -39937,7 +42011,7 @@ export interface components {
             /** Agent */
             readonly agent?: string | null;
             /** Origin */
-            readonly origin?: ("" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack") | null;
+            readonly origin?: ("" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "site_message") | null;
             /** Principal */
             readonly principal?: ("" | "member" | "contact" | "agent" | "system") | null;
             /** Sender */
@@ -39954,6 +42028,10 @@ export interface components {
             readonly reach?: ("" | "paused" | "offline") | null;
             /** Wait Hours */
             readonly wait_hours?: number | null;
+            /** Kind */
+            readonly kind?: ("" | "agent_daily_turns") | null;
+            /** Max Turns */
+            readonly max_turns?: number | null;
             /** Action */
             readonly action?: ("reject" | "allow" | "auto") | null;
             /** Reason */
@@ -40619,6 +42697,17 @@ export interface components {
              * @default false
              */
             readonly asserts_verified_email: boolean;
+            /** Contact Token Issuer Limit */
+            readonly contact_token_issuer_limit?: number | null;
+            /** Reply Webhook Url */
+            readonly reply_webhook_url?: string | null;
+            /** Reply Webhook Set By */
+            readonly reply_webhook_set_by?: string | null;
+            /**
+             * Reply Mode
+             * @default final
+             */
+            readonly reply_mode: string;
             /** Created At */
             readonly created_at: string;
             /** Last Used At */
@@ -40722,6 +42811,12 @@ export interface components {
             readonly show_on_canopy_pages?: boolean | null;
             /** Asserts Verified Email */
             readonly asserts_verified_email?: boolean | null;
+            /** Contact Token Issuer Limit */
+            readonly contact_token_issuer_limit?: number | null;
+            /** Reply Webhook Url */
+            readonly reply_webhook_url?: string | null;
+            /** Reply Mode */
+            readonly reply_mode?: ("final" | "stream") | null;
         };
         /**
          * ConnectionCheckOut
@@ -40912,6 +43007,39 @@ export interface components {
             /** Url */
             readonly url: string;
         };
+        /**
+         * ReplyPushOut
+         * @description Where canopy pushes the agent's replies in the conversations this site relays, and
+         *     who said so: a person on the Host sites page, or the site in its signed `site.json`.
+         */
+        readonly ReplyPushOut: {
+            /** Url */
+            readonly url: string;
+            /** Mode */
+            readonly mode: string;
+            /** Source */
+            readonly source: string;
+            /**
+             * Set By
+             * @default
+             */
+            readonly set_by: string;
+            /**
+             * Declared Url
+             * @default
+             */
+            readonly declared_url: string;
+            /**
+             * Declared Mode
+             * @default
+             */
+            readonly declared_mode: string;
+            /**
+             * Declared Reason
+             * @default
+             */
+            readonly declared_reason: string;
+        };
         /** SensitiveDataRequiresOut */
         readonly SensitiveDataRequiresOut: {
             /**
@@ -40951,6 +43079,12 @@ export interface components {
             readonly agents: readonly components["schemas"]["AgentFitOut"][];
             /** Not Allowed */
             readonly not_allowed: readonly string[];
+            /**
+             * Surfaces
+             * @default []
+             */
+            readonly surfaces: readonly components["schemas"]["SiteSurfaceOut"][];
+            readonly reply_push?: components["schemas"]["ReplyPushOut"] | null;
         };
         /** SitePageOut */
         readonly SitePageOut: {
@@ -40960,6 +43094,36 @@ export interface components {
             readonly title: string;
             /** Scopes */
             readonly scopes: readonly string[];
+        };
+        /**
+         * SiteSurfaceOut
+         * @description One surface the site declares (`site.json`'s `surfaces`): a part of it serving its own people.
+         */
+        readonly SiteSurfaceOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /** Sensitive */
+            readonly sensitive: boolean;
+            /**
+             * Mcp Resource
+             * @default
+             */
+            readonly mcp_resource: string;
+            /**
+             * Person Scheme
+             * @default
+             */
+            readonly person_scheme: string;
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
         };
         /**
          * SiteDiscoveryOut
@@ -41124,6 +43288,34 @@ export interface components {
              * @default
              */
             readonly agent: string;
+        };
+        /** ContactRecordResultOut */
+        readonly ContactRecordResultOut: {
+            /** Sub */
+            readonly sub: string;
+            /** Contact Id */
+            readonly contact_id?: number | null;
+            /** Status */
+            readonly status: string;
+            /** Reason */
+            readonly reason?: string | null;
+        };
+        /** ContactRecordsOut */
+        readonly ContactRecordsOut: {
+            /** Results */
+            readonly results: readonly components["schemas"]["ContactRecordResultOut"][];
+        };
+        /** ContactErasureResultOut */
+        readonly ContactErasureResultOut: {
+            /** Sub */
+            readonly sub: string;
+            /** Status */
+            readonly status: string;
+        };
+        /** ContactErasuresOut */
+        readonly ContactErasuresOut: {
+            /** Results */
+            readonly results: readonly components["schemas"]["ContactErasureResultOut"][];
         };
         /** SignOffOut */
         readonly SignOffOut: {
@@ -43226,6 +45418,11 @@ export interface components {
              * @default
              */
             readonly expected_canopy_version: string;
+            /**
+             * Sync Version
+             * @default 0
+             */
+            readonly sync_version: number;
             /** Workspace */
             readonly workspace: string | null;
             /** Owner Email */
@@ -44450,6 +46647,77 @@ export interface components {
              */
             readonly can_control: boolean;
         };
+        /**
+         * RunnerHeartbeatSlimOut
+         * @description The heartbeat reply a runner that sends `slim_reply: 1` gets: only what the
+         *     laptop (`runner/canopy_runner`) and the cloud box (`runner/ec2`) read off it.
+         *     Each field means what it means on `RunnerOut`, and is read by the same
+         *     resolver; none of the fleet-page fields (health checks, roots, open sessions)
+         *     is computed.
+         */
+        readonly RunnerHeartbeatSlimOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Host */
+            readonly host: string;
+            /**
+             * Engine
+             * @default emdash
+             */
+            readonly engine: string;
+            /** Status */
+            readonly status: string;
+            /** Status Note */
+            readonly status_note: string;
+            /** Ready */
+            readonly ready: boolean;
+            /** Ready Note */
+            readonly ready_note: string;
+            /**
+             * Remedy
+             * @default
+             */
+            readonly remedy: string;
+            /** Paused */
+            readonly paused: boolean;
+            /** Paused Note */
+            readonly paused_note: string;
+            /**
+             * Private
+             * @default false
+             */
+            readonly private: boolean;
+            /** Private Runner Id */
+            readonly private_runner_id?: string | null;
+            /**
+             * Key Waiting
+             * @default
+             */
+            readonly key_waiting: string;
+            /** Report Projects */
+            readonly report_projects?: readonly string[] | null;
+            /** Refresh Pending */
+            readonly refresh_pending?: boolean | null;
+            /** Cancel Turn Ids */
+            readonly cancel_turn_ids?: readonly string[] | null;
+            /** Add Projects */
+            readonly add_projects?: readonly components["schemas"]["RunnerProjectAskOut"][] | null;
+            /**
+             * Expected Canopy Version
+             * @default
+             */
+            readonly expected_canopy_version: string;
+            /**
+             * Sync Version
+             * @default 0
+             */
+            readonly sync_version: number;
+        };
         /** HeartbeatIn */
         readonly HeartbeatIn: {
             /**
@@ -44522,6 +46790,26 @@ export interface components {
              * @default 0
              */
             readonly midturn: number;
+            /**
+             * Isolated
+             * @default 0
+             */
+            readonly isolated: number;
+            /**
+             * Stored Projects
+             * @default 0
+             */
+            readonly stored_projects: number;
+            /**
+             * Slim Reply
+             * @default 0
+             */
+            readonly slim_reply: number;
+            /**
+             * Sync
+             * @default 0
+             */
+            readonly sync: number;
             /** Clis */
             readonly clis?: {
                 readonly [key: string]: unknown;
@@ -44663,6 +46951,21 @@ export interface components {
             readonly days?: readonly components["schemas"]["UsageDayIn"][];
         };
         /**
+         * ClaimDefinitionOut
+         * @description Where the turn's agent definition lives (`harness.stored_agents`).
+         */
+        readonly ClaimDefinitionOut: {
+            /** Source */
+            readonly source: string;
+            /** Revision */
+            readonly revision?: number | null;
+            /**
+             * Root Sha256
+             * @default
+             */
+            readonly root_sha256: string;
+        };
+        /**
          * ClaimPageSiteOut
          * @description A turn held on a host site's page (`published_profiles.page_turn`).
          */
@@ -44674,6 +46977,11 @@ export interface components {
              * @default []
              */
             readonly withheld: readonly string[];
+            /**
+             * Lean
+             * @default false
+             */
+            readonly lean: boolean;
         };
         /**
          * ClaimedTurnOut
@@ -44842,6 +47150,12 @@ export interface components {
             readonly cli_model: string;
             readonly invocation?: components["schemas"]["InvocationOut"] | null;
             readonly page_site?: components["schemas"]["ClaimPageSiteOut"] | null;
+            /**
+             * Isolated
+             * @default false
+             */
+            readonly isolated: boolean;
+            readonly definition?: components["schemas"]["ClaimDefinitionOut"] | null;
         };
         /**
          * InvocationOut
@@ -45569,6 +47883,74 @@ export interface components {
             readonly transcript_id: string;
         };
         /**
+         * RunnerSyncOut
+         * @description `GET /runners/{id}/sync`: every piece of work this box owes, in one read.
+         *
+         *     Each list is the same rows its own drain route answers (`/session-interrupts`,
+         *     `/menu-answers`, `/closes`, `/backfills`, `/handoffs`, `/streams`); `sections`
+         *     holds what other apps register (`runner_sync.register_section`, e.g. `listen`).
+         *     `mint_due` says `/mint/claim` has something (claiming it consumes a code, so it
+         *     stays its own call). `version` is the ETag's number.
+         */
+        readonly RunnerSyncOut: {
+            /** Version */
+            readonly version: number;
+            /**
+             * Interrupts
+             * @default []
+             */
+            readonly interrupts: readonly components["schemas"]["SessionInterruptOut"][];
+            /**
+             * Answers
+             * @default []
+             */
+            readonly answers: readonly components["schemas"]["MenuAnswerOut"][];
+            /**
+             * Closes
+             * @default []
+             */
+            readonly closes: readonly components["schemas"]["CloseOut"][];
+            /**
+             * Backfills
+             * @default []
+             */
+            readonly backfills: readonly components["schemas"]["BackfillDescriptorOut"][];
+            /**
+             * Handoffs
+             * @default []
+             */
+            readonly handoffs: readonly components["schemas"]["HandoffDueOut"][];
+            /**
+             * Streams
+             * @default []
+             */
+            readonly streams: readonly components["schemas"]["StreamDescriptorOut"][];
+            /**
+             * Cancel Turn Ids
+             * @default []
+             */
+            readonly cancel_turn_ids: readonly string[];
+            /**
+             * Add Projects
+             * @default []
+             */
+            readonly add_projects: readonly components["schemas"]["RunnerProjectAskOut"][];
+            /**
+             * Mint Due
+             * @default false
+             */
+            readonly mint_due: boolean;
+            /**
+             * Sections
+             * @default {}
+             */
+            readonly sections: {
+                readonly [key: string]: readonly {
+                    readonly [key: string]: unknown;
+                }[];
+            };
+        };
+        /**
          * UnclaimableTurnOut
          * @description A queued turn no online runner can claim — surfaced so a stall is loud.
          */
@@ -45725,6 +48107,57 @@ export interface components {
         readonly TurnEventsOut: {
             /** Events */
             readonly events: readonly components["schemas"]["TurnEventOut"][];
+        };
+        /**
+         * PageBriefOut
+         * @description A lean page turn's opening context (`harness.page_brief`).
+         */
+        readonly PageBriefOut: {
+            /**
+             * Text
+             * @default
+             */
+            readonly text: string;
+            /**
+             * Site
+             * @default
+             */
+            readonly site: string;
+            /**
+             * Tools
+             * @default 0
+             */
+            readonly tools: number;
+            /**
+             * Refused
+             * @default
+             */
+            readonly refused: string;
+            /**
+             * Waiting
+             * @default false
+             */
+            readonly waiting: boolean;
+            /**
+             * Wait Left
+             * @default 0
+             */
+            readonly wait_left: number;
+        };
+        /** LiveTextOut */
+        readonly LiveTextOut: {
+            /** Sent */
+            readonly sent: boolean;
+        };
+        /**
+         * LiveTextIn
+         * @description The reply an agent is writing right now, for the people watching its chat.
+         */
+        readonly LiveTextIn: {
+            /** Message */
+            readonly message: number;
+            /** Text */
+            readonly text: string;
         };
         /** TranscriptAppendOut */
         readonly TranscriptAppendOut: {
@@ -46496,8 +48929,6 @@ export interface components {
             readonly quiet: readonly components["schemas"]["AttentionRowOut"][];
             /** Hidden */
             readonly hidden: readonly components["schemas"]["AttentionRowOut"][];
-            /** Running */
-            readonly running?: readonly components["schemas"]["AttentionRowOut"][];
         };
         /** AttentionRowOut */
         readonly AttentionRowOut: {
@@ -46509,7 +48940,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            readonly state: "asking" | "your_move" | "parked" | "stalled" | "running" | "running_auto";
+            readonly state: "asking" | "your_move";
             /** Reason */
             readonly reason: string;
             /** Title */
@@ -47233,8 +49664,21 @@ export interface components {
             readonly status: "pending" | "done" | "failed" | "declined" | "cancelled" | "expired";
             /** Workspace */
             readonly workspace: string;
-            /** Url */
+            /**
+             * Url
+             * @description The request's page, app-relative.
+             */
             readonly url: string;
+            /**
+             * Page Url
+             * @description The request's page, absolute: the link to give a person.
+             */
+            readonly page_url: string;
+            /**
+             * Step Up
+             * @description Approving needs the approver's passkey, so only the request's page (`page_url`), in a browser, can approve it; Slack, an alert, a token and an agent can only decline it.
+             */
+            readonly step_up: boolean;
             /** Requested By */
             readonly requested_by: string;
             /** Reason */
@@ -51327,7 +53771,7 @@ export interface components {
             readonly view: string;
             /**
              * Next After
-             * @description Pass this as `after` to read on.
+             * @description Pass this back as `after` to read on (with `next_index` when set).
              */
             readonly next_after: number;
             /**
@@ -51337,7 +53781,7 @@ export interface components {
             readonly next_index?: number | null;
             /**
              * Done
-             * @description Nothing is left past `next_after`.
+             * @description Nothing more is due for this run.
              */
             readonly done: boolean;
             /**
@@ -51352,6 +53796,8 @@ export interface components {
              * @description Sources removed since this learner learned from them: what came from them is withdrawn; do not rely on or rebuild it. Told once.
              */
             readonly revoked?: readonly number[];
+            /** @description What this run may still read and write; when `stopped` is set the run's budget ended the reading. */
+            readonly budget?: components["schemas"]["BrainRunBudgetLeft"] | null;
         };
         /** BrainReadSource */
         readonly BrainReadSource: {
@@ -51378,10 +53824,47 @@ export interface components {
             /** Next Index */
             readonly next_index?: number | null;
             /**
+             * Read Before
+             * @description Set when this session was learned from before and has grown since: only the rows after this one are served (what is new).
+             */
+            readonly read_before?: number | null;
+            /**
              * Directives
              * @description Words the people in this source asked every reader to be shown.
              */
             readonly directives: readonly string[];
+            /** @description Why it was served when it was: its triage verdict. */
+            readonly triage?: components["schemas"]["BrainReadTriage"] | null;
+        };
+        /** BrainReadTriage */
+        readonly BrainReadTriage: {
+            /** Score */
+            readonly score: number;
+            /** Reason */
+            readonly reason: string;
+        };
+        /** BrainRunBudgetLeft */
+        readonly BrainRunBudgetLeft: {
+            /**
+             * Max Sources Per Run
+             * @default 0
+             */
+            readonly max_sources_per_run: number;
+            /**
+             * Max Outputs Per Run
+             * @default 0
+             */
+            readonly max_outputs_per_run: number;
+            /** Sources Left */
+            readonly sources_left: number;
+            /** Outputs Left */
+            readonly outputs_left: number;
+            /**
+             * Stopped
+             * @description `sources` when this run's budget of sessions ended the reading.
+             * @default
+             */
+            readonly stopped: string;
         };
         /** BrainEmitOut */
         readonly BrainEmitOut: {
@@ -51389,6 +53872,23 @@ export interface components {
             readonly id: number;
             /** State */
             readonly state: string;
+            /**
+             * Folded
+             * @description It was a repeat, folded into an existing output (`id`).
+             * @default false
+             */
+            readonly folded: boolean;
+            /**
+             * Status
+             * @description Where the output stands: `dismissed` when this repeat folded into a finding the people dismissed lately (it stays dismissed: do not raise it again unless something changed).
+             * @default
+             */
+            readonly status: string;
+            /**
+             * Recurs Of
+             * @description A new output that repeats a finding already `done`: that one's id (it came back after it was acted on).
+             */
+            readonly recurs_of?: number | null;
         };
         /** BrainEmitIn */
         readonly BrainEmitIn: {
@@ -51411,6 +53911,17 @@ export interface components {
              * @description The `source` ids this output came from; each must have been read in this run.
              */
             readonly sources: readonly number[];
+            /**
+             * Key
+             * @description A short stable slug naming WHAT this is (e.g. `canopy-web:friction:mcp-422-shape`): an output of the same kind and key, still open or accepted, for the same subject and workspace, takes this one in as a repeat instead of a new output. Reuse the key of an open finding in your run context when it is the same problem.
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Same As
+             * @description The id of an open finding in your run context this one is the same problem as: it folds into that one (more evidence, `seen` + 1) whatever its key.
+             */
+            readonly same_as?: number | null;
         };
         /** CapabilityOut */
         readonly CapabilityOut: {
@@ -51588,6 +54099,13 @@ export interface components {
              */
             readonly started_at: string;
         };
+        /** BrainOutputAgent */
+        readonly BrainOutputAgent: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
         /** BrainOutputOut */
         readonly BrainOutputOut: {
             /** Id */
@@ -51617,6 +54135,98 @@ export interface components {
              */
             readonly state: string;
             /**
+             * Status
+             * @description open | accepted | dismissed | done: where it stands with the people who act on it.
+             * @default open
+             */
+            readonly status: string;
+            /** Status At */
+            readonly status_at?: string | null;
+            /**
+             * Status By
+             * @description Who set its status.
+             * @default
+             */
+            readonly status_by: string;
+            /**
+             * Key
+             * @description What makes a repeat the same thing: a repeat folds into an open or accepted one.
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Seen
+             * @description How many emits folded into it, the first included.
+             * @default 1
+             */
+            readonly seen: number;
+            /** Last Seen At */
+            readonly last_seen_at?: string | null;
+            /**
+             * Faded
+             * @description Open or accepted, but no run re-saw it within its target's fade window: listed below the fresh ones and not shown to runs; setting it open or accepted keeps it.
+             * @default false
+             */
+            readonly faded: boolean;
+            /**
+             * Merged Into
+             * @description For a `duplicate`: the output it was merged into.
+             */
+            readonly merged_into?: number | null;
+            /**
+             * Recurs Of
+             * @description The `done` finding this one repeats: it came back after it was acted on.
+             */
+            readonly recurs_of?: number | null;
+            /**
+             * Came Back
+             * @description It repeats a finding already done (`recurs_of`).
+             * @default false
+             */
+            readonly came_back: boolean;
+            /**
+             * Sessions Seen
+             * @description Distinct sessions across everything it cites, every repeat included (those you do not read counted too).
+             * @default 0
+             */
+            readonly sessions_seen: number;
+            /**
+             * People Seen
+             * @description Distinct people in those sessions: a count only.
+             * @default 0
+             */
+            readonly people_seen: number;
+            /**
+             * Breadth
+             * @description For a system finding: `single session` (seen in one) or `pattern` (two or more).
+             * @default
+             */
+            readonly breadth: string;
+            /**
+             * Sightings
+             * @description When it was seen, oldest first (ISO times).
+             */
+            readonly sightings?: readonly string[];
+            /**
+             * May Set Status
+             * @description Whether you may change its status.
+             * @default false
+             */
+            readonly may_set_status: boolean;
+            /** @description The agent a fix is asked of: its learner's operator. */
+            readonly fixer?: components["schemas"]["BrainOutputAgent"] | null;
+            /**
+             * May Request Fix
+             * @description Whether you may ask its operator to fix it (`/fix`): the person themselves, who may set its status, of a learner with an operator.
+             * @default false
+             */
+            readonly may_request_fix: boolean;
+            /**
+             * Fix Session
+             * @description The address of a conversation fixing it that you read (`/fix`), if any.
+             */
+            readonly fix_session?: string | null;
+            /**
              * Created At
              * Format: date-time
              */
@@ -51632,6 +54242,11 @@ export interface components {
              * @default 0
              */
             readonly hidden_sessions: number;
+            /**
+             * Source Sessions
+             * @description Which of `sessions` each cited source is, by source id, so a quote in its evidence links to its session. Only sessions you read yourself; a source not listed is one you do not read.
+             */
+            readonly source_sessions?: readonly components["schemas"]["BrainOutputSourceSession"][];
         };
         /** BrainOutputSession */
         readonly BrainOutputSession: {
@@ -51647,6 +54262,80 @@ export interface components {
              * @description Scrubbed of secrets.
              */
             readonly title: string;
+        };
+        /** BrainOutputSourceSession */
+        readonly BrainOutputSourceSession: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Title
+             * @description Scrubbed of secrets.
+             */
+            readonly title: string;
+            /**
+             * Source
+             * @description The source id its body's evidence names (`evidence[].source`).
+             */
+            readonly source: number;
+        };
+        /** BrainOutputStatusIn */
+        readonly BrainOutputStatusIn: {
+            /**
+             * Status
+             * @description open | accepted | dismissed | done
+             */
+            readonly status: string;
+        };
+        /** BrainOutputFixPlanOut */
+        readonly BrainOutputFixPlanOut: {
+            /** @description Who is asked: the learner's operator, if it has one. */
+            readonly agent?: components["schemas"]["BrainOutputAgent"] | null;
+            /**
+             * Label
+             * @description The words on the button.
+             * @default
+             */
+            readonly label: string;
+            /**
+             * What Happens
+             * @description Exactly what asking does, in one or two sentences.
+             */
+            readonly what_happens: string;
+            /**
+             * Brief
+             * @description The message the agent gets, word for word.
+             * @default
+             */
+            readonly brief: string;
+            /**
+             * Continues
+             * @description You already have a conversation fixing it: asking continues it.
+             * @default false
+             */
+            readonly continues: boolean;
+        };
+        /** BrainOutputFixOut */
+        readonly BrainOutputFixOut: {
+            readonly output: components["schemas"]["BrainOutputOut"];
+            /** Session Id */
+            readonly session_id: string;
+            /** Session Url */
+            readonly session_url: string;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+        };
+        /** BrainOutputMergeIn */
+        readonly BrainOutputMergeIn: {
+            /**
+             * Duplicate
+             * @description The id of the output that is the same problem: it is folded into this one.
+             */
+            readonly duplicate: number;
         };
         /** GraphEdgeOut */
         readonly GraphEdgeOut: {
@@ -51779,6 +54468,15 @@ export interface components {
             /** Truncated */
             readonly truncated: boolean;
         };
+        /** BrainBudgetToday */
+        readonly BrainBudgetToday: {
+            /** Runs */
+            readonly runs: number;
+            /** Outputs */
+            readonly outputs: number;
+            /** Tokens */
+            readonly tokens: number;
+        };
         /** BrainCascadeCounts */
         readonly BrainCascadeCounts: {
             /** Workspace */
@@ -51843,6 +54541,42 @@ export interface components {
              * @description A count below this is hidden (null), so a small workspace's few are not named by elimination.
              */
             readonly small: number;
+        };
+        /** BrainFlagOut */
+        readonly BrainFlagOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @description `app_label.model` of a row canopy holds, or `github.pull`, `github.issue`, `link`.
+             */
+            readonly kind: string;
+            /**
+             * Ref
+             * @description The row's id, or the URL.
+             */
+            readonly ref: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Run */
+            readonly run: number;
+            /** Learner */
+            readonly learner: string;
+            /**
+             * Owner
+             * @description Whom it is raised to: the person the run answered to.
+             * @default
+             */
+            readonly owner: string;
+            /** Reason */
+            readonly reason: string;
+            /** Changed At */
+            readonly changed_at?: string | null;
+            /**
+             * Acknowledged
+             * @default false
+             */
+            readonly acknowledged: boolean;
         };
         /** BrainLearnerState */
         readonly BrainLearnerState: {
@@ -51971,9 +54705,59 @@ export interface components {
              * @description Where learners run, here and below.
              */
             readonly targets?: readonly components["schemas"]["BrainTargetOut"][];
+            /**
+             * Flags
+             * @description What a learning run made that a removal could not undo, to its owner and the workspace's managers, newest first.
+             */
+            readonly flags?: readonly components["schemas"]["BrainFlagOut"][];
             readonly runs: components["schemas"]["BrainRunCounts"];
             /** Cascade */
             readonly cascade: readonly components["schemas"]["BrainCascadeCounts"][];
+        };
+        /** BrainTargetBudget */
+        readonly BrainTargetBudget: {
+            /** Max Sources Per Run */
+            readonly max_sources_per_run: number;
+            /** Max Outputs Per Run */
+            readonly max_outputs_per_run: number;
+            /** Max Runs Per Day */
+            readonly max_runs_per_day: number;
+            /** Max Outputs Per Day */
+            readonly max_outputs_per_day: number;
+            /** Max Tokens Per Day */
+            readonly max_tokens_per_day?: number | null;
+            /**
+             * Lookback Days
+             * @description Its runs read only sessions active in this many days.
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Fade Days
+             * @description An open finding of no known type no run re-saw in this many days is faded.
+             * @default 21
+             */
+            readonly fade_days: number;
+            /**
+             * Fade Days By Type
+             * @description This target's own fade windows by finding type, over the defaults.
+             */
+            readonly fade_days_by_type?: {
+                readonly [key: string]: number;
+            };
+            /**
+             * Fade Windows
+             * @description The fade window of each finding type here (its body's `type`, else its `signal`): the defaults with this target's own.
+             */
+            readonly fade_windows?: {
+                readonly [key: string]: number;
+            };
+            /**
+             * Dismiss Cooldown Days
+             * @description A repeat of a finding dismissed this recently folds into it and stays dismissed; after it, a repeat is a new finding.
+             * @default 60
+             */
+            readonly dismiss_cooldown_days: number;
+            readonly today: components["schemas"]["BrainBudgetToday"];
         };
         /** BrainTargetOut */
         readonly BrainTargetOut: {
@@ -52031,6 +54815,8 @@ export interface components {
              * @default false
              */
             readonly can_manage: boolean;
+            /** @description Its budget and what it spent today (UTC). */
+            readonly budget?: components["schemas"]["BrainTargetBudget"] | null;
         };
         /** BrainTargetRun */
         readonly BrainTargetRun: {
@@ -52150,6 +54936,178 @@ export interface components {
              */
             readonly started_at: string;
         };
+        /**
+         * BrainRunContext
+         * @description What a learning run's turn is told about itself (`brain.context`): in its first prompt and as `brain_run` in
+         *     its caller envelope. Ids and names, never a word of a session. `version` changes only when a field's meaning does.
+         */
+        readonly BrainRunContext: {
+            /** Version */
+            readonly version: number;
+            /** Run */
+            readonly run: number;
+            /** State */
+            readonly state: string;
+            /** Learner */
+            readonly learner: string;
+            /** Learner Name */
+            readonly learner_name: string;
+            /** Purpose Class */
+            readonly purpose_class: string;
+            /** Purpose */
+            readonly purpose: string;
+            /**
+             * Entry
+             * @default
+             */
+            readonly entry: string;
+            /** Output Kinds */
+            readonly output_kinds?: readonly string[];
+            /** Subject Type */
+            readonly subject_type: string;
+            /**
+             * Subject
+             * @default
+             */
+            readonly subject: string;
+            /**
+             * Scope
+             * @default
+             */
+            readonly scope: string;
+            readonly target?: components["schemas"]["BrainRunContextTarget"] | null;
+            readonly accountable?: components["schemas"]["BrainRunContextPerson"] | null;
+            /** Sessions Due */
+            readonly sessions_due: number;
+            /**
+             * Source Ids Due
+             * @description Best first (`triage`).
+             */
+            readonly source_ids_due?: readonly number[];
+            /**
+             * Triage
+             * @description The first due sessions' triage verdicts, best first: what `brain_read` serves next. It orders, never filters: every due session can be read (`brain_read` `source`).
+             */
+            readonly triage?: readonly components["schemas"]["BrainRunContextTriage"][];
+            /**
+             * Lookback Days
+             * @description Only sessions active in this many days are due (none: no window).
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Open Findings Total
+             * @default 0
+             */
+            readonly open_findings_total: number;
+            /**
+             * Open Findings
+             * @description The open findings this learner holds for the subject and workspace, most recently seen first and capped: reuse one's key (or name it by `same_as`) when a finding is the same problem.
+             */
+            readonly open_findings?: readonly components["schemas"]["BrainRunContextFinding"][];
+            /**
+             * Dismissed Findings Total
+             * @default 0
+             */
+            readonly dismissed_findings_total: number;
+            /**
+             * Dismissed Findings
+             * @description The findings dismissed lately (within the cooldown), most recently dismissed first and capped: do not raise one again unless something changed; a repeat of its key folds into it and stays dismissed.
+             */
+            readonly dismissed_findings?: readonly components["schemas"]["BrainRunContextDismissed"][];
+            readonly budget: components["schemas"]["BrainRunBudgetLeft"];
+            /** How */
+            readonly how: string;
+        };
+        /** BrainRunContextDismissed */
+        readonly BrainRunContextDismissed: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Key */
+            readonly key: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Dismissed At
+             * @description ISO time it was dismissed.
+             * @default
+             */
+            readonly dismissed_at: string;
+        };
+        /** BrainRunContextFinding */
+        readonly BrainRunContextFinding: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Seen
+             * @default 1
+             */
+            readonly seen: number;
+            /**
+             * Last Seen At
+             * @description ISO time a run last saw it.
+             * @default
+             */
+            readonly last_seen_at: string;
+        };
+        /** BrainRunContextPerson */
+        readonly BrainRunContextPerson: {
+            /** Email */
+            readonly email: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+        };
+        /** BrainRunContextTarget */
+        readonly BrainRunContextTarget: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @description workspace | project
+             */
+            readonly kind: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /** Schedule Id */
+            readonly schedule_id: number;
+        };
+        /** BrainRunContextTriage */
+        readonly BrainRunContextTriage: {
+            /** Source */
+            readonly source: number;
+            /** Score */
+            readonly score: number;
+            /**
+             * Reason
+             * @description What made the score, in counts: never a word of the session.
+             * @default
+             */
+            readonly reason: string;
+        };
         /** BrainRunPageOut */
         readonly BrainRunPageOut: {
             /** Runs */
@@ -52170,6 +55128,16 @@ export interface components {
             readonly workspace: string;
             /** Title */
             readonly title: string;
+            /**
+             * Triage Score
+             * @description The triage score it was read under (none: read before triage).
+             */
+            readonly triage_score?: number | null;
+            /**
+             * Triage Reason
+             * @default
+             */
+            readonly triage_reason: string;
         };
         /** BrainRunState */
         readonly BrainRunState: {
@@ -52213,6 +55181,112 @@ export interface components {
              * @description The ones you do not: a count only.
              */
             readonly hidden: number;
+            /** @description What the run was told when it started, without the ids of the sessions due (their count stays). */
+            readonly context?: components["schemas"]["BrainRunContext"] | null;
+        };
+        /** BrainScoreWeek */
+        readonly BrainScoreWeek: {
+            /**
+             * Week
+             * Format: date
+             * @description The week's Monday (UTC).
+             */
+            readonly week: string;
+            /**
+             * Open
+             * @default 0
+             */
+            readonly open: number;
+            /**
+             * Accepted
+             * @default 0
+             */
+            readonly accepted: number;
+            /**
+             * Done
+             * @default 0
+             */
+            readonly done: number;
+            /**
+             * Dismissed
+             * @default 0
+             */
+            readonly dismissed: number;
+        };
+        /** BrainScorecardOut */
+        readonly BrainScorecardOut: {
+            /**
+             * Weeks
+             * @description The Mondays the scorecard covers, oldest first.
+             */
+            readonly weeks: readonly string[];
+            /** Targets */
+            readonly targets: readonly components["schemas"]["BrainTargetScore"][];
+        };
+        /** BrainTargetScore */
+        readonly BrainTargetScore: {
+            /** Target */
+            readonly target: number;
+            /** Learner */
+            readonly learner: string;
+            /** Label */
+            readonly label: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /**
+             * Weeks
+             * @description The findings made each week, by where each stands now.
+             */
+            readonly weeks: readonly components["schemas"]["BrainScoreWeek"][];
+            /**
+             * Open
+             * @description Made in these weeks and still open.
+             * @default 0
+             */
+            readonly open: number;
+            /**
+             * Accepted
+             * @default 0
+             */
+            readonly accepted: number;
+            /**
+             * Done
+             * @default 0
+             */
+            readonly done: number;
+            /**
+             * Dismissed
+             * @default 0
+             */
+            readonly dismissed: number;
+            /**
+             * Precision
+             * @description (accepted + done) / (accepted + done + dismissed) over these weeks; null while none was decided.
+             */
+            readonly precision?: number | null;
+            /**
+             * Open Now
+             * @description Open or accepted now and fresh.
+             * @default 0
+             */
+            readonly open_now: number;
+            /**
+             * Faded Now
+             * @description Open or accepted now but faded: no run re-saw it within its type's window.
+             * @default 0
+             */
+            readonly faded_now: number;
+            /**
+             * Came Back
+             * @description Made in these weeks as a repeat of a finding already done.
+             * @default 0
+             */
+            readonly came_back: number;
         };
         /** LearningReadsIn */
         readonly LearningReadsIn: {
@@ -52270,6 +55344,114 @@ export interface components {
              * @default
              */
             readonly timezone: string;
+        };
+        /** BrainTargetBudgetIn */
+        readonly BrainTargetBudgetIn: {
+            /** Max Sources Per Run */
+            readonly max_sources_per_run?: number | null;
+            /** Max Outputs Per Run */
+            readonly max_outputs_per_run?: number | null;
+            /** Max Runs Per Day */
+            readonly max_runs_per_day?: number | null;
+            /** Max Outputs Per Day */
+            readonly max_outputs_per_day?: number | null;
+            /**
+             * Max Tokens Per Day
+             * @description Null leaves it as it is; 0 is refused. Send `clear_tokens` to remove the cap.
+             */
+            readonly max_tokens_per_day?: number | null;
+            /**
+             * Clear Tokens
+             * @default false
+             */
+            readonly clear_tokens: boolean;
+            /**
+             * Lookback Days
+             * @description Read only sessions active in this many days.
+             */
+            readonly lookback_days?: number | null;
+            /**
+             * Fade Days
+             * @description Fade an open finding of no known type no run re-saw in this many days.
+             */
+            readonly fade_days?: number | null;
+            /**
+             * Fade Days By Type
+             * @description Fade windows by finding type (`friction`, `design`, ...), in days from 1 to 365; it replaces this target's own map whole, `{}` clears it (the defaults stay).
+             */
+            readonly fade_days_by_type?: {
+                readonly [key: string]: number;
+            } | null;
+            /**
+             * Dismiss Cooldown Days
+             * @description How long a dismissed finding takes its repeats in and stays dismissed.
+             */
+            readonly dismiss_cooldown_days?: number | null;
+        };
+        /** BrainWhyOut */
+        readonly BrainWhyOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Learner */
+            readonly learner: string;
+            /** Eligible */
+            readonly eligible: boolean;
+            /**
+             * Reason
+             * @description Why not, as a code (`eligibility.explain`), with no one else named.
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Explanation
+             * @description The same, in words.
+             * @default
+             */
+            readonly explanation: string;
+        };
+        /** ConsentPersonOut */
+        readonly ConsentPersonOut: {
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+            /** Classes */
+            readonly classes: readonly string[];
+            /** Workspaces */
+            readonly workspaces: readonly string[];
+        };
+        /** OptInPersonOut */
+        readonly OptInPersonOut: {
+            /** Email */
+            readonly email: string;
+            /** Added */
+            readonly added: readonly string[];
+            /** Classes */
+            readonly classes: readonly string[];
+            /**
+             * Refused
+             * @default
+             */
+            readonly refused: string;
+        };
+        /** LearningOptInIn */
+        readonly LearningOptInIn: {
+            /**
+             * Classes
+             * @description Classes to add: individual, memory, project, system. Only ever adds.
+             */
+            readonly classes: readonly string[];
+            /**
+             * People
+             * @description Members' emails, here or in a workspace below.
+             */
+            readonly people?: readonly string[];
+            /**
+             * Already Agreed
+             * @description Also everyone here or below who agreed to any class already.
+             * @default false
+             */
+            readonly already_agreed: boolean;
         };
         /** LearningClassOut */
         readonly LearningClassOut: {
@@ -53387,7 +56569,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WalkthroughDetailOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -54712,7 +57894,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["MailResolveOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -55545,7 +58727,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StoryboardOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -55604,7 +58786,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StoryboardOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -55687,7 +58869,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -55720,7 +58902,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RoundOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -56117,6 +59299,30 @@ export interface operations {
             };
         };
     };
+    readonly embed_prepare: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["EmbedPrepareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EmbedPrepareOut"];
+                };
+            };
+        };
+    };
     readonly embed_ws_ticket: {
         readonly parameters: {
             readonly query?: never;
@@ -56348,6 +59554,52 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["ConfirmIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HostGrantOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_waiting_host_grants: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HostGrantOut"][];
+                };
+            };
+        };
+    };
+    readonly confirm_my_host_grant_as_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentConfirmIn"];
             };
         };
         readonly responses: {
@@ -57853,7 +61105,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["DynamicViewOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -58146,6 +61398,32 @@ export interface operations {
             };
         };
     };
+    readonly upload_workspace_app_bundle_blobs: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BundleBlobsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["BundleBlobOut"][];
+                };
+            };
+        };
+    };
     readonly get_workspace_app: {
         readonly parameters: {
             readonly query?: {
@@ -58261,6 +61539,33 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["VersionOut"][];
+                };
+            };
+        };
+    };
+    readonly publish_workspace_app_version: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ReleaseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VersionOut"];
                 };
             };
         };
@@ -58562,6 +61867,78 @@ export interface operations {
             };
         };
     };
+    readonly list_workspace_app_maintainers: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MaintainerOut"][];
+                };
+            };
+        };
+    };
+    readonly set_workspace_app_maintainer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MaintainerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MaintainerOut"];
+                };
+            };
+        };
+    };
+    readonly remove_workspace_app_maintainer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly query_workspace_app: {
         readonly parameters: {
             readonly query: {
@@ -58694,6 +62071,37 @@ export interface operations {
             };
             /** @description Created */
             readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly ai_complete_workspace_app: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AiCompleteIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -59549,7 +62957,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["LocalAppSubmissionOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59665,7 +63073,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["MeetingOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -60125,7 +63533,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionUploadOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -60202,7 +63610,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ArcCreateOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -60839,6 +64247,504 @@ export interface operations {
             };
         };
     };
+    readonly create_stored_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StoredAgentIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StoredAgentOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Content Too Large */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly convert_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionConvertIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Content Too Large */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly export_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionExportIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionMovedOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Bad Gateway */
+            readonly 502: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly detach_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionDetachIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionMovedOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly get_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionOut"];
+                };
+            };
+        };
+    };
+    readonly list_agent_definition_revisions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["DefinitionRevisionSummaryOut"][];
+                };
+            };
+        };
+    };
+    readonly get_agent_definition_revision: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_definition_file: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly diff_agent_definition_revisions: {
+        readonly parameters: {
+            readonly query?: {
+                readonly against?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionDiffOut"];
+                };
+            };
+        };
+    };
+    readonly draft_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionDraftIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly publish_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly discard_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly rollback_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionRollbackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly get_agent_definition_archive: {
+        readonly parameters: {
+            readonly query?: {
+                readonly revision?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly list_agents: {
         readonly parameters: {
             readonly query?: {
@@ -60883,7 +64789,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -60968,7 +64874,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentScaffoldOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61071,7 +64977,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentCanopyTokenOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61416,7 +65322,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61451,7 +65357,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61604,7 +65510,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61662,7 +65568,7 @@ export interface operations {
     readonly get_agent_route_preview: {
         readonly parameters: {
             readonly query?: {
-                readonly source?: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api";
+                readonly source?: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api" | "site_message";
                 readonly actor?: string;
             };
             readonly header?: never;
@@ -61782,7 +65688,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61840,7 +65746,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentActorRouteOut"][];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61918,7 +65824,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AccessLineOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62049,7 +65955,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ReadModeSettingOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62129,7 +66035,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentHostSitesOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62210,7 +66116,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentAppEntriesOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62601,6 +66507,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CountOut"];
                 };
             };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_skill_history: {
@@ -62676,7 +66591,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62712,7 +66627,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62876,7 +66791,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63292,7 +67207,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63351,6 +67266,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly add_my_device_zk_wraps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkWrapsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkMyWrapsOut"];
                 };
             };
         };
@@ -63453,7 +67394,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63511,7 +67452,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63786,7 +67727,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentGitHubOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64158,7 +68099,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunSummary"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64470,7 +68411,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["GoogleMintOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64526,6 +68467,97 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AwsCredentialsOut"];
+                };
+            };
+        };
+    };
+    readonly list_aws_role_requests: {
+        readonly parameters: {
+            readonly query?: {
+                readonly role?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AwsRoleRequestOut"][];
+                };
+            };
+        };
+    };
+    readonly request_aws_role: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AwsRoleRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsRoleRequestOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsRoleRequestOut"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly revoke_aws_role_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsRoleRequestOut"];
                 };
             };
         };
@@ -64623,7 +68655,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64658,7 +68690,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SchedulePreviewOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64715,7 +68747,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64797,7 +68829,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TriggerOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64854,7 +68886,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TriggerOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64958,7 +68990,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CoachingFactOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65042,7 +69074,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65285,7 +69317,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentCapabilitiesOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65529,7 +69561,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CapabilityLeaseOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65563,7 +69595,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CapabilitySpendOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -65769,7 +69801,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskCallOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66066,6 +70098,50 @@ export interface operations {
             };
         };
     };
+    readonly get_own_test_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OwnTestKeyOut"];
+                };
+            };
+        };
+    };
+    readonly put_own_test_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OwnTestKeyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OwnTestKeyOut"];
+                };
+            };
+        };
+    };
     readonly post_vault_client_report: {
         readonly parameters: {
             readonly query?: never;
@@ -66153,7 +70229,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66359,7 +70435,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -66772,7 +70848,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67107,7 +71183,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TaskSettingsOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67651,6 +71727,293 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["KbSourceOut"];
+                };
+            };
+        };
+    };
+    readonly get_project_files: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_file_revisions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectFilesRevisionSummaryOut"][];
+                };
+            };
+        };
+    };
+    readonly get_project_file: {
+        readonly parameters: {
+            readonly query: {
+                readonly path: string;
+                readonly revision?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFileOut"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly put_project_files_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectFilesDraftIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesRevisionOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly publish_project_files: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectFilesPublishIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesRevisionOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly discard_project_files_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesRevisionOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly rollback_project_files: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectFilesRollbackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectFilesRevisionOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -69035,6 +73398,54 @@ export interface operations {
             };
         };
     };
+    readonly update_contacts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/jwt": string;
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactRecordsOut"];
+                };
+            };
+        };
+    };
+    readonly erase_contacts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/jwt": string;
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactErasuresOut"];
+                };
+            };
+        };
+    };
     readonly get_sign_off: {
         readonly parameters: {
             readonly query?: never;
@@ -70019,7 +74430,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PrivateRunnerOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72534,7 +76945,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["RunnerOut"];
+                    readonly "application/json": components["schemas"]["RunnerOut"] | components["schemas"]["RunnerHeartbeatSlimOut"];
                 };
             };
         };
@@ -73240,6 +77651,35 @@ export interface operations {
             };
         };
     };
+    readonly get_runner_sync: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerSyncOut"];
+                };
+            };
+            /** @description Not Modified */
+            readonly 304: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly list_unclaimable_turns: {
         readonly parameters: {
             readonly query?: never;
@@ -73268,6 +77708,9 @@ export interface operations {
                 readonly limit?: number;
                 readonly huddle?: string | null;
                 readonly parent_turn?: string | null;
+                readonly before?: string | null;
+                readonly since?: string | null;
+                readonly runner?: string | null;
             };
             readonly header?: never;
             readonly path?: never;
@@ -73317,7 +77760,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TurnOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -73438,6 +77881,56 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnEventCountOut"];
+                };
+            };
+        };
+    };
+    readonly get_turn_page_brief: {
+        readonly parameters: {
+            readonly query?: {
+                readonly poll?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PageBriefOut"];
+                };
+            };
+        };
+    };
+    readonly post_turn_live_text: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LiveTextIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LiveTextOut"];
                 };
             };
         };
@@ -74501,7 +78994,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["EngagementViewOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -74661,7 +79154,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ThreadOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -74760,7 +79253,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -74911,7 +79404,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ApprovalCardOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75014,7 +79507,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackShareOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75047,7 +79540,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackDetachOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75080,7 +79573,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackNewThreadOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75113,7 +79606,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackOfflineOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75146,7 +79639,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ReportBackOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75196,7 +79689,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["SessionOut"][];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75229,7 +79722,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -76192,7 +80685,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionSearchPageOut"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78233,6 +82726,7 @@ export interface operations {
                 readonly after?: number;
                 readonly limit?: number;
                 readonly index?: number | null;
+                readonly source?: number | null;
             };
             readonly header?: never;
             readonly path?: never;
@@ -78309,7 +82803,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78371,7 +82865,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78424,7 +82918,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78517,7 +83011,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78607,6 +83101,7 @@ export interface operations {
             readonly query?: {
                 readonly subject_type?: string;
                 readonly subject?: string;
+                readonly status?: string;
                 readonly limit?: number;
             };
             readonly header?: never;
@@ -78622,6 +83117,201 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["BrainOutputOut"][];
+                };
+            };
+        };
+    };
+    readonly set_output_status: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrainOutputStatusIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly get_output_fix_plan: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputFixPlanOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly ask_output_fix: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputFixOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly merge_outputs: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrainOutputMergeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -78697,7 +83387,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78738,7 +83428,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78779,7 +83469,45 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly brain_scorecard: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainScorecardOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78821,7 +83549,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -78874,8 +83602,46 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly acknowledge_learning_flag: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly flag_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -78925,7 +83691,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -79012,7 +83778,191 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly set_target_budget: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly target_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrainTargetBudgetIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainTargetOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly why_not_read: {
+        readonly parameters: {
+            readonly query?: {
+                readonly learner?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainWhyOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly list_consent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ConsentPersonOut"][];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly opt_people_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LearningOptInIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["OptInPersonOut"][];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -79074,7 +84024,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;

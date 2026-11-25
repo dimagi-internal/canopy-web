@@ -52,7 +52,7 @@ class ConnectionApp(models.Model):
     options = models.JSONField(default=dict, blank=True)
     # Extra scopes chosen from the provider's `scope_choices`, space-separated, on
     # top of the ones the provider always asks for.
-    scopes = models.CharField(max_length=1000, blank=True, default="")
+    scopes = models.CharField(max_length=2000, blank=True, default="")
     configured_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
     )
@@ -144,7 +144,8 @@ class Connection(models.Model):
     instance_url = models.URLField(blank=True, default="")
     # What the provider GRANTED (its `scope`), space-separated; what was asked for
     # when it did not say.
-    scopes = models.CharField(max_length=500, blank=True, default="")
+    # Every scope a provider offers at once must fit (tests/test_connections_google.py).
+    scopes = models.CharField(max_length=2000, blank=True, default="")
     state = models.CharField(max_length=10, choices=STATES, default=UNSHARED)
 
     sealed = models.TextField(blank=True, default="")
@@ -286,7 +287,8 @@ class ConnectionOperation(models.Model):
 
     canopy-web can't tell a click from a script; the page around the screen decides that before it
     asks for one. What a row does is limit how far a write can go: this person, this screen, this
-    revision, until `expires_at`, at most `call_service.OPERATION_MAX_WRITES` writes. It slides:
+    revision, until `expires_at`, at most `call_service.OPERATION_MAX_WRITES` writes (more, for longer, on a
+    screen that only changes Drive labels: `call_service._window`). It slides:
     each write moves `expires_at` to `call_service.OPERATION_SECONDS` from then, never past
     `hard_limit_at`, so a long run of writes isn't cut off midway and one click still has an end.
     Expired rows are deleted by `keeper.sweep`."""

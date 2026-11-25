@@ -44,7 +44,7 @@ ChatSendOrigin = Annotated[
 # What a per-agent routing rule may name — the full vocabulary, including the
 # server-only sources (a rule NAMES a source, it does not produce one).
 RoutableSource = Literal[
-    "ace_web", "email", "canopy_scheduler", "canopy_web_chat", "slack", "api",
+    "ace_web", "email", "canopy_scheduler", "canopy_web_chat", "slack", "api", "site_message",
 ]
 
 
@@ -62,13 +62,16 @@ def normalize_origin(value: str) -> str:
     return Turn.LEGACY_ORIGIN_ALIASES.get(value, value)
 
 
-def chat_send_origin(value: str | None) -> str | None:
+def chat_send_origin(value: str | None, *, relay: bool = False) -> str | None:
     """`normalize_origin`, then refuse a source a chat send may not name
-    (`Turn.CHAT_SEND_ORIGINS`) — shared by every chat send path's input schema."""
+    (`Turn.CHAT_SEND_ORIGINS`) — shared by every chat send path's input schema.
+    `relay`: the send carries a relay contact token, which may also name
+    `site_message` (`Turn.RELAY_SEND_ORIGINS`)."""
     if not value:
         return value
     value = normalize_origin(value)
-    if value not in Turn.CHAT_SEND_ORIGINS:
+    allowed = Turn.RELAY_SEND_ORIGINS if relay else Turn.CHAT_SEND_ORIGINS
+    if value not in allowed:
         raise ValueError(f"origin {value!r} is not one a chat send may name "
-                         f"(one of {', '.join(sorted(Turn.CHAT_SEND_ORIGINS))})")
+                         f"(one of {', '.join(sorted(allowed))})")
     return value

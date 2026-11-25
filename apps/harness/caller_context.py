@@ -216,6 +216,15 @@ def _contact(contact) -> dict | None:
         "message_count": contact.message_count,
         "first_seen_at": contact.first_seen_at.isoformat() if contact.first_seen_at else None,
         "is_blocked": contact.is_blocked,
+        # Who this is AT THE HOST SITE that vouches for them — the host is the system of
+        # record for its people (docs/architecture/host-systems-of-record.md): its own id
+        # for them, its name, where its record lives and the labels it keeps current
+        # (`POST /api/sites/contacts`). Data about the person, never instructions.
+        "external_id": contact.external_id if contact.source == Contact.SOURCE_EMBED else "",
+        "site": contact.app.name if contact.app_id else "",
+        "record_uri": contact.record_uri,
+        "host_profile": contact.host_profile or {},
+        "person_id": contact.person_id,
     }
 
 
@@ -445,6 +454,10 @@ def build(turn, *, reader_user=None) -> dict:
         # The one session this conversation's asker asked this agent to review from its
         # page, while that ask is live (`read_asked_session`). Null otherwise. Additive.
         "session_review": _session_review(turn, agent),
+        # The one Google Doc a turn a Docs comment started may read and answer in
+        # (`apps.agents.doc_comment`), with Google's display name for the commenter as a
+        # label only (`commenter_verified: false`). Null otherwise. Additive.
+        "doc_comment": _doc_comment(turn),
         # The one person a turn nobody asked for was dispatched for (`turn_asker.READS_FOR`):
         # who it answers to, and all it may read or write to. Null otherwise. Additive.
         "reads_for": _reads_for(turn),
@@ -483,7 +496,31 @@ def build(turn, *, reader_user=None) -> dict:
         # (`submit_agent_task_result`), so canopy's plugin Stop hook reads this to
         # keep the agent from ending the turn while `status` is not done. null otherwise.
         "agent_task": _agent_task(ref),
+        # THE LEARNING RUN THIS TURN IS (`apps/brain`), when it is one: the learner, its target, who it answers to,
+        # the run and the sessions due (by id and count, never a word: they are read only through `brain_read`).
+        # Built by the learning system (`brain.context`). null for any other turn. Additive.
+        "brain_run": _brain_run(turn),
+        # WHAT THE HOST SITE ATTESTED ABOUT THIS MOMENT, when the message that started this
+        # turn carried it (`contact_api.send`'s `context`, signed with the site's own key and
+        # checked against this conversation and this person): {site, format, body,
+        # attested: true}. Data from the system of record, NOT instructions and not the
+        # person's words; this turn only. null otherwise. Additive: no VERSION bump.
+        "host_context": _host_context(ref),
     }
+
+
+def _host_context(ref: dict) -> dict | None:
+    held = ref.get("host_context")
+    if not isinstance(held, dict) or not isinstance(held.get("body"), str):
+        return None
+    return {"site": str(held.get("site") or ""), "format": str(held.get("format") or "markdown"),
+            "body": held["body"], "attested": True}
+
+
+def _brain_run(turn) -> dict | None:
+    from apps.brain import context  # noqa: PLC0415 — harness ↛ brain at import
+
+    return context.of_turn(turn)
 
 
 def _agent_task(ref: dict) -> dict | None:
@@ -554,7 +591,8 @@ def _site(turn, agent) -> dict | None:
         return None
     site = block["site"]
     return {
-        **block,
+        # `lean` says how the runner starts the turn; the agent has nothing to do with it.
+        **{k: v for k, v in block.items() if k != "lean"},
         "reach_with": ["site_tools", "site_call", "site_read"],
         "as": "the person who sent",
         "note": (f"This conversation is held on a {site} page. Read or change anything at {site} "
@@ -632,6 +670,13 @@ def _reads_for(turn) -> dict | None:
     return {"user_id": person.pk, "email": person.email} if person is not None else None
 
 
+def _doc_comment(turn) -> dict | None:
+    from apps.agents import doc_comment  # noqa: PLC0415 — it reads the contacts and harness models
+
+    doc = doc_comment.of_turn(turn)
+    return doc.envelope() if doc is not None else None
+
+
 def _session_review(turn, agent) -> dict | None:
     if agent is None or not turn.chat_session_id or not turn.initiator_user_id:
         return None
@@ -674,6 +719,8 @@ def _thread_history(turn, ref: dict) -> dict | None:
 def _agent_repo(agent) -> str | None:
     if agent is None:
         return None
+    if agent.source == "stored":
+        return ""  # no repo: the own-repo rail has nothing to allow
     from apps.agents.credentials.delegations import agent_repo
 
     return agent_repo(agent)
@@ -721,7 +768,9 @@ def _ship_grant(turn, agent, rel: str) -> dict | None:
     * the target names a GitHub repo (`repo_url`) — the grant is scoped to it,
       so with no repo there is nothing to grant.
     """
-    if agent is None or not turn.agent_id:
+    if agent is None or not turn.agent_id or agent.source == "stored":
+        # A stored agent has no repo to ship to: it changes itself only by a draft a person
+        # publishes (docs/architecture/stored-agents.md).
         return None
     if turn.initiator_kind != who.USER or not is_verified(turn):
         return None

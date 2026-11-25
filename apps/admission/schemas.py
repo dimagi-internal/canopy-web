@@ -8,7 +8,8 @@ from pydantic import Field
 
 from apps.common.schemas import StrictModel
 
-Origin = Literal["", "api", "ace_web", "canopy_web_chat", "canopy_scheduler", "email", "slack"]
+Origin = Literal["", "api", "ace_web", "canopy_web_chat", "canopy_scheduler", "email", "slack",
+                 "site_message"]
 Principal = Literal["", "member", "contact", "agent", "system"]
 Access = Literal["", "confined", "full", "none"]
 Sender = Literal["", "blocked"]
@@ -16,6 +17,7 @@ TurnMode = Literal["", "manual", "auto"]
 RunnerKind = Literal["", "emdash", "cloud", "remote"]
 Reach = Literal["", "paused", "offline"]
 Action = Literal["reject", "allow", "auto"]
+Kind = Literal["", "agent_daily_turns"]
 
 
 class AdmissionRuleIn(StrictModel):
@@ -35,6 +37,9 @@ class AdmissionRuleIn(StrictModel):
     reach: Reach = Field("", description="Turns no runner will take: every runner that could is "
                          "paused with no resume time, or none has been reachable for `wait_hours`.")
     wait_hours: int = Field(24, ge=1, le=24 * 30)
+    kind: Kind = Field("", description="What the rule counts. `agent_daily_turns`: it matches only once "
+                       "the agent has started `max_turns` turns in the last 24 hours. Reject only.")
+    max_turns: int | None = Field(None, ge=1, le=1_000_000)
     action: Action = "reject"
     reason: str = Field(min_length=1, max_length=2000)
     notify_sender: bool = False
@@ -55,6 +60,8 @@ class AdmissionRulePatch(StrictModel):
     runner_kind: RunnerKind | None = None
     reach: Reach | None = None
     wait_hours: int | None = Field(None, ge=1, le=24 * 30)
+    kind: Kind | None = None
+    max_turns: int | None = Field(None, ge=1, le=1_000_000)
     action: Action | None = None
     reason: str | None = Field(None, min_length=1, max_length=2000)
     notify_sender: bool | None = None
@@ -75,6 +82,8 @@ class AdmissionRuleOut(StrictModel):
     runner_kind: str
     reach: str
     wait_hours: int
+    kind: str = ""
+    max_turns: int | None = None
     action: str
     reason: str
     notify_sender: bool
@@ -105,6 +114,7 @@ class AdmissionChoices(StrictModel):
     turn_modes: list[AdmissionChoice]
     runner_kinds: list[AdmissionChoice]
     reaches: list[AdmissionChoice]
+    kinds: list[AdmissionChoice] = []
     actions: list[AdmissionChoice]
 
 

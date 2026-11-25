@@ -13,6 +13,8 @@ export type PublicApp = components["schemas"]["PublicAppOut"];
 export type AppPage = components["schemas"]["PageOut"];
 export type AppVersionRow = components["schemas"]["VersionOut"];
 export type AppGrant = components["schemas"]["GrantOut"];
+export type AppMaintainer = components["schemas"]["MaintainerOut"];
+export type MaintainerLevel = "content" | "permissions";
 
 export interface ReviewChange {
   id: string;
@@ -138,7 +140,7 @@ export async function publishDraft(workspace: string, key: string): Promise<Inst
 
 export async function listVersions(workspace: string, key: string): Promise<AppVersionRow[]> {
   const res = await apiV2.GET("/api/workspace-apps/{workspace}/{key}/versions", { params: { path: P(workspace, key) } });
-  return Array.from(unwrap(res, "Failed to load the versions"));
+  return Array.from(unwrap(res, "Failed to load the versions") as unknown as AppVersionRow[]);
 }
 
 export async function rollbackTo(workspace: string, key: string, number: number): Promise<InstalledApp> {
@@ -160,6 +162,28 @@ export async function addGrant(workspace: string, key: string, email: string, ro
     body: { email, role },
   });
   return unwrap(res, "Could not give the role");
+}
+
+/** Who may publish new versions of this app, and at which level (admins only). */
+export async function listMaintainers(workspace: string, key: string): Promise<AppMaintainer[]> {
+  const res = await apiV2.GET("/api/workspace-apps/{workspace}/{key}/maintainers", { params: { path: P(workspace, key) } });
+  return Array.from(unwrap(res, "Failed to load who can publish new versions"));
+}
+
+/** Let a workspace member (a person, or an agent's own login) publish new versions; naming them again changes the level. */
+export async function setMaintainer(workspace: string, key: string, email: string, level: MaintainerLevel): Promise<AppMaintainer> {
+  const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/maintainers", {
+    params: { path: P(workspace, key) },
+    body: { email, agent: "", level },
+  });
+  return unwrap(res, "Could not let them publish new versions");
+}
+
+export async function removeMaintainer(workspace: string, key: string, grantId: number): Promise<void> {
+  const res = await apiV2.DELETE("/api/workspace-apps/{workspace}/{key}/maintainers/{grant_id}", {
+    params: { path: { ...P(workspace, key), grant_id: grantId } },
+  });
+  if (res.error) unwrap(res, "Could not take the right back");
 }
 
 export type AppHelper = components["schemas"]["HelperOut"];
@@ -278,6 +302,14 @@ export async function callApp(workspace: string, key: string, op: AppOp,
                               token?: string): Promise<unknown> {
   if (surface === "link") return callLink(workspace, key, token ?? "", op);
   if (op.op === "tasks_query" || op.op === "tasks_act") return callTasks(workspace, key, op, surface, draft);
+  if (op.op === "ai") {
+    if (surface !== "member") throw new Error("AI is not available on a public page");
+    const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/ai/complete", {
+      params: { path: P(workspace, key), query: { draft: draft ?? undefined } },
+      body: op.request as never,
+    });
+    return unwrap(res, "The AI call failed");
+  }
   const path = P(workspace, key);
   const isPublic = surface === "public";
   const asPublic = surface === "preview" ? true : undefined;

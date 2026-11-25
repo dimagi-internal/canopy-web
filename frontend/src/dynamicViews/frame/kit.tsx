@@ -377,7 +377,8 @@ export interface AppApi {
   history: (record: number) => Promise<Record<string, unknown>[]>
   upload: (collection: string, field: string, file: File) => Promise<{ id: number; name: string }>
   openFile: (id: number) => void
-  go: (page: string, params?: Record<string, unknown>) => void
+  /** Open another page of the app; `{newTab: true}` opens it in a new tab (from a click). */
+  go: (page: string, params?: Record<string, unknown>, options?: { newTab?: boolean }) => void
   refresh: () => void
   field: (collection: string, name: string) => FieldSpec | undefined
   fieldLabel: (collection: string, name: string) => string
@@ -474,6 +475,8 @@ export function FieldInput({ collection, name, value, onChange }: {
       return <Input label={label} type={f.type} required={f.required} value={text} onChange={onChange} />
     case 'ref':
       return null // a ref is chosen by the page that knows what it points at
+    case 'json':
+      return null // a json value is the page's own data, never a form field
     default:
       return <Input label={label} required={f.required} value={text} onChange={onChange} />
   }
@@ -526,7 +529,7 @@ export function FieldValues({ collection, record, only = 'extensions', exclude =
   const app = useApp('FieldValues')
   const fields = ((app.dataModel as Record<string, { fields?: Record<string, FieldSpec> }>)[collection]?.fields) ?? {}
   const rows = Object.entries(fields)
-    .filter(([n, f]) => !f.hidden && !exclude.includes(n) && (only === 'all' || f.origin === 'workspace')
+    .filter(([n, f]) => !f.hidden && f.type !== 'json' && !exclude.includes(n) && (only === 'all' || f.origin === 'workspace')
       && record && record[n] != null && record[n] !== '')
   if (!record || rows.length === 0) return null
   return (

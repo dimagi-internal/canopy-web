@@ -129,6 +129,12 @@ export default function WorkspaceAppStoreDetailPage() {
               <p className="mt-1 text-xs text-muted-foreground">Worded by settings you can change. Sent only once the server's app email is switched on.</p>
             </AppAsideSection>
           )}
+          {app.ai && (
+            <AppAsideSection title="Uses AI">
+              <p className="mt-1 text-muted-foreground">{app.ai}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Its pages send what they show to canopy's AI model, as the person using them. canopy checks the model's provider keeps none of it.</p>
+            </AppAsideSection>
+          )}
           <AppAsideSection title="Customizable">
             <p className="mt-1 text-muted-foreground">{app.settings} settings, plus your own fields, stages and pages. Template updates keep arriving as a draft to test.</p>
           </AppAsideSection>

@@ -16,10 +16,17 @@
 * ``verify_view`` → ``View`` — canopy's signed ``Canopy-View`` statement that a request
   is the person's own MCP Apps View reading a resource (no agent acting), bound to the
   person, the resource and the conversation. Never infer it from a missing statement.
+* ``verify_subject`` → ``Subject`` — canopy's signed ``Authorization: CanopySubject`` statement
+  that a request is an agent's turn with ONE of the host's own contacts (``sub``), with no
+  grant: the host authorizes every call against ``Subject.sub``.
 * ``ProbeIdentity`` + ``ProbeHandler`` — canopy's live probe: a real ID-JAG for
   one fixed, low-privilege principal, so the whole chain is exercised on a
   schedule without a visitor.
 * ``authorization_server_metadata`` / ``protected_resource_metadata`` — discovery.
+* ``RelayClient`` (``canopy_sdk.host.relay``) — a RELAY host: the site carries a
+  person's conversation server-to-server over a channel of its own.
+* ``verify_reply`` → ``Reply`` (``canopy_sdk.host.replies``) — canopy's signed push of
+  an agent's reply to the host's ``reply_webhook_url``.
 
 Framework-free. ``canopy_sdk.django`` wires all of it into a Django project.
 """
@@ -31,8 +38,11 @@ from .grant import GrantHandler, GrantRefused, GrantResult
 from .metadata import authorization_server_metadata, protected_resource_metadata
 from .pages import Page, PageRegistry, PageTokens
 from .probe import ProbeDisabled, ProbeHandler, ProbeResult
+from .relay import RelayClient, RelayError
+from .replies import Reply, ReplyRefused, verify_reply
 from .resource import DelegatedPrincipal, DPoPRefused, ResourceVerifier
 from .signing import MintFailed, arrival_payload, issue_id_jag, mint_contact_token, sign_visitor_assertion
+from .subject import Subject, SubjectRefused, verify_subject
 from .view import View, ViewRefused, same_resource, verify_view
 
 __all__ = [
@@ -40,8 +50,9 @@ __all__ = [
     "ExecutionRefused", "GrantHandler",
     "GrantRefused", "GrantResult", "HostConfig", "HostNotConfigured", "MetadataError", "MintFailed",
     "Page", "PageRegistry", "PageTokens", "ProbeDisabled", "ProbeHandler", "ProbeIdentity", "ProbeResult",
+    "RelayClient", "RelayError", "Reply", "ReplyRefused",
     "ResourceVerifier", "View", "ViewRefused", "arrival_payload", "authorization_server_metadata",
     "delegated_principal", "issue_id_jag", "mint_contact_token", "presented_dpop_jkt",
-    "protected_resource_metadata", "same_resource", "sign_visitor_assertion", "verify_execution",
-    "verify_view",
+    "protected_resource_metadata", "same_resource", "sign_visitor_assertion", "Subject", "SubjectRefused",
+    "verify_execution", "verify_reply", "verify_subject", "verify_view",
 ]

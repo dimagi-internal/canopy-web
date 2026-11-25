@@ -18,6 +18,7 @@ connections ([`vault-connections.md`](vault-connections.md) § Calls from screen
 | The panel: signed out, picker, drawing the page | `frontend/src/ext/ExtPanelPage.tsx`, `ExtSignedInPage.tsx` |
 | Wire protocol v1 and the gate | `frontend/src/ext/extensionBridge.ts` (`ExtensionLink`, `BrowserGate`), `matchPattern.ts` |
 | `canopy.browser` in the sandbox | `frontend/src/dynamicViews/frame/main.tsx::browserApi`, answered in `DynamicViewFrame.tsx` |
+| `canopy.google` and the Local/Server switch | [`local-and-server-modes.md`](local-and-server-modes.md) |
 
 ## Rules
 
@@ -25,12 +26,23 @@ connections ([`vault-connections.md`](vault-connections.md) § Calls from screen
   same app, an adapter, and capabilities and events from the registry
   (`browser.py::ADAPTERS`); its `matches` are https match patterns whose host is within the
   adapter's hosts. Unknown names fail validation. A template update that changes the
-  declaration needs an admin (`template_diff.py`).
+  declaration needs an admin (`template_diff.py`), and one that adds an act says so on its own.
+- **Reads and acts.** An adapter's `acts` (`browser.py::ADAPTERS`, a subset of its capabilities;
+  Gmail: `start_compose`, `fill_compose`) change the page; the rest read it. No adapter
+  capability ever sends. The registry is the only source of the classification — never the
+  extension's `hello`. `list_browser_apps` carries each row's `acts`; a page sees them as
+  `canopy.browser.acts`.
 - **The canopy page enforces it, never the sandboxed code.** `BrowserGate` relays a request
   only for a declared capability, and only while the extension's last `context` says the tab
   in front matches the page's patterns; an event reaches the page only if declared, from its
-  adapter, about that tab. `canopy.browser.open` needs a click on the page
-  (`connectionCalls.ts::pageClickedFrame`) and an https URL.
+  adapter, about that tab. **An act, and `canopy.browser.open`, need a click on the page**: the
+  canopy page reads it (`connectionCalls.ts::pageClickedFrame`) as the call arrives in
+  `DynamicViewFrame.tsx` and `BrowserGate.request` refuses an act without it, `needs_click`
+  ("This needs a click."), before anything reaches the extension — the same path for dynamic-view
+  and bundle pages. `open` also needs an https URL; so does `canopy.open(url)` in the panel,
+  which goes through the same gate. A `layout: "full"` page fills the panel below the picker, unpadded
+  (`ExtPanelPage.tsx`); `canopy.page.setParams` there changes only `app.params`, as the panel has no
+  address bar.
 - **Origins on both hops.** The panel posts only to an allowed `chrome-extension://<id>` that is
   its parent (`location.ancestorOrigins`, else the first well-formed message's origin) and
   accepts a message only with `event.source === window.parent` from that origin. Every request
@@ -40,7 +52,9 @@ connections ([`vault-connections.md`](vault-connections.md) § Calls from screen
   `frame-ancestors` listing exactly the allowed extension origins; with none configured it is a
   404. Every other page keeps `DENY`. The dynamic-view frame adds the same origins to its own
   `frame-ancestors` (checked against every ancestor) and nothing else: still `sandbox
-  allow-scripts`, never `allow-same-origin`, `connect-src 'none'`. The service worker leaves
+  allow-scripts`, never `allow-same-origin`, `connect-src 'none'`. A bundle page's files carry the
+  same `frame-ancestors` (`apps/workspace_apps/bundles.py::csp`), so it draws in the panel too, with
+  `canopy.browser` from canopy's injected client. The service worker leaves
   `/ext/` to the network so these headers are never replaced by a cached shell.
 - **The list shows only what the panel could draw.** `list_browser_apps` reads each organisation
   once (`wsvc.each_organisation`), plus a guest's own apps (`wsvc.guest_scopes`), and keeps an
@@ -61,3 +75,13 @@ changes cookie settings to make it work. **To verify on a new Chrome:** load the
 build, open the panel on a Gmail tab signed out, sign in from the button, click back into the
 panel: it must show your apps without a reload. If it stays signed out, the cookie is not
 being sent to the framed page, and the fix is a decision about cookies, not a code change here.
+
+The cookies go with requests, but Chrome hides them from `document.cookie` in the framed page, so
+script there can't read the CSRF cookie. `/api/csrf/` therefore also says the token in its body;
+the SPA keeps it (`api/csrf.ts`) and sends it when the cookie reads empty (`api/base.ts::getCsrfToken`).
+The panel asks again each time it checks the session, since a sign-in changes the token. Without
+it every write from the panel, including each Salesforce call an app page makes, is refused 403.
+
+An agent may use the panel as itself (signed in to Google as the agent, e.g. a live end-to-end
+run): it signs in as the agent's login with its normal permissions, nothing to switch on
+([access.md](access.md) § Browser sign-in for an agent).

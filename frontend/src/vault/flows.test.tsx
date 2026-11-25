@@ -120,6 +120,28 @@ describe('Set up vault key', () => {
   })
 })
 
+describe("An agent login's test key", () => {
+  it('offers only a new key, by passphrase, sent as a replace', async () => {
+    const jwk = { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }
+    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, test_key: true, passkeys: [], public_jwk: jwk,
+                                                seals: [{ alg: '2skd' }] }))
+    api.putKeyset.mockImplementation(async (b) => keysetOut({ exists: true, test_key: true, passkeys: [], ...b }))
+    render(<VaultKeyPanel />)
+    expect(await screen.findByTestId('vault-key-test-key')).toBeTruthy()
+    expect(screen.queryByTestId('vault-key-add-passphrase')).toBeNull()
+    expect(screen.queryByTestId('new-key-open')).toBeNull()
+    fireEvent.click(screen.getByTestId('vault-key-new-test-key'))
+    fireEvent.change(screen.getByLabelText('New vault passphrase'), { target: { value: 'orchid lantern 42 vapor' } })
+    fireEvent.change(screen.getByLabelText('Repeat the passphrase'), { target: { value: 'orchid lantern 42 vapor' } })
+    fireEvent.click(screen.getByTestId('vault-passphrase-save'))
+    expect(await screen.findByTestId('vault-secret-key', {}, { timeout: 5000 })).toBeTruthy()
+    const body = api.putKeyset.mock.calls[0][0]
+    expect(body.replace).toBe(true)
+    expect(body.public_jwk).not.toEqual(jwk)
+    expect(body.seals.map((s: { alg: string }) => s.alg)).toEqual(['2skd'])
+  })
+})
+
 // ---- the agent section -------------------------------------------------------------------------
 
 async function person() {

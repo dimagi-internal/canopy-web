@@ -154,6 +154,14 @@ describe('VaultEditor', () => {
     expect(confirm).toHaveBeenCalledTimes(2)
   })
 
+  it('removes a name that has no value, so it can leave the table', async () => {
+    const onDelete = vi.fn(async () => undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    show({ onDelete })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove NOVA_API_KEY' }))
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith('NOVA_API_KEY'))
+  })
+
   it('offers no changes to someone who cannot make them', () => {
     show({ canEdit: false, onReveal: vi.fn(), onDelete: vi.fn() })
     expect(screen.queryByTestId('vault-add')).toBeNull()
@@ -171,5 +179,6 @@ describe('VaultEditor', () => {
     expect(row.textContent).toContain('delegated by Jonathan Jackson')
     expect(within(row).queryByRole('button', { name: 'Change github-token' })).toBeNull()
     expect(within(row).queryByTestId('reveal-github-token')).toBeNull()
+    expect(within(row).queryByRole('button', { name: /^(Delete|Remove) / })).toBeNull()
   })
 })

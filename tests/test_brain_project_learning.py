@@ -14,9 +14,9 @@ from apps.agents.models import Agent, AgentProject, AgentTask
 from apps.brain import associate, consent, emit, reading, registry, runs, sources, targets
 from apps.brain.models import BrainCapability, BrainRun, BrainTarget, LearningConsent, SourceLink
 from apps.canopy_sessions.models import Message, Session
-from apps.harness import claim_payload
+from apps.harness import turn_agent_tokens
 from apps.harness.models import AgentSchedule, Runner, Turn
-from apps.harness.signals import turn_status_changed
+from apps.harness.turn_close import close_turn
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
 from tests.fixtures.brain_world import aim, brain_world, fire, member, reads, user
@@ -61,9 +61,7 @@ def _link(w, s, project=None, tier="core"):
 
 def _end(run, status=Turn.DONE):
     turn = Turn.objects.get(chat_session=run.session)
-    Turn.objects.filter(pk=turn.pk).update(status=status, finished_at=timezone.now())
-    turn.refresh_from_db()
-    turn_status_changed.send(sender=Turn, turn=turn)
+    close_turn(turn, status, from_states=Turn.NON_TERMINAL, chat_hooks=False)   # every terminal path
     run.refresh_from_db()
     return run
 
@@ -100,20 +98,23 @@ def test_a_session_linked_or_agreed_to_late_is_still_read(w):
     newest = _chat(w, w["alice"], "newest", "z")
     _link(w, newest)
     [run] = fire(w["target"])
-    assert _titles(run) == ["early", "newest"]
+    assert _titles(run) == ["newest", "early"]                           # most recently active first
     _end(run)
     LearningConsent.objects.create(user=w["carol"], classes=["project"])  # late consent, an OLDER source id
     [again] = fire(w["target"])
     assert _titles(again) == ["late"]                                     # a max-id cursor would have skipped it
 
 
-def test_a_run_reads_past_its_floor_only(w):
+def test_a_project_run_reads_only_sessions_active_in_its_window(w):
     old, new = _chat(w, w["alice"], "old", "x"), _chat(w, w["alice"], "new", "y")
     _link(w, old)
     _link(w, new)
-    run = runs.start(w["proj"], subject=w["project"], floor=sources.for_session(old).pk)
-    page = reading.read_next(run, limit=5)
-    assert [s["title"] for s in page["sources"]] == ["new"]
+
+    stale = timezone.now() - dt.timedelta(days=45)                     # past a project target's 30 days
+    Session.objects.filter(pk=old.pk).update(created_at=stale)
+    Message.objects.filter(session=old).update(created_at=stale)
+    [run] = fire(w["target"])
+    assert _titles(run) == ["new"]
 
 
 def test_a_failed_run_counts_nothing_and_is_tried_again(w):
@@ -165,7 +166,7 @@ def test_a_stale_output_s_remaining_sources_are_read_again_and_its_request_close
     ask = RederiveRequest.objects.get(output=both, done_at__isnull=True)
     [again] = fire(w["target"])
     page = reading.read_next(again, limit=5)
-    assert [x["title"] for x in page["sources"]] == ["two"] and page["revoked"] == [ids[0]]
+    assert [x["title"] for x in page["sources"]] == ["two"] and page["revoked"] == [sources.for_session(a).pk]
     assert reading.read_next(again, after=page["next_after"])["revoked"] == []           # told once
     _end(again)
     ask.refresh_from_db()
@@ -231,7 +232,7 @@ def _judge(w):
     turn = Turn.objects.get(chat_session=run.session)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING, claimed_by=w["box"])
     turn.refresh_from_db()
-    return run, claim_payload.issue_credentials(turn).mcp_token
+    return run, turn_agent_tokens.issue(turn, w["box"])["token"]     # a full turn reaches canopy with its login
 
 
 def test_the_judge_reads_only_weak_candidates_short_with_the_projects_own_words(w):
@@ -370,11 +371,15 @@ def test_an_idea_withdraws_with_its_only_source_and_goes_stale_with_one_of_sever
     _link(w, a)
     _link(w, b)
     [run] = fire(w["target"])
-    page = reading.read_next(run, limit=5)
-    ids = [x["source"] for x in page["sources"]]
-    only = emit.emit(run, kind="idea", title="Import prices", body={"why": "x"}, source_ids=[ids[0]])
+    first = reading.read_next(run, limit=1)
+    # Written when the run had read only the first source: derived from it alone.
+    only = emit.emit(run, kind="idea", title="Import prices", body={"why": "x"},
+                     source_ids=[first["sources"][0]["source"]])
+    second = reading.read_next(run, after=first["next_after"], limit=1)
+    ids = [first["sources"][0]["source"], second["sources"][0]["source"]]
     both = emit.emit(run, kind="idea", title="Stop re-keying", body={"why": "y"}, source_ids=ids)
-    consent.exclude(w["alice"], sources.for_session(a))
+    read_first = sources.for_session(a) if ids[0] == sources.for_session(a).pk else sources.for_session(b)
+    consent.exclude(w["alice"], read_first)
     cascade.sweep()
     only.refresh_from_db()
     both.refresh_from_db()

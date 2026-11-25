@@ -26,6 +26,9 @@ turn_events_appended = Signal()
 # apps/realtime fans the runner-owner's visible sessions to their supervisor group so
 # the phone reflects live emdash activity instantly (one broadcast, N viewers) instead
 # of every client polling. Post-commit, same reasoning as turn_events_appended.
+# `changed=False` when the report was identical to the last and only liveness was
+# restamped (session_sync._replay_unchanged): the sweeps that ride this clock still
+# run, a push of what viewers already have does not.
 sessions_reported = Signal()
 
 # Sent with: sender=RunnerBinding, session_id=<uuid>, menu=<dict|None>,
@@ -45,6 +48,11 @@ session_turn_enqueued = Signal()
 # Sent with: sender=Turn, turn=<Turn> when a chat turn closes (`turn_close.close_turn`
 # with its chat hooks). apps/push arms "your chat is done".
 session_turn_finished = Signal()
+
+# Sent with: sender=Turn, turn=<Turn> whenever any turn reaches a terminal status
+# (`turn_close.close_turn`, every path, inside the caller's transaction). For work
+# that ends with its turn whatever closed it (a brain run, `apps/brain/signals.py`).
+turn_closed = Signal()
 
 # Sent with: sender=Session, session_ids=<list[uuid]> for sessions that just became
 # ARCHIVED because they were CLOSED — archived in emdash, closed from canopy, or

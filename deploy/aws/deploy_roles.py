@@ -88,6 +88,10 @@ APPS = {
         # canopy-web.cfn.yaml: ServiceName + TaskDefinition Family.
         "ecs_services": ["labs-jj-canopy-web"],
         "task_families": ["labs-jj-canopy-web"],
+        # The service's count is Application Auto Scaling's (canopy-web.cfn.yaml
+        # `ScalableTarget` + `CpuScalingPolicy`): CloudFormation registers the target and
+        # puts the target-tracking policy, whose CloudWatch alarms it creates and deletes.
+        "autoscaling": True,
         "preflight": True,
         "metrics": True,
         # canopy-web's OWN task role (canopy-web-task-role.cfn.yaml). The deploy
@@ -401,6 +405,41 @@ def policy_for(app: str, cfg: dict) -> dict:
             "Action": ["elasticloadbalancing:DescribeRules", "elasticloadbalancing:DescribeListeners",
                        "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeTargetGroupAttributes",
                        "elasticloadbalancing:DescribeTargetHealth"],
+            "Resource": "*",
+        })
+
+    if cfg.get("autoscaling"):
+        # Application Auto Scaling has no ARN for a target before it is registered, and its
+        # scalable-target ARNs are opaque ids, so the calls are granted on "*" (a condition
+        # key would also read as denied in preflight.py's simulate, which passes none).
+        # Scaling acts through the ECS service-linked role, never this one.
+        st.append({
+            "Sid": "OwnServiceAutoscaling",
+            "Effect": "Allow",
+            "Action": [
+                "application-autoscaling:RegisterScalableTarget",
+                "application-autoscaling:DeregisterScalableTarget",
+                "application-autoscaling:DescribeScalableTargets",
+                "application-autoscaling:PutScalingPolicy",
+                "application-autoscaling:DeleteScalingPolicy",
+                "application-autoscaling:DescribeScalingPolicies",
+                "application-autoscaling:DescribeScalingActivities",
+                "application-autoscaling:TagResource",
+            ],
+            "Resource": "*",
+        })
+        # The target-tracking alarms Application Auto Scaling names after the service.
+        st.append({
+            "Sid": "OwnServiceAutoscalingAlarms",
+            "Effect": "Allow",
+            "Action": ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms"],
+            "Resource": [f"arn:aws:cloudwatch:{REGION}:{ACCT}:alarm:TargetTracking-service/{ECS_CLUSTER}/{s}-*"
+                         for s in cfg["ecs_services"]],
+        })
+        st.append({
+            "Sid": "DescribeAlarmsTakesNoResource",
+            "Effect": "Allow",
+            "Action": "cloudwatch:DescribeAlarms",
             "Resource": "*",
         })
 

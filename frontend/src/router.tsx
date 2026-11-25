@@ -74,6 +74,7 @@ import { ProjectRefRedirect } from './pages/work/ProjectRefRedirect'
 import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import { RunnerPage, RunnerTabRoute } from './pages/runner/RunnerPage'
+import { RunnerRedirect } from './pages/runner/RunnerRedirect'
 import { VaultPage } from './pages/vault/VaultPage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
@@ -139,6 +140,9 @@ const TriggersSection = lazySection(() =>
 )
 const AgentSettingsSection = lazySection(() =>
   import('./pages/agents/AgentSettingsSection').then((m) => ({ default: m.AgentSettingsSection })),
+)
+const AgentDefinitionSection = lazySection(() =>
+  import('./pages/agents/AgentDefinitionSection').then((m) => ({ default: m.AgentDefinitionSection })),
 )
 const AgentCapabilitiesSection = lazySection(() =>
   import('./pages/agents/AgentCapabilitiesSection').then((m) => ({ default: m.AgentCapabilitiesSection })),
@@ -335,6 +339,9 @@ export const routeTable: RouteObject[] = [
       // What the runner's menu bar opens: it knows no workspace.
       { path: '/apps', element: <TenantRedirect to="apps?tab=personal" /> },
       { path: '/supervisor', element: <SupervisorPage /> },
+      // The app's "Settings…": its runner's page, before it knows the workspace.
+      { path: '/runners/:runnerId', element: <RunnerRedirect /> },
+      { path: '/runners/:runnerId/:tab', element: <RunnerRedirect /> },
       { path: '/ide', element: <LazySection><IdePage /></LazySection> },
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
       { path: '/schedules', element: <SchedulesPage /> },
@@ -539,6 +546,8 @@ export const routeTable: RouteObject[] = [
           { path: 'mail', element: <LazySection><AgentMailSection /></LazySection> },
           // Cloud capabilities it declares, and the workspace admin's grants.
           { path: 'capabilities', element: <LazySection><AgentCapabilitiesSection /></LazySection> },
+          // A stored agent's files, revisions and draft (no git repo; apps/agent_definitions).
+          { path: 'definition', element: <LazySection><AgentDefinitionSection /></LazySection> },
           // Settings is tabs (`settings/security`, …); bare `settings` opens the
           // tab an old `#anchor` belongs to (settingsTabs.ts), else Overview.
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },

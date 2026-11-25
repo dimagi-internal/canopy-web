@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/problem'
-import { CallQueue, compositeWrites, ConnectionCalls, MAX_IN_FLIGHT, NEEDS_CLICK, pageClickedFrame, QUEUE_WAIT_MS, type CallContext, type ConnectionClient } from './connectionCalls'
+import { CallQueue, compositeWrites, ConnectionCalls, MAX_IN_FLIGHT, NEEDS_CLICK, pageClickedFrame, QUEUE_WAIT_MS, READ_REUSE_MS, type CallContext, type ConnectionClient } from './connectionCalls'
 
 const DECLARED = [{
   provider: 'salesforce', as: 'viewer',
@@ -11,7 +11,7 @@ const VIEW = { kind: 'view' as const, id: 7, version: 3 }
 const READ = { provider: 'salesforce', method: 'GET', path: 'query', query: { q: 'SELECT Id FROM Lead' } }
 const WRITE = { provider: 'salesforce', method: 'PATCH', path: 'sobjects/Lead/00Q1', body: { Status: 'Open' } }
 
-function setup(opts: { active?: boolean | undefined; ctx?: Partial<CallContext>; now?: () => number } = {}) {
+function setup(opts: { active?: boolean | undefined; ctx?: Partial<CallContext>; now?: () => number; gesture?: () => boolean } = {}) {
   const state = { active: opts.active, now: 1_000_000 }
   const client: ConnectionClient = {
     request: vi.fn(async () => ({ status: 200, body: { ok: true } })),
@@ -19,7 +19,7 @@ function setup(opts: { active?: boolean | undefined; ctx?: Partial<CallContext>;
   }
   const ctx: CallContext = { surface: VIEW, declared: DECLARED, canConnect: true, ...opts.ctx }
   const queue = new CallQueue()
-  const calls = new ConnectionCalls(client, () => ctx, { isActive: () => state.active, now: opts.now ?? (() => state.now), queue })
+  const calls = new ConnectionCalls(client, () => ctx, { isActive: () => state.active, recentGesture: opts.gesture, now: opts.now ?? (() => state.now), queue })
   return { calls, client, state, ctx, queue }
 }
 
@@ -66,6 +66,30 @@ describe('ConnectionCalls', () => {
     const body = (ok.client.request as ReturnType<typeof vi.fn>).mock.calls[0][1]
     expect(body.operation_id).toBe('op1')
     expect(body).not.toHaveProperty('click')
+  })
+
+  it('a drop after the click: a believed gesture opens one lease, once', async () => {
+    let left = 1
+    const { calls, client } = setup({ active: false, gesture: () => left-- > 0 })
+    await calls.handle(WRITE)
+    expect(client.openOperation).toHaveBeenCalledTimes(1)
+    await calls.handle(WRITE) // the lease it opened carries on
+    expect(client.request).toHaveBeenCalledTimes(2)
+    calls.closeAll()
+    await expect(calls.handle(WRITE)).rejects.toThrow('This needs a click.')
+  })
+
+  it('allowDuplicates travels as allow_duplicates, and nothing else of the page does', async () => {
+    const { calls, client } = setup({ active: true })
+    await calls.handle({ ...WRITE, allowDuplicates: true, headers: { 'X-Evil': '1' } })
+    const body = (client.request as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(body.allow_duplicates).toBe(true)
+    expect(body).not.toHaveProperty('headers')
+    expect(body).not.toHaveProperty('allowDuplicates')
+    await calls.handle(WRITE)
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls[1][1]).not.toHaveProperty('allow_duplicates')
+    await calls.handle({ ...WRITE, allow_duplicates: true }) // the REST spelling works from a page too
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls[2][1].allow_duplicates).toBe(true)
   })
 
   it('absent userActivation fails closed', async () => {
@@ -193,6 +217,63 @@ describe('ConnectionCalls', () => {
   })
 })
 
+describe('the same read again', () => {
+  it('within READ_REUSE_MS gets the last answer, with no request; after it, asks again', async () => {
+    const { calls, client, state } = setup({ active: false })
+    await calls.handle(READ)
+    state.now += READ_REUSE_MS - 1
+    await expect(calls.handle(READ)).resolves.toEqual({ status: 200, body: { ok: true } })
+    expect(client.request).toHaveBeenCalledTimes(1)
+    state.now += 1
+    await calls.handle(READ)
+    expect(client.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('shares one in flight, and a different query is its own read', async () => {
+    const { calls, client } = setup({ active: false })
+    await Promise.all([calls.handle(READ), calls.handle(READ), calls.handle({ ...READ, query: { q: 'other' } })])
+    expect(client.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('a click asks again', async () => {
+    const { calls, client, state } = setup({ active: false })
+    await calls.handle(READ)
+    state.active = true
+    await calls.handle(READ)
+    expect(client.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('a write forgets what was kept', async () => {
+    const { calls, client, state } = setup({ active: true })
+    state.active = false
+    await calls.handle(READ)
+    state.active = true
+    await calls.handle(WRITE)
+    state.active = false
+    await calls.handle(READ)
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[1].method === 'GET')).toHaveLength(2)
+  })
+
+  it('a refusal is not kept', async () => {
+    const { calls, client } = setup({ active: false })
+    ;(client.request as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('down'))
+    await expect(calls.handle(READ)).rejects.toThrow('down')
+    await calls.handle(READ)
+    expect(client.request).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('Google custom methods', () => {
+  const GOOGLE = [{ provider: 'google', as: 'viewer', reads: [], writes: [{ method: 'POST', path: 'sheets/*/values/*:append' }] }]
+  it("a `*:verb` line covers a segment ending in that verb, and only that verb", async () => {
+    const { calls, client } = setup({ active: true, ctx: { declared: GOOGLE } })
+    await calls.handle({ provider: 'google', method: 'POST', path: "sheets/S/values/'Pathway Types'!A:D:append", body: { values: [] } })
+    expect(client.request).toHaveBeenCalledTimes(1)
+    await expect(calls.handle({ provider: 'google', method: 'POST', path: 'sheets/S/values/A1:clear' })).rejects.toThrow("didn't declare")
+    await expect(calls.handle({ provider: 'google', method: 'POST', path: 'sheets/S/values/:append' })).rejects.toThrow("didn't declare")
+  })
+})
+
 describe('bulk calls', () => {
   it("a query's next page is covered by the query and needs no click", async () => {
     const { calls, client } = setup({ active: false })
@@ -260,6 +341,23 @@ describe('the lease slides', () => {
     expect(client.request).toHaveBeenCalledTimes(6)
   })
 
+  it('keeps to a longer window the server gives (a Drive-labels screen): past 500 writes and 10 minutes', async () => {
+    const { calls, client, state } = setup({ active: true })
+    ;(client.openOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      operation_id: 'hour', expires_at: new Date(state.now + 900_000).toISOString(), hard_limit_at: new Date(state.now + 3_600_000).toISOString(),
+      writes: [], max_writes: 20000, idle_seconds: 900, hard_limit_seconds: 3600,
+    })
+    await calls.handle(WRITE)
+    state.active = false
+    for (let i = 0; i < 600; i++) await calls.handle(WRITE) // past 500 on one click
+    state.now += 800_000 // a quiet stretch shorter than 900 s
+    await calls.handle(WRITE)
+    state.now += 1_200_000 // 33 minutes in
+    await expect(calls.handle(WRITE)).rejects.toThrow('This needs a click.') // 1200 s idle ends it
+    expect(client.openOperation).toHaveBeenCalledTimes(1)
+    expect(client.request).toHaveBeenCalledTimes(602)
+  })
+
   it('does not trust the browser clock against the server clock', async () => {
     const { calls, client, state } = setup({ active: true })
     ;(client.openOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -273,6 +371,17 @@ describe('the lease slides', () => {
 })
 
 describe('canopy.connection.begin', () => {
+  it('tells the frame how far a longer window goes', async () => {
+    const { calls, client, state } = setup({ active: true })
+    ;(client.openOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      operation_id: 'hour', expires_at: new Date(state.now + 900_000).toISOString(), hard_limit_at: new Date(state.now + 3_600_000).toISOString(),
+      writes: [], max_writes: 20000, idle_seconds: 900, hard_limit_seconds: 3600,
+    })
+    const out = await calls.begin()
+    expect(out).toMatchObject({ max_writes: 20000, idle_seconds: 900, hard_limit_seconds: 3600 })
+    expect(out).not.toHaveProperty('operation_id')
+  })
+
   it('opens the lease in the click and says what it covers, with no id for the frame', async () => {
     const { calls, client } = setup({ active: true })
     const out = await calls.begin()
@@ -336,13 +445,16 @@ describe('the page queue', () => {
     return { ...out, track: out, request }
   }
   const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
+  // A different read each time: the same GET again would be answered from the first.
+  let n = 0
+  const nextRead = () => ({ ...READ, query: { q: `q${n++}` } })
 
   it('30 concurrent reads all finish, at most 8 at once', async () => {
     expect(MAX_IN_FLIGHT).toBe(8)
     const { calls, client } = setup({ active: false })
     const h = held()
     client.request = h.request as unknown as ConnectionClient['request']
-    const all = Promise.all(Array.from({ length: 30 }, () => calls.handle(READ)))
+    const all = Promise.all(Array.from({ length: 30 }, () => calls.handle(nextRead())))
     await flush()
     expect(h.request).toHaveBeenCalledTimes(8)
     while (h.track.releases.length) {
@@ -375,8 +487,8 @@ describe('the page queue', () => {
     const ctx = { surface: VIEW, declared: DECLARED, canConnect: true }
     const one = new ConnectionCalls(client, () => ctx, { queue })
     const two = new ConnectionCalls(client, () => ctx, { queue })
-    void one.handle(READ).catch(() => undefined)
-    for (let i = 0; i < 12; i++) void two.handle(READ).catch(() => undefined)
+    void one.handle(nextRead()).catch(() => undefined)
+    for (let i = 0; i < 12; i++) void two.handle(nextRead()).catch(() => undefined)
     await flush()
     expect(h.request).toHaveBeenCalledTimes(8)
     one.closeAll()
@@ -396,7 +508,7 @@ describe('the page queue', () => {
       const { calls, client } = setup({ active: false })
       const h = held()
       client.request = h.request as unknown as ConnectionClient['request']
-      for (let i = 0; i < 8; i++) void calls.handle(READ).catch(() => undefined)
+      for (let i = 0; i < 8; i++) void calls.handle(nextRead()).catch(() => undefined)
       const late = calls.handle({ ...READ, query: { q: 'late' } })
       const caught = expect(late).rejects.toThrow(/waiting/)
       await vi.advanceTimersByTimeAsync(60_001)
@@ -414,7 +526,7 @@ describe('the page queue', () => {
     const { calls, client, state } = setup({ active: true })
     const h = held()
     client.request = h.request as unknown as ConnectionClient['request']
-    for (let i = 0; i < 8; i++) void calls.handle(READ).catch(() => undefined)
+    for (let i = 0; i < 8; i++) void calls.handle(nextRead()).catch(() => undefined)
     const fresh = calls.handle(WRITE)
     await flush()
     expect(h.request).toHaveBeenCalledTimes(8)
@@ -431,9 +543,9 @@ describe('the page queue', () => {
     const ctx = { surface: VIEW, declared: DECLARED, canConnect: true }
     const gone = new ConnectionCalls(client, () => ctx, { queue })
     const stays = new ConnectionCalls(client, () => ctx, { queue })
-    for (let i = 0; i < 8; i++) void gone.handle(READ).catch(() => undefined)
-    const dropped = gone.handle(READ)
-    void stays.handle(READ).catch(() => undefined)
+    for (let i = 0; i < 8; i++) void gone.handle(nextRead()).catch(() => undefined)
+    const dropped = gone.handle(nextRead())
+    void stays.handle(nextRead()).catch(() => undefined)
     await flush()
     expect(h.request).toHaveBeenCalledTimes(8)
     gone.closeAll()

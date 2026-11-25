@@ -73,14 +73,6 @@
     <p>
       Sign in with your work Google account for that address instead.
     </p>
-    {% elif reason == "agent_login" %}
-    <p>
-      {% if email %}<code>{{ email }}</code> is{% else %}This is{% endif %} an agent's account.
-      Agents reach canopy with their own tokens and never sign in to the browser.
-    </p>
-    <p>
-      Sign in with your own Google account instead.
-    </p>
     {% else %}
     <p>
       Canopy is currently limited to <code>@{{ allowed_domain }}</code> accounts.

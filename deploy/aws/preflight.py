@@ -145,6 +145,25 @@ RESOURCE_ACTIONS: dict[str, dict[str, tuple[str, ...]]] = {
         "Modify": ("kms:UpdateAlias",),
         "Remove": ("kms:DeleteAlias",),
     },
+    # The service's scalable target and its target-tracking policy (canopy-web.cfn.yaml).
+    # The CloudWatch alarms a target-tracking policy creates are granted by alarm name
+    # (deploy_roles.py `OwnServiceAutoscalingAlarms`); simulating them against the
+    # policy's ARN would read as denied, so only the application-autoscaling calls are
+    # checked here.
+    "AWS::ApplicationAutoScaling::ScalableTarget": {
+        "Add": ("application-autoscaling:RegisterScalableTarget",
+                "application-autoscaling:DescribeScalableTargets"),
+        "Modify": ("application-autoscaling:RegisterScalableTarget",
+                   "application-autoscaling:DescribeScalableTargets"),
+        "Remove": ("application-autoscaling:DeregisterScalableTarget",),
+    },
+    "AWS::ApplicationAutoScaling::ScalingPolicy": {
+        "Add": ("application-autoscaling:PutScalingPolicy",
+                "application-autoscaling:DescribeScalingPolicies"),
+        "Modify": ("application-autoscaling:PutScalingPolicy",
+                   "application-autoscaling:DescribeScalingPolicies"),
+        "Remove": ("application-autoscaling:DeleteScalingPolicy",),
+    },
     "AWS::IAM::Policy": {
         # Never grantable to CI: iam:PutRolePolicy on its own role is a full
         # privilege escalation reachable by anyone who can merge. Mapped so the
@@ -286,11 +305,24 @@ def _describe_change_set_all_pages(cfn, stack_name: str, change_set: str) -> dic
     return {"Changes": changes}
 
 
-#: Actions that take no resource: IAM can only grant them on "*", and simulating
-#: one against a specific ARN answers implicitDeny even when "*" is granted. That
-#: false refusal blocks a health-check path change and reads as the deploy role
-#: drifting from deploy_roles.py (it has not).
-UNSCOPED_ACTIONS = frozenset({"elasticloadbalancing:DescribeTargetGroups"})
+#: Actions simulated against "*", never the resource's ARN, because simulating them
+#: against the ARN answers implicitDeny even when "*" is granted, and that false
+#: refusal reads as the deploy role drifting from deploy_roles.py (it has not):
+#:   * DescribeTargetGroups takes no resource, so IAM grants it only on "*" (a
+#:     health-check path change was refused this way);
+#:   * Application Auto Scaling's resources carry `arn:aws:autoscaling:` ARNs while
+#:     its actions are `application-autoscaling:`, so the simulator never matches the
+#:     two; deploy_roles.py grants them on "*" (`OwnServiceAutoscaling`). Every
+#:     change to the CPU scaling policy was refused this way.
+UNSCOPED_ACTIONS = frozenset({
+    "elasticloadbalancing:DescribeTargetGroups",
+    "application-autoscaling:RegisterScalableTarget",
+    "application-autoscaling:DeregisterScalableTarget",
+    "application-autoscaling:DescribeScalableTargets",
+    "application-autoscaling:PutScalingPolicy",
+    "application-autoscaling:DeleteScalingPolicy",
+    "application-autoscaling:DescribeScalingPolicies",
+})
 
 
 def _kms_key(change, principal_arn: str, kms) -> tuple[str | None, list[dict]]:

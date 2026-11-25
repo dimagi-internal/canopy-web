@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from canopy_runner.local_apps import commands, package, state
+from canopy_runner.local_apps import host as host_mod
 from canopy_runner.local_apps import manifest as runner_manifest
 from canopy_runner.local_apps import server as runner_server
 from django.contrib.auth.models import User
@@ -160,7 +161,9 @@ def test_a_meeting_goes_from_store_to_session_and_only_the_session_holds_the_wor
 
 
 @pytest.mark.django_db(transaction=True)
-def test_revoking_stops_a_running_copy_over_the_real_heartbeat(world):
+def test_revoking_stops_a_running_copy_over_the_real_heartbeat(world, monkeypatch):
+    # The real heartbeat, every second instead of every 15: a revoke arrives in its answer.
+    monkeypatch.setenv(host_mod.HEARTBEAT_ENV, "1")
     sub = install(world)
     assert app(world, "start", key="meeting-assistant", accept_notice=True) == 0
     wait_for(lambda: LocalAppRun.objects.exclude(state="").first(), seconds=40, what="the first heartbeat")

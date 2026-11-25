@@ -1,7 +1,12 @@
 name: CI
 
-# Runs backend tests + frontend build ONCE per change: in the merge queue (and
-# on push to main). Deploys are a separate, manual workflow:
+# Runs backend tests + frontend build ONCE per change: in the merge queue.
+# A push to main runs only `Backend pytest (PostgreSQL)`, the job that saves
+# the migrated test DB (and the uv cache) to main's cache for queue runs to
+# restore. Main only moves through the queue (the ruleset has no bypass
+# actors), so the commit a push lands is the very merge-group commit the queue
+# just passed; re-running every suite on it re-proved a tested tree while
+# holding ~8 of the org's 20 concurrent runners. Deploys are a separate, manual workflow:
 # .github/workflows/deploy-labs.yml (GitHub → AWS labs / ECS Fargate).
 #
 # Why not on the PR too. The ruleset requires
@@ -67,7 +72,7 @@ jobs:
   # shard 1 with the other fast static gates — once is enough.
   test-backend:
     name: Backend pytest (${{ matrix.shard }}/3)
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -82,7 +87,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       - name: Sync dependencies
         run: uv sync --extra dev
@@ -179,10 +184,11 @@ jobs:
       - name: Run pytest
         # -n auto: one worker per core (pytest-xdist). Each worker builds its own
         # in-memory test DB, so the suite is isolated per worker; serially it was
-        # ~160s here, nearly all of it single-threaded.
+        # ~160s here, nearly all of it single-threaded. `nightly` walks run in
+        # nightly-walks.yml instead. --durations names whatever holds a shard up.
         env:
           PYTEST_SHARD: ${{ matrix.shard }}/3
-        run: uv run pytest -n auto --nomigrations -m "not needs_migrations"
+        run: uv run pytest -n auto --nomigrations -m "not needs_migrations and not nightly" --durations=15 --durations-min=5
 
   # The standalone in-repo packages. None of them touches Django or a
   # database: each runs from its own dir against its own declared deps.
@@ -193,7 +199,7 @@ jobs:
   # setup eight times over and hold eight runners per PR.
   test-runner-packages:
     name: Runner packages
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -204,7 +210,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       # NOT for the packages, which each resolve their own env. runner/ec2 has
       # no pyproject.toml, so `uv run` there walks UP and runs in the ROOT
@@ -335,9 +341,10 @@ jobs:
     name: Backend pytest (PostgreSQL)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # Most of it is the walk-back migration tests (`-m needs_migrations`), which re-render the project state for every
-    # operation they replay; that grows with each model that points at users, sessions or workspaces (the brain added
-    # a dozen), so 15 minutes ejected a green PR from the queue.
+    # This job is the merge queue's critical path, and its cost is the walk-back migration tests
+    # (`-m needs_migrations`): each re-renders the project state for every operation it replays, about a minute
+    # apiece and growing with every model. So each is deleted once its migration deploys (CLAUDE.md § Migrations).
+    # A PR that adds a migration misses the test DB cache and replays every migration first (about 4 minutes).
     timeout-minutes: 25
     services:
       postgres:
@@ -356,7 +363,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       - name: Sync dependencies
         run: uv sync --extra dev
@@ -437,7 +444,7 @@ jobs:
           uv run pytest --ds=config.settings.pgtest --reuse-db tests/test_kb_vectors_pg.py tests/test_kb_vectors.py
           tests/test_kb_versions.py tests/test_project_mcp.py tests/test_canopy_vault_phase1b.py tests/test_slack_choices_pg.py
           tests/test_answering_snapshot.py tests/test_answering_settings_equivalence.py tests/test_answering_settings.py
-          tests/test_claim_race_pg.py -q --durations=10
+          tests/test_claim_race_pg.py tests/test_db_pool_exhaustion_pg.py -q --durations=10
 
   # The checks that only make sense on a PR, because they compare against the
   # PR's BASE — which a merge-group run does not have. On a PR these are the
@@ -473,7 +480,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       - name: Sync dependencies
         run: uv sync --extra dev
@@ -523,8 +530,10 @@ jobs:
             exit 1
           fi
 
-      # The source-walking ratchets (no DB, seconds), plus every Django-suite
-      # test file this PR touched. A file deleted by the PR is skipped.
+      # The source-walking ratchets (seconds each), plus every Django-suite
+      # test file this PR touched. A file deleted by the PR is skipped. The
+      # ratchets listed are the ones that fail a PR on its own; in the queue
+      # each such failure also fails every entry built on top of it.
       - name: Guard tests and the test files this PR changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -537,6 +546,12 @@ jobs:
             tests/test_no_test_module_imports.py \
             tests/test_architecture_boundary.py \
             tests/test_canopy_cli_routes_exist.py \
+            tests/test_code_text_is_current.py \
+            tests/test_claude_md_budget.py \
+            tests/test_docs_evidence.py \
+            tests/test_turn_context_words.py \
+            tests/test_personal_project_never_leaks.py \
+            tests/test_guest_members_never_leak.py \
             $CHANGED
 
   pr-guards:
@@ -686,6 +701,12 @@ jobs:
           if [ -z "$FILES" ]; then echo "No source files changed."; exit 0; fi
           npx vitest related --run --passWithNoTests $FILES
 
+      # Scans every source file, so `vitest related` never selects it.
+      - name: Vitest (design-token ratchet)
+        if: steps.changed.outputs.mode == 'related'
+        working-directory: frontend
+        run: npx vitest run src/designTokens.test.ts
+
       - name: Vitest (whole suite — the toolchain changed)
         if: steps.changed.outputs.mode == 'all'
         working-directory: frontend
@@ -696,7 +717,9 @@ jobs:
     needs: [test-backend, test-runner-packages, test-backend-postgres, pr-guards, pr-fast-checks]
     # always(): without it a failed `needs` SKIPS this job, and a skipped
     # required check counts as passing — the gate would wave failures through.
-    if: always()
+    # Not on push: there the suites do not run, and the commit already carries
+    # this check from the merge-group run that passed it.
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -730,7 +753,9 @@ jobs:
   test-frontend-gate:
     name: Frontend build
     needs: [test-frontend, pr-guards, pr-frontend-checks]
-    if: always()
+    # Not on push: there the suites do not run, and the commit already carries
+    # this check from the merge-group run that passed it.
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -819,7 +844,7 @@ jobs:
   # Also runs vault-new-key: real passkey ceremonies, with a virtual authenticator.
   test-e2e-chat:
     name: Browser suite (chat)
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -840,7 +865,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       - name: Sync dependencies
         run: uv sync --extra dev
@@ -870,7 +895,7 @@ jobs:
         env:
           E2E_DATABASE_URL: postgres://e2e:e2e@127.0.0.1:5432/canopy_e2e
           E2E_SERVER_TIMEOUT: "300000"
-        run: npx playwright test e2e/chat-runner.spec.ts e2e/vault-new-key.spec.ts e2e/agent-connect.spec.ts --project=desktop
+        run: npx playwright test e2e/chat-runner.spec.ts e2e/vault-new-key.spec.ts e2e/agent-connect.spec.ts e2e/bundle-pages.spec.ts --project=desktop
 
       - name: Keep the traces of a failure
         if: failure()
@@ -882,7 +907,7 @@ jobs:
 
   test-frontend:
     name: Frontend tests (${{ matrix.shard }}/2)
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
