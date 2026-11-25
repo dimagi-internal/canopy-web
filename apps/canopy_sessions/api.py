@@ -12,8 +12,7 @@ import uuid
 from typing import Literal
 
 from django.db.models import Q
-from django.http import HttpRequest
-from django.shortcuts import get_object_or_404
+from django.http import Http404, HttpRequest
 from django.utils import timezone
 from ninja import Router
 from ninja.errors import HttpError
@@ -81,12 +80,21 @@ def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool 
     # One authority (`access`): the tenant, then who within it — the same rule
     # the list, the chat socket and attachments apply. `write=True` also needs
     # an owner/editor role; a viewer gets 403, since they can already see it.
-    session = get_object_or_404(
+    session = (
         readable_sessions(request, brain=brain and not write)
         .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
-        .annotate(_last_msg_at=transcript_read.last_message_at()),
-        pk=session_id,
+        .annotate(_last_msg_at=transcript_read.last_message_at())
+        .filter(pk=session_id)
+        .first()
     )
+    if session is None:
+        # One answer for "no such session" and "not yours to see" (a private session's
+        # existence must not leak), but it names both so a caller does not guess: an
+        # admin reading a person's own private session is told how to ask for it.
+        # Http404, not HttpError: callers catch it to fall back to a session_key lookup.
+        raise Http404("session not found, or it is private to someone else "
+                      "(an admin does not see a person's private session; "
+                      "`act-as-you`, with that person present, can)")
     if write and access.is_content_deleted(session):
         raise HttpError(409, access.CONTENT_DELETED_REFUSAL)
     if write and not access.can_write(request.user, session):
@@ -235,9 +243,9 @@ def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID, *, brain: bool 
     if not matches:
         raise HttpError(
             404,
-            "no session with this id or session_key is visible to you. A session is "
-            "visible to its creator, its participants, the agent's admins (for the "
-            "agent's own threads) and, for an emdash-discovered session, its workspace",
+            "no session with this id or session_key is visible to you: it does not exist, "
+            "or it is private to someone else (an admin does not see a person's private "
+            "session; `act-as-you`, with that person present, can)",
         )
     if len(matches) > 1:
         raise HttpError(
