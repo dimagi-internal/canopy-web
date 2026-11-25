@@ -16131,6 +16131,50 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/turns/{turn_id}/latency": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How long this turn took, hop by hop
+         * @description This turn's reply-latency trace (`harness.latency`): when the site received the
+         *     message, when canopy queued it, the runner claimed it and delivered it, the agent's
+         *     first words and hand-back, and when the site took the reply. Times only, no words.
+         */
+        readonly get: operations["get_turn_latency"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/latency/contact": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Reply latency of contact turns: p50/p95 per hop, and the budget
+         * @description Contact turns (a person writing in over a host site) the caller can see, finished
+         *     in the last `hours`: p50/p95/max of every hop, overall and per runner kind and
+         *     warm/cold, the budget they are held to, and the `recent` newest traces.
+         */
+        readonly get: operations["contact_latency"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/{turn_id}/caller-context": {
         readonly parameters: {
             readonly query?: never;
@@ -26414,6 +26458,8 @@ export interface components {
             readonly origin: string;
             /** Context */
             readonly context?: string | null;
+            /** Received At */
+            readonly received_at?: string | number | null;
         };
         /**
          * MessageAppOut
@@ -48292,6 +48338,10 @@ export interface components {
              * @default
              */
             readonly emdash_task_id: string;
+            /** Latency */
+            readonly latency?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * TurnAbortIn
@@ -78021,6 +78071,55 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnOut"];
+                };
+            };
+        };
+    };
+    readonly get_turn_latency: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly contact_latency: {
+        readonly parameters: {
+            readonly query?: {
+                readonly hours?: number;
+                readonly recent?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
                 };
             };
         };

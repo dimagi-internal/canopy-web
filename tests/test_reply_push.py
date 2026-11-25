@@ -20,18 +20,16 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
-from apps.embedding import assertions
-from apps.harness.ledger import append_events
 from apps.harness.models import Turn, TurnEvent
 from apps.harness.turn_close import close_turn
 from apps.host_grants import client_identity, reply_relay
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, HostReplyDelivery
 from tests.fixtures.contact_websocket import _world
+from tests.fixtures.reply_push import HOOK, _arrive, _end, _say
 
 pytestmark = pytest.mark.django_db
 
-HOOK = "https://labs.example.org/canopy/replies/"
 
 
 @pytest.fixture(autouse=True)
@@ -54,15 +52,6 @@ def w(monkeypatch):
     return {"owner": owner, "app": app, "priv": priv, "c": c, "sid": sid, "started": started}
 
 
-def _arrive(priv, sub="personalid:jdoe"):
-    now = int(dt.datetime.now(dt.UTC).timestamp())
-    assertion = jwt.encode({"iss": "connect-labs", "sub": sub, "aud": assertions.audience(), "iat": now,
-                            "exp": now + 60, "jti": str(uuid.uuid4()), "canopy_channel": "personalid",
-                            "canopy_agent": "echo"}, priv, algorithm="EdDSA")
-    return Client().post("/api/auth/contact-token", {"assertion": assertion, "agent_slug": "echo"},
-                         content_type="application/json").json()["token"]
-
-
 def _turn(w, text="when is my visit due?"):
     r = w["c"].post(f"/api/contact/sessions/{w['sid']}/send", {"text": text, "client_id": str(uuid.uuid4())},
                     content_type="application/json")
@@ -71,16 +60,6 @@ def _turn(w, text="when is my visit due?"):
     # what these are about.
     Turn.objects.filter(pk=r.json()["turn_id"]).update(status=Turn.RUNNING, result_note="")
     return Turn.objects.get(pk=r.json()["turn_id"])
-
-
-def _say(turn, *texts):
-    append_events(turn, [{"kind": "assistant", "payload": {"text": t}} for t in texts])
-
-
-def _end(turn, status=Turn.DONE):
-    assert close_turn(turn, status, from_states=list(Turn.NON_TERMINAL), chat_hooks=False)
-    turn.refresh_from_db()
-    return turn
 
 
 def _host():

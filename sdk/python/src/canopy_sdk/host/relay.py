@@ -226,17 +226,24 @@ class RelayClient:
         return session_id
 
     def send(self, session_id: str, sub: str, text: str, *, context: Mapping | None = None,
-             client_id: str | None = None) -> dict:
+             client_id: str | None = None, received_at=None) -> dict:
         """Say ``text`` in the conversation, as the person; returns canopy's answer
         (``{"turn_id", "message_id"}``). ``client_id`` makes a retry of the same
         message collapse onto the first one: pass your own message id.
 
         ``context`` — ``{"format": "markdown" | "json", "body": str}`` — is what the
         host knows about this moment, signed by the host (``sign_context``) and handed
-        to the agent beside the words, labelled as the host's, for this turn only."""
+        to the agent beside the words, labelled as the host's, for this turn only.
+
+        ``received_at`` — a ``datetime`` (aware) or epoch seconds — is when YOUR site
+        stored the person's message. canopy starts the turn's reply-latency trace there,
+        so the wait it measures is the person's, including your own handling."""
         body = {"text": text, "origin": contract.RELAY_ORIGIN}
         if client_id:
             body["client_id"] = str(client_id)
+        if received_at is not None:
+            body["received_at"] = (received_at.isoformat() if isinstance(received_at, _dt.datetime)
+                                   else float(received_at))
         if context is not None:
             body["context"] = self.sign_context(session_id, sub, context)
         return self._call("POST", f"/api/contact/sessions/{_q(session_id)}/send", sub, body,

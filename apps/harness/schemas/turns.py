@@ -513,6 +513,10 @@ class TurnFinishIn(Schema):
     # omits it — which is also what marks it safe to re-run.
     session_key: str = ""
     emdash_task_id: str = LEGACY_SESSION_KEY
+    # The runner's own reply-latency marks for this turn (`harness.latency.RUNNER_MARKS`,
+    # ISO times) plus `warm`: whether the session already existed. Optional; an older
+    # runner sends none and its turns are traced from canopy's own timestamps.
+    latency: dict | None = None
 
     _legacy_key = model_validator(mode="after")(adopt_legacy_session_key)
 

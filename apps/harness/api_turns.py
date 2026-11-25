@@ -11,6 +11,7 @@ import logging
 import uuid
 
 from django.http import HttpRequest, StreamingHttpResponse
+from django.utils import timezone
 from ninja import Status
 from ninja.errors import HttpError
 
@@ -25,6 +26,7 @@ from apps.workspaces import services as wsvc
 from . import (
     claim_reach,
     clis,
+    latency,
     ledger,
     sensitivity,
     services,
@@ -241,6 +243,36 @@ def get_turn(request: HttpRequest, turn_id: uuid.UUID):
     from . import turn_access
 
     return turn_access.redact([turn_or_404(request, turn_id)], request.user)[0]
+
+
+@router.get("/turns/{turn_id}/latency", response=dict,
+            summary="How long this turn took, hop by hop")
+@gate("member", "session-acl")
+def get_turn_latency(request: HttpRequest, turn_id: uuid.UUID):
+    """This turn's reply-latency trace (`harness.latency`): when the site received the
+    message, when canopy queued it, the runner claimed it and delivered it, the agent's
+    first words and hand-back, and when the site took the reply. Times only, no words."""
+    return latency.trace(turn_or_404(request, turn_id))
+
+
+@router.get("/latency/contact", response=dict,
+            summary="Reply latency of contact turns: p50/p95 per hop, and the budget")
+@gate("member", "session-acl")
+def contact_latency(request: HttpRequest, hours: int = 24, recent: int = 10):
+    """Contact turns (a person writing in over a host site) the caller can see, finished
+    in the last `hours`: p50/p95/max of every hop, overall and per runner kind and
+    warm/cold, the budget they are held to, and the `recent` newest traces."""
+    hours = min(max(hours, 1), 24 * 30)
+    turns = latency.contact_turns(since=timezone.now() - dt.timedelta(hours=hours),
+                                  base=visible_turns_qs(request))
+    traces = latency.traces_for(turns)
+    return {
+        "hours": hours,
+        "budget": {"p95_seconds": latency.BUDGET_P95_SECONDS, "applies_to": "warm",
+                   "min_sample": latency.BUDGET_MIN_SAMPLE},
+        "groups": latency.aggregate(traces),
+        "recent": traces[: min(max(recent, 0), 100)],
+    }
 
 
 @router.get("/turns/{turn_id}/caller-context", response=CallerContextOut,

@@ -2,6 +2,15 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.41.0 — 2026-11-25
+
+**A relay says when its site received the message.**
+
+- `RelayClient.send(..., received_at=)` takes when the host stored the person's message (an
+  aware `datetime` or epoch seconds) and sends it as `received_at`. canopy starts the turn's
+  reply-latency trace there (`GET /api/harness/turns/{id}/latency`), so the wait it measures
+  includes the host's own handling. Optional; a canopy that predates it ignores the field.
+
 ## 0.40.0 — 2026-11-23
 
 **An ephemeral capability can run Windows machines.**

@@ -28,7 +28,7 @@ from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
                native_permissions, page_site, readiness, scoped_token, session_naming, startup_watch, transcript)
-from . import claude_trust, stored_agents, transfer, whois
+from . import claude_trust, latency_marks, stored_agents, transfer, whois
 from .client import ClientError
 from .tail import TailReader
 
@@ -1103,6 +1103,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     here — from then on the bridge owns it, and the pump does the interrupting.
     """
     turn_id = turn["id"]
+    t0 = time.monotonic()
     agent_slug = turn.get("agent_slug") or ""
     project = turn.get("project") or ""
     workspace = turn.get("workspace_slug") or ""
@@ -1118,11 +1119,14 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     # prompt itself is the person's words and stays as they wrote it (a caller's,
     # with its file mentions made inert).
     envelope = caller.write_caller_file(turn)
+    latency_marks.mark(turn_id, "x_envelope")
 
     plan = client.resolve_session(
         runner_id, agent_slug, thread_key, project=project, workspace=workspace
     )
+    latency_marks.mark(turn_id, "x_resolved")
     client.start(turn_id)
+    latency_marks.mark(turn_id, "x_started")
 
     task = plan.get("emdash_task_id") if plan.get("reuse") else None
     # A follow-up claimed to ride this conversation's RUNNING turn:
@@ -1149,13 +1153,16 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         return f"cancelled:{turn_id}"
 
     created_here = not task
+    latency_marks.fact(turn_id, warm=bool(task))
     if task and not _confine(client, turn, task):
         return f"failed:{turn_id}"
     if task:
+        latency_marks.mark(turn_id, "session_ready")
         _native_confine(cfg, client, turn, task)
         # A snapshot that arrived after its transfer, restored into the live
         # session's worktree before the message that says so is delivered.
         transfer.restore_into_task(cfg, client, turn, target, task)
+        latency_marks.mark(turn_id, "x_restored")
         # Who is asking reaches the agent beside the words, never inside them (caller.py).
         caller.write_pending(task, turn, envelope)
         # Before delivery, so the agent's first `canopy secret` cannot race it.
@@ -1167,8 +1174,10 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         verifier = _open_verifier(target, task, cfg)
         if verifier is not None:
             pre_send = (verifier.path, verifier.offset)
+        latency_marks.mark(turn_id, "x_verifier")
         try:
             res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port, project=target)
+            latency_marks.mark(turn_id, "prompt_sent")
         except Exception as exc:  # noqa: BLE001 — any send failure ends the turn
             caller.clear_pending(task)
             logger.error("chat reuse send failed turn=%s task=%s: %s", turn_id, task, exc)
@@ -1221,8 +1230,11 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         _TYPED_TURNS[turn_id] = time.monotonic()
         _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=target,
                              sent=res)
+        latency_marks.mark(turn_id, "x_snapshot")
         reason = _undelivered(client, turn_id, task, verifier, prompt,
                               port=cfg.cdp_port, project=target)
+        if not reason:
+            latency_marks.mark(turn_id, "prompt_delivered")
         if reason:
             caller.clear_pending(task)
             _fail_typed(client, turn_id, task, reason)
@@ -1236,6 +1248,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             return f"rode:{turn_id}:{task}"
         logger.info("chat turn=%s reused emdash task=%s (agent=%s) %s", turn_id, task, target,
                     whois.brief(turn))
+        logger.info("chat turn=%s prepare: %s", turn_id, latency_marks.steps(turn_id, t0))
     else:
         # The same guard as an agent turn's create (execute_turn): a stored agent's checkout
         # becomes its emdash project first, and an agent whose repo this emdash lacks cannot
@@ -1290,6 +1303,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         )
         logger.info("chat turn=%s created emdash task=%s (agent=%s) %s", turn_id, task, target,
                     whois.brief(turn))
+        latency_marks.mark(turn_id, "session_ready")
+        latency_marks.mark(turn_id, "prompt_sent")
 
     # The chat's key was left under the task name before delivery (emdash may
     # have renamed the task, so again under the real one); once the transcript
@@ -1300,6 +1315,11 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     path = _wait_for_transcript(target, task, emdash_db=cfg.emdash_db)
     if path is not None:
         chat_key.write(turn, task=task, transcript_id=pathlib.Path(path).stem)
+        if created_here:
+            # A new session starts on the prompt it was created with: its transcript
+            # existing is the prompt having landed.
+            latency_marks.mark(turn_id, "prompt_delivered")
+            logger.info("chat turn=%s prepare (cold): %s", turn_id, latency_marks.steps(turn_id, t0))
     if path is None:
         # FAILED, not done: the reply cannot reach the asker, and a caller such as
         # labs' worker-chat bridge hands a failed turn to a person. Ending it "done"

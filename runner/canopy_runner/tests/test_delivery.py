@@ -86,7 +86,7 @@ class _Client:
     def post_events(self, turn_id, evs):
         self.events.extend(evs)
 
-    def finish(self, turn_id, note="", status="done", emdash_task_id=""):
+    def finish(self, turn_id, note="", status="done", emdash_task_id="", latency=None):
         # A FAILED finish is recorded as `failed` too, so assertions read the same
         # whichever call the runner used; `finished_task` is what stops a requeue.
         self.finished_status, self.finished_task = status, emdash_task_id

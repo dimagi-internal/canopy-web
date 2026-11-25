@@ -43,6 +43,18 @@ Whichever it is, `outbound.check_url` checks it again at every send, and each re
 - **What it keeps.** The row holds the text only until it is delivered or given up on; a person deleting the conversation's words empties it (`reply_relay.forget_session`, on `session_content_deleted`).
 - **The host's half** is `canopy_sdk.host.replies.verify_reply(token, *, config)`, which checks canopy's key from its client metadata, `aud` = `HostConfig.reply_url`, `site` = the host's name, the lifetime and the `jti`.
 
+## Reply latency
+
+A person writing in over a site is waiting on the reply, so every contact turn carries a trace of when each hop happened (`Turn.latency`, written by `apps/harness/latency.py::mark`; the mark names, in travel order, are `latency.MARKS`). Each mark is written by whoever saw the moment first-hand, and the first write wins:
+
+- **The site** says when it stored the message: `received_at` on the send (`RelayClient.send(received_at=)`). A time in the future or hours old is ignored, never refused (`latency.site_received_at`).
+- **canopy** stamps queued, claimed, started and finished (the turn's own columns), the first assistant event, and the reply push: when the accepted POST began and when the site answered 2xx (`reply_relay.attempt`).
+- **The runner** reports what only it sees on the turn's finish (`TurnFinishIn.latency`, `latency.RUNNER_MARKS`): the session ready (warm or cold), the words typed and seen in the transcript, the first words, the hand-back. The laptop runner keeps them in `runner/canopy_runner/canopy_runner/latency_marks.py`.
+
+`GET /api/harness/turns/{id}/latency` reads one turn's marks and the spans between them (`latency.SPANS`); `GET /api/harness/latency/contact` aggregates p50/p95/max per runner kind and warm/cold. The budget is `latency.BUDGET_P95_SECONDS` for warm turns (at least `BUDGET_MIN_SAMPLE` in 24 hours); the `reply_latency` alert (`apps/harness/alerts/reply_latency.py`) opens for a workspace that breaks it and names the slowest turn. A missing mark is a span not measured, never an error.
+
+The laptop runner pumps an in-flight reply between loop ticks (`chat_pump.FAST_PUMP_SECONDS`, `main.wait_pumping`), so a reply finishes when the agent hands back rather than on the next tick. The fast pump never counts as a tick, because the bridge's backstops are counted in ticks (`chat_bridge.LiveBridge.step`).
+
 ## Limits
 
 Three budgets bound what one site, one person and one agent can spend. Each is off or generous for a site that never relays.
@@ -63,4 +75,5 @@ Three budgets bound what one site, one person and one agent can spend. Each is o
 | Reply push: which turns, what is posted, retries | `apps/host_grants/reply_relay.py`; its receivers and clock job in `apps/host_grants/apps.py` |
 | The channel on a turn | `apps/harness/initiator.py::channel`, `apps/tokens/middleware.py` (`request.relay_channel`) |
 | The budgets | `apps/embedding/rate_limit.py`, `apps/admission/evaluate.py` |
+| Reply latency: the trace, the aggregate, the budget alert | `apps/harness/latency.py`, `apps/harness/alerts/reply_latency.py` |
 | The host's client; the context's and the reply's wire | `sdk/python/src/canopy_sdk/host/relay.py`, `sdk/python/src/canopy_sdk/attested_context.py`, `sdk/python/src/canopy_sdk/host/replies.py` |

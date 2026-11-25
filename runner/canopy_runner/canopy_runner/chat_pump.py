@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 
-from . import chat_bridge
+from . import chat_bridge, latency_marks
 from .cancel import CANCELLED_TURNS
 from .client import Client
 from .config import Config
@@ -49,7 +49,8 @@ def finish_chat_bridge(cfg: Config, client: Client, bridge, *, status: str, note
     chat_bridge.IN_FLIGHT.pop(bridge.turn_id, None)
     CANCELLED_TURNS.discard(bridge.turn_id)
     try:
-        client.finish(bridge.turn_id, note=note, status=status, emdash_task_id=bridge.task)
+        client.finish(bridge.turn_id, note=note, status=status, emdash_task_id=bridge.task,
+                      latency=latency_marks.take(bridge.turn_id))
     except Exception:  # noqa: BLE001
         logger.warning("chat turn=%s: finish failed", bridge.turn_id, exc_info=True)
     logger.info("chat turn=%s %s (task=%s): %s", bridge.turn_id, status, bridge.task, note)
@@ -130,7 +131,13 @@ def cancel_chat_bridge(cfg: Config, client: Client, bridge) -> None:
                   + (f": {err}" if err else "") + ")"))
 
 
-def pump_chat_bridges(cfg: Config, client: Client) -> None:
+#: How often a runner with a chat reply in flight looks at its transcript between
+#: loop ticks (`main._wait`). A reply leaves for the person as soon as the agent hands
+#: the floor back, not when the next tick happens to come round (poll_seconds, 5s).
+FAST_PUMP_SECONDS = 0.25
+
+
+def pump_chat_bridges(cfg: Config, client: Client, *, fast: bool = False) -> None:
     """Advance every in-flight chat turn by one tick: ship whatever the agent has
     written since the last tick, and finish the turn once the transcript says it
     handed the floor back (see chat_bridge.hands_back_to_human).
@@ -140,10 +147,15 @@ def pump_chat_bridges(cfg: Config, client: Client) -> None:
     silence, which truncates every answer that involves a tool call. Pumping it
     here gives the correct completion rule without holding the tick: the heartbeat, claims and session reports all
     keep running while an agent works.
+
+    `fast` is the between-ticks pump: it only acts on a bridge whose transcript has
+    grown (so an idle wait costs one file read per bridge), never cancels (the tick
+    does), and does not count as a tick (`LiveBridge.step(tick=False)`).
     """
     for turn_id, bridge in list(chat_bridge.IN_FLIGHT.items()):
         if turn_id in CANCELLED_TURNS:
-            cancel_chat_bridge(cfg, client, bridge)
+            if not fast:
+                cancel_chat_bridge(cfg, client, bridge)
             continue
         try:
             new_records = bridge.reader.read_new()
@@ -151,17 +163,22 @@ def pump_chat_bridges(cfg: Config, client: Client) -> None:
         except Exception:  # noqa: BLE001 — an unreadable transcript is a quiet tick
             logger.debug("chat turn=%s: transcript read failed", turn_id, exc_info=True)
             new_records, raw_lines = [], []
+        if fast and not new_records and not bridge.pending and not bridge.finished:
+            continue
         # A dialog up on this session means "waiting on a human", not "wedged" —
         # see LiveBridge.step. Read from the hook listener, so it costs nothing
         # and never touches emdash.
         blocked = _is_blocked(bridge.task)
-        bridge.step(new_records, raw_lines, blocked=blocked)
+        bridge.step(new_records, raw_lines, blocked=blocked, tick=not fast)
+        if bridge.done_reason == "end_turn":
+            latency_marks.mark(turn_id, "reply_ready")
         flush_turn_transcript(client, bridge)
         if bridge.pending:
             events = [{"kind": "assistant", "payload": {"text": t}} for t in bridge.pending]
             try:
                 client.post_events(turn_id, events)
                 bridge.pending.clear()   # only drop text the server has actually taken
+                latency_marks.mark(turn_id, "first_text")
             except Exception:  # noqa: BLE001 — keep it queued and retry next tick
                 logger.debug("chat turn=%s: event post failed, retrying", turn_id, exc_info=True)
         if bridge.finished:

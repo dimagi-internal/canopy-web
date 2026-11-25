@@ -826,6 +826,9 @@ def _step(name: str, fn, *args, **kwargs) -> None:
 
 def _report_sweep(cfg: Config, client: Client) -> None:
     """Status reporting that no claim depends on — see the note in `run_once`."""
+    # First: a reply that came back while this tick claimed and delivered leaves
+    # now, not after five status reports.
+    _step("chat pump (fast)", chat_pump.pump_chat_bridges, cfg, client, fast=True)
     from . import execute
 
     # Before the report: a created session whose link has not landed yet would be
@@ -1381,6 +1384,28 @@ def next_wait(cfg: Config, *, quiet_streak: int, wake_connected: bool) -> float:
     return idle
 
 
+def wait_pumping(seconds: float, wait_slice, pump, *, in_flight=None,
+                 slice_seconds: float | None = None, clock=time.monotonic) -> None:
+    """Wait `seconds` (or until `wait_slice` reports a wake), running `pump` every
+    `slice_seconds` while a chat reply is in flight. With nothing in flight it is one
+    plain wait, exactly as before."""
+    from .chat_pump import FAST_PUMP_SECONDS
+
+    in_flight = in_flight if in_flight is not None else (lambda: bool(chat_bridge.IN_FLIGHT))
+    step = FAST_PUMP_SECONDS if slice_seconds is None else slice_seconds
+    deadline = clock() + seconds
+    while in_flight():
+        remaining = deadline - clock()
+        if remaining <= step:
+            break
+        if wait_slice(step):
+            return
+        pump()
+    remaining = deadline - clock()
+    if remaining > 0:
+        wait_slice(remaining)
+
+
 def honour_stops(reply) -> None:
     """Feed `cancel_turn_ids` from a heartbeat reply into CANCELLED_TURNS — the
     set the `cancel` frame feeds, so a stop the socket missed is acted on the
@@ -1765,11 +1790,22 @@ def main() -> None:
         # the exact prior behavior: a plain time.sleep. Routing the wait through
         # the Event unconditionally would swallow the time.sleep the loop tests
         # patch to break the loop — an infinite hang.
-        if not wake_on:
-            time.sleep(seconds)
-            return
-        if waker.event.wait(seconds):  # returns early on a wake nudge
-            waker.event.clear()
+        #
+        # While a chat reply is in flight the wait is sliced and the pump runs
+        # between slices (`wait_pumping`): the reply leaves when the agent hands
+        # back, not up to poll_seconds later.
+        if wake_on:
+            def _slice(s: float) -> bool:
+                if waker.event.wait(s):  # returns early on a wake nudge
+                    waker.event.clear()
+                    return True
+                return False
+        else:
+            def _slice(s: float) -> bool:
+                time.sleep(s)
+                return False
+        wait_pumping(seconds, _slice,
+                     lambda: _step("chat pump (fast)", chat_pump.pump_chat_bridges, cfg, client, fast=True))
 
     idle_streak = 0
     quiet_streak = 0  # consecutive ticks with nothing claimed, carried or observed

@@ -50,7 +50,7 @@ from apps.embedding.rate_limit import (
     check_contact_token_client,
     check_contact_token_issuer,
 )
-from apps.harness import acting_person, sensitivity
+from apps.harness import acting_person, latency, sensitivity
 from apps.harness import initiator as who
 from apps.harness.schemas import TurnOut
 from apps.tokens.models import ContactToken, EmbedAuditLog
@@ -505,6 +505,10 @@ class ContactSendIn(Schema):
     #: labelled as the host's. Another person's or conversation's is refused 422
     #: `context_mismatch`; one that does not verify, 422 `bad_context`.
     context: str | None = None
+    #: When the HOST stored the person's message (ISO 8601 or epoch seconds), so the
+    #: wait canopy measures starts where the person's did (`harness.latency`). A time
+    #: in the future or hours old is ignored, never refused: it only feeds a trace.
+    received_at: str | float | None = None
 
 
 def _tenant_for(app, agent_slug: str):
@@ -756,6 +760,10 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         initiator=who.for_request(request, via=who.channel(request, "contact")),
         origin_ref={HOST_CONTEXT_KEY: attested} if attested else None,
     )
+    if turn is not None and payload.received_at is not None:
+        received = latency.site_received_at(payload.received_at)
+        if received is not None:
+            latency.mark(turn, site_received=received)
     return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
 
 
