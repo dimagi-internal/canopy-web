@@ -1,11 +1,8 @@
 """A confined turn on the cloud runner whose session lacks its profile's MCP tools
-fails, with its reply withheld, instead of answering a caller from nothing.
-
-Live case (2026-11-25, labs thread 8): a connect-helper contact turn on
-cloud-ec2-live answered "I can't look up your payments in this chat right now"
-and ended done, so labs never handed the worker to a person. The laptop runner
-got this check in canopy-web#2959; the cloud runner, which takes those turns
-first, had none.
+fails, with its reply withheld, instead of answering a caller from nothing: a
+contact turn whose canopy-web MCP did not authenticate has no `site_call`, so it
+can neither read the record it was asked about nor hand the conversation to a
+person, and a reply made without them must not reach the caller.
 """
 from __future__ import annotations
 

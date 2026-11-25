@@ -5828,7 +5828,7 @@ class _ConfinedToolsGate:
     """Holds a confined turn's assistant text until the session is known to have
     the MCP tools its profile works through, then releases it or drops it.
 
-    The cloud runner's counterpart of the laptop's chat_bridge check (canopy-web#2959).
+    The cloud runner's counterpart of the laptop's chat_bridge check.
     A confined session whose canopy-web MCP did not authenticate has only that
     server's `authenticate` placeholders: no `who_is_asking`, no `site_*`. Its agent
     then answers a caller from nothing ("I can't see your payment record") and the
