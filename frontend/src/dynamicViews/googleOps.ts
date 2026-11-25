@@ -26,6 +26,8 @@ export interface OpSpec {
   modes: readonly Mode[]
   /** Whether it changes something (the page, or the mailbox): it needs a click either way. */
   act: boolean
+  /** The arguments it takes, so a page can feature-check one (`'bodyHtml' in ops['gmail.draft'].args`). */
+  args: readonly string[]
   /** Local: the adapter and capability it uses (the page must declare it). */
   local?: { adapter: string; capability: string }
   /** Server: the Google call(s) it makes (the page must declare them). */
@@ -36,37 +38,37 @@ export interface OpSpec {
 /** The catalogue. Adding a mode to an operation is adding its implementation below, never a fallback. */
 export const GOOGLE_OPS: Readonly<Record<string, OpSpec>> = {
   'gmail.thread': {
-    modes: ['local', 'server'], act: false,
+    modes: ['local', 'server'], act: false, args: ['threadId'],
     local: { adapter: 'gmail', capability: 'read_open_thread' },
     server: ['GET gmail/threads/*'],
     summary: 'Every message of a thread, oldest first. Local: the thread open on screen.',
   },
   'gmail.draft': {
-    modes: ['local', 'server'], act: true,
+    modes: ['local', 'server'], act: true, args: ['kind', 'threadId', 'to', 'cc', 'bcc', 'subject', 'bodyText', 'bodyHtml'],
     local: { adapter: 'gmail', capability: 'start_compose' },
     server: ['GET gmail/threads/*', 'POST gmail/drafts'],
     summary: 'A new email or a reply, never sent. Local: an open compose window on screen. Server: a saved draft.',
   },
   'gmail.open_email': {
-    modes: ['local'], act: false,
+    modes: ['local'], act: false, args: [],
     local: { adapter: 'gmail', capability: 'read_open_email' },
     summary: 'The email open on screen.',
   },
   'gmail.fill_compose': {
-    modes: ['local'], act: true,
+    modes: ['local'], act: true, args: ['bodyText', 'mode', 'subject'],
     local: { adapter: 'gmail', capability: 'fill_compose' },
     summary: 'Write into the compose window on screen.',
   },
   'gmail.compose_recipients': {
-    modes: ['local'], act: false,
+    modes: ['local'], act: false, args: [],
     local: { adapter: 'gmail', capability: 'compose_recipients' },
     summary: 'Who the compose window on screen is addressed to.',
   },
 }
 
 /** What the page may see of the catalogue: each operation's modes, whether it acts, what it says. */
-export function opsCatalogue(): Record<string, { modes: Mode[]; act: boolean; summary: string }> {
-  return Object.fromEntries(Object.entries(GOOGLE_OPS).map(([k, v]) => [k, { modes: [...v.modes], act: v.act, summary: v.summary }]))
+export function opsCatalogue(): Record<string, { modes: Mode[]; act: boolean; args: string[]; summary: string }> {
+  return Object.fromEntries(Object.entries(GOOGLE_OPS).map(([k, v]) => [k, { modes: [...v.modes], act: v.act, args: [...v.args], summary: v.summary }]))
 }
 
 export class OpError extends Error {
@@ -113,6 +115,8 @@ export interface Draft {
   mode: Mode
   /** `compose`: open on screen, unsaved, for the person to send. `drafts`: saved in their Drafts. */
   where: 'compose' | 'drafts'
+  /** What the draft holds: `html` only on the server from `bodyHtml`; the compose on screen takes text. */
+  format: 'text' | 'html'
   kind: DraftKind
   draftId: string | null
   threadId: string | null
@@ -120,6 +124,7 @@ export interface Draft {
 type DraftKind = 'new' | 'reply' | 'reply_all'
 
 const MAX_BODY = 50_000
+const MAX_HTML = 200_000
 const MAX_RECIPIENTS = 50
 const NOT_ON_SCREEN_THREAD = 'Open that thread in Gmail beside the panel, or switch to server mode.'
 
@@ -163,7 +168,7 @@ const LOCAL: Record<string, (a: Record<string, unknown>, tab: Local, clicked: bo
       kind: d.kind,
       ...(d.to.length ? { to: d.to } : {}), ...(d.cc.length ? { cc: d.cc } : {}), ...(d.bcc.length ? { bcc: d.bcc } : {}),
       ...(d.subject != null ? { subject: d.subject } : {}), bodyText: d.bodyText,
-    }, clicked).then(() => ({ mode: 'local', where: 'compose', kind: d.kind, draftId: null, threadId: d.threadId || null }))
+    }, clicked).then(() => ({ mode: 'local', where: 'compose', format: 'text', kind: d.kind, draftId: null, threadId: d.threadId || null }))
     if (d.kind === 'new' || !d.threadId) return send()
     // A reply is to the thread on screen: say so rather than reply to a different one.
     return tab.request('read_open_thread', {}, false).then((t) => {
@@ -251,13 +256,13 @@ const SERVER: Record<string, (a: Record<string, unknown>, host: OpHost) => Promi
           headers.References = [h.references, h['message-id']].filter(Boolean).join(' ')
         }
       }
-      const raw = mime({ to, cc, bcc: d.bcc, subject: subject ?? '', body: d.bodyText, headers })
+      const raw = mime({ to, cc, bcc: d.bcc, subject: subject ?? '', body: d.bodyText, html: d.bodyHtml, headers })
       const res = await host.server.call({
         provider: 'google', method: 'POST', path: 'gmail/drafts',
         body: { message: { raw, ...(threadId ? { threadId } : {}) } },
       })
       const body = google(res) as { id?: string; message?: { threadId?: string } }
-      const out: Draft = { mode: 'server', where: 'drafts', kind: d.kind, draftId: body.id ?? null, threadId: body.message?.threadId ?? threadId }
+      const out: Draft = { mode: 'server', where: 'drafts', format: d.bodyHtml != null ? 'html' : 'text', kind: d.kind, draftId: body.id ?? null, threadId: body.message?.threadId ?? threadId }
       return out
     })
   },
@@ -393,8 +398,9 @@ export function parseAddresses(header: string): Person[] {
   return out
 }
 
-/** An RFC 5322 message, base64url as Gmail's `raw` takes it. Headers are encoded; the body is UTF-8 text. */
-export function mime(m: { to: Person[]; cc: Person[]; bcc: Person[]; subject: string; body: string; headers: Record<string, string> }): string {
+/** An RFC 5322 message, base64url as Gmail's `raw` takes it. Headers are encoded; the body is UTF-8 text, and
+ *  with `html` a multipart/alternative of the text and the HTML (what chrome-sales's drafts were). */
+export function mime(m: { to: Person[]; cc: Person[]; bcc: Person[]; subject: string; body: string; html?: string | null; headers: Record<string, string> }): string {
   const addr = (list: Person[]) => list.map((p) => (p.name ? `${encodeWord(p.name)} <${p.email}>` : p.email)).join(', ')
   const lines = [
     ...(m.to.length ? [`To: ${addr(m.to)}`] : []),
@@ -403,12 +409,23 @@ export function mime(m: { to: Person[]; cc: Person[]; bcc: Person[]; subject: st
     `Subject: ${encodeWord(m.subject)}`,
     ...Object.entries(m.headers).map(([k, v]) => `${k}: ${v.replace(/[\r\n]+/g, ' ')}`),
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset="UTF-8"',
-    'Content-Transfer-Encoding: base64',
-    '',
-    wrap(b64(utf8(m.body.replace(/\r?\n/g, '\r\n')))),
+    ...(m.html == null ? part('text/plain', m.body) : alternative(m.body, m.html)),
   ]
   return b64(utf8(lines.join('\r\n'))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function part(type: 'text/plain' | 'text/html', body: string): string[] {
+  return [`Content-Type: ${type}; charset="UTF-8"`, 'Content-Transfer-Encoding: base64', '', wrap(b64(utf8(body.replace(/\r?\n/g, '\r\n'))))]
+}
+
+function alternative(text: string, html: string): string[] {
+  const boundary = `canopy-${Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('')}`
+  return [
+    `Content-Type: multipart/alternative; boundary="${boundary}"`, '',
+    `--${boundary}`, ...part('text/plain', text), '',
+    `--${boundary}`, ...part('text/html', html), '',
+    `--${boundary}--`,
+  ]
 }
 
 function encodeWord(s: string): string {
@@ -437,11 +454,14 @@ function draftArgs(a: Record<string, unknown>) {
     throw new OpError('bad_request', 'kind is "new", "reply" or "reply_all".')
   })()
   const subject = a.subject == null ? null : String(a.subject)
+  const bodyHtml = a.bodyHtml == null ? null : String(a.bodyHtml)
+  if (bodyHtml != null && bodyHtml.length > MAX_HTML) throw new OpError('bad_request', `bodyHtml is at most ${MAX_HTML.toLocaleString('en')} characters.`)
   if (subject != null && (subject.length > 1000 || /[\r\n]/.test(subject))) throw new OpError('bad_request', 'subject is one line of at most 1,000 characters.')
   return {
     kind, subject,
     to: people(a.to, 'to'), cc: people(a.cc, 'cc'), bcc: people(a.bcc, 'bcc'),
-    bodyText: text(a.bodyText ?? '', 'bodyText'),
+    bodyHtml,
+    bodyText: a.bodyText != null ? text(a.bodyText, 'bodyText') : bodyHtml != null ? htmlToText(bodyHtml).slice(0, MAX_BODY) : '',
     threadId: a.threadId == null ? '' : String(a.threadId),
   }
 }

@@ -119,7 +119,7 @@ describe('gmail.draft', () => {
     local.request.mockResolvedValueOnce({ kind: 'new', filled: {} })
     const d = await runGoogleOp('gmail.draft', { to: [{ email: 'jo@partner.org' }], subject: 'Hi', bodyText: 'Body' }, h)
     expect(local.request).toHaveBeenCalledWith('start_compose', { kind: 'new', to: [{ name: '', email: 'jo@partner.org' }], subject: 'Hi', bodyText: 'Body' }, true)
-    expect(d).toEqual({ mode: 'local', where: 'compose', kind: 'new', draftId: null, threadId: null })
+    expect(d).toEqual({ mode: 'local', where: 'compose', format: 'text', kind: 'new', draftId: null, threadId: null })
     expect(server.call).not.toHaveBeenCalled()
   })
 
@@ -146,7 +146,7 @@ describe('gmail.draft', () => {
     expect(raw).toContain('To: jo@partner.org\r\n')
     expect(raw).not.toContain('Cc:')
     expect(raw).toContain('Subject: Re: ')
-    expect(d).toEqual({ mode: 'server', where: 'drafts', kind: 'reply_all', draftId: 'r123', threadId: THREAD })
+    expect(d).toEqual({ mode: 'server', where: 'drafts', format: 'text', kind: 'reply_all', draftId: 'r123', threadId: THREAD })
   })
 
   it('server: a write with no click is the lease\'s refusal, and nothing is posted', async () => {
@@ -154,6 +154,24 @@ describe('gmail.draft', () => {
     server.begin.mockRejectedValueOnce(new Error('This needs a click.'))
     await expect(runGoogleOp('gmail.draft', { bodyText: 'x' }, h)).rejects.toThrow('This needs a click.')
     expect(server.call).not.toHaveBeenCalled()
+  })
+
+  it('bodyHtml: the server saves HTML with a text alternative; the compose on screen gets the text', async () => {
+    const html = '<p>Hello <b>Jo</b></p><p>Best,<br>Me</p>'
+    const srv = host()
+    srv.server.call.mockResolvedValueOnce({ status: 200, body: { id: 'r9', message: { threadId: THREAD } } })
+    const d = await runGoogleOp('gmail.draft', { to: [{ email: 'jo@partner.org' }], subject: 'Hi', bodyHtml: html }, srv.h)
+    expect(d).toMatchObject({ mode: 'server', format: 'html', draftId: 'r9' })
+    const raw = unb64url((srv.server.call.mock.calls[0][0] as { body: { message: { raw: string } } }).body.message.raw)
+    expect(raw).toMatch(/Content-Type: multipart\/alternative; boundary="canopy-[0-9a-f]+"/)
+    const parts = raw.split(/--canopy-[0-9a-f]+/)
+    const decode = (p: string) => new TextDecoder().decode(Uint8Array.from(atob(p.split('\r\n\r\n')[1].replace(/\r\n/g, '')), (c) => c.charCodeAt(0)))
+    expect(decode(parts.find((p) => p.includes('text/html'))!)).toBe(html)
+    expect(decode(parts.find((p) => p.includes('text/plain'))!).replace(/\r\n/g, '\n')).toBe('Hello Jo\nBest,\nMe')
+    const loc = host({ mode: 'local' })
+    loc.local.request.mockResolvedValueOnce({ kind: 'new', filled: {} })
+    expect(await runGoogleOp('gmail.draft', { bodyHtml: html }, loc.h)).toMatchObject({ mode: 'local', format: 'text' })
+    expect(loc.local.request.mock.calls[0][1]).toMatchObject({ bodyText: 'Hello Jo\nBest,\nMe' })
   })
 
   it('refuses bad recipients the same way in both modes', async () => {
