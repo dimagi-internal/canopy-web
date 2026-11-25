@@ -205,9 +205,9 @@ def ring_keepers(conn: Connection) -> None:
     then runs at once instead of on its reconcile."""
     jkts = [t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device"]
     if jkts:
-        runner_sync.bump_keepers(RunnerDeviceKey.objects.filter(
+        runner_sync.bump_keepers(set(RunnerDeviceKey.objects.filter(
             ecdh_jkt__in=jkts, status=RunnerDeviceKey.ACTIVE, runner__kind=Runner.CLOUD)
-            .values_list("runner_id", flat=True))
+            .values_list("runner_id", flat=True)))
 
 
 def connections_for(owner: Owner) -> QuerySet[Connection]:
