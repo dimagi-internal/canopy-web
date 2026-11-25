@@ -3,12 +3,15 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartPath,
   disconnectMine,
+  endTemporaryAccess,
   listMyConnections,
   turnOffServerUse,
   type ConnectionOut,
   type ConnectionsView,
   type DisconnectOut,
   type ProviderOut,
+  type TemporaryAccessOut,
+  type TemporaryEndedOut,
 } from '@/api/connections'
 import { Button } from 'canopy-ui/ui'
 import { scopedPath } from '@/lib/scopedLinks'
@@ -58,6 +61,20 @@ export function ConnectionsPanel() {
     }
   }
 
+  async function endAccess(t: TemporaryAccessOut, title: string) {
+    setBusy(t.id)
+    setError('')
+    setNotice('')
+    try {
+      setNotice(ended(await endTemporaryAccess(t.id), title))
+      load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not end it.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   if (data === null) return error ? <p className="text-[13px] text-destructive">{error}</p> : null
 
   return (
@@ -73,6 +90,12 @@ export function ConnectionsPanel() {
       <ConnectOutcome params={outcome} onDismiss={dismiss} knownProviders={data.providers} />
       {error && <p className="text-[13px] text-destructive">{error}</p>}
       {notice && <p role="status" className="text-[13px] text-success">{notice}</p>}
+      <AllowedForAWhile
+        rows={data.temporary ?? []}
+        providers={data.providers}
+        busy={busy}
+        onEnd={endAccess}
+      />
       {groupByProvider(data.providers).map((rows) => (
         <ProviderSection
           key={rows[0].name}
@@ -104,6 +127,64 @@ export function disconnected({ outcome, machine_revokes }: DisconnectOut, keyRep
   return keyReplaced ? `${idles} Revoke it at Salesforce or Google yourself.` : idles
 }
 
+/** What ending access that was allowed for a while did. */
+export function ended({ outcome }: TemporaryEndedOut, title: string): string {
+  return outcome === 'revoked'
+    ? `Ended. ${title} has been told, and canopy no longer holds it.`
+    : `Ended. canopy no longer holds it; ${title} could not be reached, so its sign-in runs out by itself.`
+}
+
+/** "Thursday, 5 December, 14:30" in the viewer's own time. */
+function when(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' })
+}
+
+/**
+ * Access that ends by itself (`temporary`): an account allowed for your own pages and apps in a
+ * workspace for a while, or lent to an agent for turns you start. Each says when it ends, with a
+ * button to end it now (no passkey: ending only takes access away).
+ */
+export function AllowedForAWhile({
+  rows,
+  providers,
+  busy,
+  onEnd,
+}: {
+  rows: readonly TemporaryAccessOut[]
+  providers: readonly ProviderOut[]
+  busy: string | null
+  onEnd: (t: TemporaryAccessOut, title: string) => void
+}) {
+  if (rows.length === 0) return null
+  const titleOf = (name: string) => providers.find((p) => p.name === name)?.title ?? name
+  return (
+    <section className="space-y-2" data-testid="allowed-for-a-while">
+      <h3 className="text-[13px] font-semibold text-foreground">Allowed for a while</h3>
+      <ul className="space-y-2">
+        {rows.map((t) => {
+          const title = titleOf(t.provider)
+          const forWhat = t.agent
+            ? `Lent to ${t.agent} for turns you start, in ${t.workspace}`
+            : `Used by your pages and apps in ${t.workspace}`
+          return (
+            <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border p-3">
+              <div className="min-w-0 space-y-0.5">
+                <p className="text-sm text-foreground">
+                  {title}{t.account_label ? ` (${t.account_label})` : ''}
+                </p>
+                <p className="text-[12px] text-muted-foreground">{forWhat}. Ends {when(t.expires_at)}.</p>
+              </div>
+              <Button variant="outline" size="sm" disabled={busy === t.id} onClick={() => onEnd(t, title)}>
+                {busy === t.id ? 'Ending…' : 'End now'}
+              </Button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
 const KEY_REPLACED = 'Sealed to a vault key you replaced. New tokens stay readable by the old key until you '
   + 'disconnect and connect again. If it may have leaked, disconnect now.'
 const THEIR_KEY_REPLACED = 'Sealed to a vault key the person who connected it replaced. New tokens stay readable by '
@@ -120,6 +201,8 @@ const REASONS: Record<string, string> = {
   insufficient_scope: 'was connected without every permission canopy needs. Connect again and allow them all.',
   no_vault_key: 'needs your vault key first. Set up your vault key in Settings, then connect again.',
   revoking: 'is being disconnected. Wait for that to finish, then connect again.',
+  bad_duration: 'can be allowed for 5 minutes up to 30 days. Choose again.',
+  temporary_unsupported: 'can’t be allowed that way.',
   wrong_account:
     'was signed in with an account this connection may not use — sign in as the agent’s own account, or one in the workspace’s allowed domains.',
 }
@@ -146,10 +229,14 @@ export function ConnectOutcome({
   if (!params || !key) return null
   const known = knownProviders.find((p) => p.name === key)
   const who = known ? known.title : 'The connection'
-  const ok = params.get('status') === 'connected'
+  // `ok`: allowed for a while (a grant that ends by itself); `connected`: a stored connection.
+  const allowed = params.get('status') === 'ok'
+  const ok = params.get('status') === 'connected' || allowed
   const reason = REASONS[params.get('reason') ?? '']
   const whole = WHOLE_REASONS[params.get('reason') ?? '']
-  const text = ok
+  const text = allowed
+    ? `${who} allowed. It is listed under Allowed for a while, with when it ends.`
+    : ok
     ? `${who} connected.`
     : whole
       ? whole

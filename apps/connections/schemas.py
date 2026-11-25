@@ -174,16 +174,20 @@ class TemporaryAccessOut(StrictModel):
     provider: str
     workspace: str
     agent: str | None = Field(description="The slug of the agent it is lent to; null: for my own calls from screens "
-                                          "in that workspace (Google Drive pages).")
+                                          "and apps in that workspace.")
     account_label: str
-    expires_at: datetime = Field(description="When the token runs out. It cannot be renewed.")
+    expires_at: datetime = Field(description="When it ends, and canopy-web lets go of it (revoked at the provider).")
+    renews: bool = Field(False, description="canopy-web holds a refresh token until `expires_at`, so it keeps working "
+                                            "until then (Salesforce). False: it is one access token, which cannot be "
+                                            "renewed (Google, an hour at most).")
 
 
 class ConnectionsOut(StrictModel):
     providers: list[ProviderOut]
     connections: list[ConnectionOut]
     temporary: list[TemporaryAccessOut] = Field(
-        default_factory=list, description="Short-lived access I lent an agent, for turns I start, while it lasts.")
+        default_factory=list, description="Access that ends by itself, while it lasts: lent to an agent for turns I "
+                                          "start, or allowed for my own screens and apps in a workspace.")
 
 
 class TemporaryEndedOut(StrictModel):

@@ -70,6 +70,11 @@ class SalesforceProvider(Provider):
     rotates_refresh_token = True
     server_use_default = True
     server_calls = True
+    # A person may allow their Salesforce for their own screens for as long as they choose
+    # (`apps.connections.temporary`). An access token lives only the Connected App's session timeout
+    # (often 30 minutes to 2 hours), so the grant keeps the refresh token until its end, then revokes it.
+    temporary_access = True
+    temporary_renews = True
     default_access_token_seconds = 1800
     option_fields = (
         OptionField("login_url", "Login URL", "url", required=True, default=DEFAULT_LOGIN_URL),

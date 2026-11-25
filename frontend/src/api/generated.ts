@@ -423,7 +423,7 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /**
-         * End short-lived access I lent an agent
+         * End access I lent or allowed for a while
          * @description End it now and revoke it at the provider. Needs no passkey: ending access only takes it away.
          *     Only my own: someone else's id is a 404.
          */
@@ -22566,7 +22566,7 @@ export interface components {
             readonly connections: readonly components["schemas"]["ConnectionOut"][];
             /**
              * Temporary
-             * @description Short-lived access I lent an agent, for turns I start, while it lasts.
+             * @description Access that ends by itself, while it lasts: lent to an agent for turns I start, or allowed for my own screens and apps in a workspace.
              */
             readonly temporary?: readonly components["schemas"]["TemporaryAccessOut"][];
         };
@@ -22644,7 +22644,7 @@ export interface components {
             readonly workspace: string;
             /**
              * Agent
-             * @description The slug of the agent it is lent to; null: for my own calls from screens in that workspace (Google Drive pages).
+             * @description The slug of the agent it is lent to; null: for my own calls from screens and apps in that workspace.
              */
             readonly agent: string | null;
             /** Account Label */
@@ -22652,9 +22652,15 @@ export interface components {
             /**
              * Expires At
              * Format: date-time
-             * @description When the token runs out. It cannot be renewed.
+             * @description When it ends, and canopy-web lets go of it (revoked at the provider).
              */
             readonly expires_at: string;
+            /**
+             * Renews
+             * @description canopy-web holds a refresh token until `expires_at`, so it keeps working until then (Salesforce). False: it is one access token, which cannot be renewed (Google, an hour at most).
+             * @default false
+             */
+            readonly renews: boolean;
         };
         /** UnreachableOut */
         readonly UnreachableOut: {

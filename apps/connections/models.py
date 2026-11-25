@@ -342,14 +342,17 @@ class TemporaryAccess(models.Model):
     """A person's short-lived access token, lent to one agent for turns that person starts, or, with
     no agent, kept for that person's own calls from screens in the app's workspace (`temporary.for_screens`).
 
-    The other way to lend an account, for a clean-up rather than a standing connection: no refresh
-    token is ever asked for, so nothing can renew it, and it dies with the token (about an hour at
-    Google). No vault key or passkey: the provider's own consent screen is the person's yes.
+    The other way to lend an account, for a clean-up rather than a standing connection. No vault key
+    or passkey: the provider's own consent screen is the person's yes. For Google no refresh token is
+    ever asked for, so nothing can renew it, and it dies with the token (about an hour). For a provider
+    whose grants for screens last as long as the person chooses (`temporary.renews`: Salesforce, up to
+    `temporary.LONGEST_GRANT`), the refresh token is held too, only until `expires_at`, then revoked.
 
-    The price, chosen on purpose: unlike a `Connection`, canopy-web can read this one. `token` is
-    encrypted with canopy-web's own key (`apps.common.encryption`), and it hands the token to the
-    runner holding the turn, so a hacked canopy-web could use or redirect a token while it lives.
-    What it cannot do is outlive that token or mint another. Ended or run out, the row is deleted.
+    The price, chosen on purpose: unlike a `Connection`, canopy-web can read this one. `token` (and
+    `refresh_token`) are encrypted with canopy-web's own key (`apps.common.encryption`), and the token
+    is handed to the runner holding the turn, so a hacked canopy-web could use or redirect a token
+    while the grant lasts. What it cannot do is keep one past the end the person chose: ended or run
+    out, the row is revoked at the provider and deleted.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -362,7 +365,16 @@ class TemporaryAccess(models.Model):
     account_label = models.CharField(max_length=255, blank=True, default="")
     scopes = models.TextField(blank=True, default="")
     token = models.TextField()
+    # When the access is over: the end the person chose, or the token's own end when nothing renews it.
     expires_at = models.DateTimeField()
+    # Only for a provider whose grants for screens may outlast one access token (`temporary.renews`,
+    # Salesforce): its refresh token, encrypted with canopy-web's key like `token`, held only until
+    # `expires_at` and then revoked at the provider. "" for every other row.
+    refresh_token = models.TextField(blank=True, default="", db_default="")
+    # The account's own API host (Salesforce's My Domain), "" when the provider's is fixed.
+    instance_url = models.CharField(max_length=255, blank=True, default="", db_default="")
+    # When `token` itself runs out, when that is before `expires_at` and a refresh renews it. Null: `expires_at`.
+    access_expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -242,11 +242,11 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
                           temporary=[TemporaryAccessOut(id=t.pk, provider=t.provider, workspace=t.app.workspace_id,
                                                         agent=t.agent.slug if t.agent else None,
                                                         account_label=t.account_label,
-                                                        expires_at=t.expires_at)
+                                                        expires_at=t.expires_at, renews=bool(t.refresh_token))
                                      for t in temporary.mine(request.user)])
 
 
-@router.delete("/temporary/{access_id}", response=TemporaryEndedOut, summary="End short-lived access I lent an agent")
+@router.delete("/temporary/{access_id}", response=TemporaryEndedOut, summary="End access I lent or allowed for a while")
 @gate("self", setting=True)
 def end_temporary(request: HttpRequest, access_id: uuid.UUID) -> TemporaryEndedOut:
     """End it now and revoke it at the provider. Needs no passkey: ending access only takes it away.
