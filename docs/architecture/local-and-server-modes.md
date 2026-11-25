@@ -31,7 +31,7 @@ one runs.
 - **One shape in both modes.** An operation that has both modes answers the same keys either way
   (tested in `googleOps.test.ts`). Where the modes genuinely differ, the answer says so instead of
   pretending: `gmail.draft` is `where: "compose"` locally (open on screen, unsaved, for the person to
-  send) and `where: "drafts"` on the server (saved in their Drafts). A local thread's collapsed
+  send) and `where: "drafts"` on the server (saved in their Drafts). A `bodyHtml` draft is HTML (with a text alternative) only on the server, `format: "html"`; the adapter writes text, so locally it is the HTML's text, `format: "text"`. A local thread's collapsed
   messages may be snippets (`bodyComplete: false`).
 - **No new gate, no new permission.** Local runs the adapter capability through `BrowserGate`, so the
   page must declare it in `browser` and the tab must match; an act needs a click. Server runs the
@@ -48,7 +48,7 @@ one runs.
 | Operation | Local | Server |
 |---|---|---|
 | `gmail.thread({threadId?})` | `read_open_thread`; a `threadId` must be the thread on screen | `GET gmail/threads/{id}?format=full` |
-| `gmail.draft({kind, threadId?, to?, cc?, bcc?, subject?, bodyText})` | `start_compose` (act); a reply's `threadId` must be on screen | `GET gmail/threads/{id}?format=metadata` for a reply (recipients as Gmail's Reply / Reply all, `In-Reply-To`, `References`), then `POST gmail/drafts` |
+| `gmail.draft({kind, threadId?, to?, cc?, bcc?, subject?, bodyText \| bodyHtml})` | `start_compose` (act); a reply's `threadId` must be on screen | `GET gmail/threads/{id}?format=metadata` for a reply (recipients as Gmail's Reply / Reply all, `In-Reply-To`, `References`), then `POST gmail/drafts` |
 | `gmail.open_email()` | `read_open_email` | none: the server can't see the screen |
 | `gmail.fill_compose({bodyText, mode?, subject?})` | `fill_compose` (act) | none |
 | `gmail.compose_recipients()` | `compose_recipients` | none |

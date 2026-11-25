@@ -114,8 +114,10 @@ adapter; "server" is their Google through canopy-web. canopy.mode.current, canop
 (['server'] outside the panel), canopy.mode.on(handler). Operations (canopy.google.ops lists each
 one's modes): gmail.thread({threadId?}) [local, server] -> {mode, threadId, subject, gmailUrl,
 messages: [{emailId, from, to, cc, date, incoming, bodyText, bodyComplete}]}; gmail.draft({kind:
-"new"|"reply"|"reply_all", threadId?, to?, cc?, bcc?, subject?, bodyText}) [local, server], from a
-click -> {mode, where: "compose" (open on screen, unsaved) | "drafts" (saved), draftId, threadId};
+"new"|"reply"|"reply_all", threadId?, to?, cc?, bcc?, subject?, bodyText or bodyHtml}) [local, server],
+from a click -> {mode, where: "compose" (open on screen, unsaved) | "drafts" (saved), format: "text" |
+"html" (bodyHtml is kept as HTML only on the server; the compose on screen takes its text), draftId,
+threadId};
 gmail.openEmail(), gmail.fillCompose({bodyText, mode?, subject?}), gmail.composeRecipients() [local
 only]. Call them as canopy.google.gmail.thread(...) or canopy.google.run("gmail.thread", args).
 Nothing ever falls back to the other mode: an operation the mode lacks rejects e.code "not_in_mode",
