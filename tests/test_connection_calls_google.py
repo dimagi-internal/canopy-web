@@ -308,6 +308,16 @@ def test_with_no_hour_the_page_is_given_the_link_that_grants_one(g):
     assert r.json()["connect_url"].endswith("/auth/connections/google/w/start/?temporary=1&for_screens=1")
 
 
+def test_with_no_google_app_in_the_workspace_the_page_is_told_and_given_no_link(g):
+    """Without an app, the start lands straight back on the page: a link would only loop."""
+    TemporaryAccess.objects.all().delete()
+    g.gapp.removed_at = timezone.now()
+    g.gapp.save(update_fields=["removed_at"])
+    r = _post(g)
+    assert r.status_code == 409 and r.json()["error"] == "not_configured", r.content
+    assert "connect_url" not in r.json()
+
+
 @pytest.mark.parametrize("over", [{"expires_at": "past"}, {"agent": "eva"}, {"user": "ada"}])
 def test_an_hour_that_ran_out_or_is_not_for_my_screens_is_not_used(g, over):
     TemporaryAccess.objects.all().delete()

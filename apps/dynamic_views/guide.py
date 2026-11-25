@@ -247,7 +247,9 @@ GOOGLE DRIVE CALLS
   screens. Without one (or once it ends) the call rejects with code "not_connected" (or
   "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url) in
   its click; the page goes to Google in the same tab, with no extra prompt, and comes back to this
-  page, where the viewer tries again. Nothing renews it. The
+  page, where the viewer tries again. Nothing renews it. A workspace with no Google app rejects with code
+  "not_configured" and no connect_url: show its message (an admin sets the app up in Settings →
+  Connections); there is nothing for the viewer to click. The
   workspace's Google app must ask for "See and change file details and labels in Drive" (an admin,
   in Settings → Connections).
 - Example, a folder's children: canopy.connection.request({provider: "google", method: "GET", path:
