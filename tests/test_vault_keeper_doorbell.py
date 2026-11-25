@@ -18,7 +18,7 @@ from apps.agents.credentials import delegations, keeper_doorbell, zk_notify
 from apps.agents.models import Agent, Vault
 from apps.harness.models import Runner
 from tests.fixtures.fake_github import FakeGitHub
-from tests.test_vault_keeper_queries import _fleet
+from tests.fixtures.keeper_fleet import keeper_fleet as _fleet
 
 pytestmark = pytest.mark.django_db
 
