@@ -258,6 +258,10 @@ class Turn(models.Model):
     # canopy started itself with no request behind it (a schedule firing).
     # Without it a script on a person's PAT is indistinguishable from the web UI.
     provenance = models.JSONField(default=dict, blank=True)
+    # REPLY LATENCY: when each hop of this turn happened, `{mark: iso time}` plus
+    # `warm` / `runner_kind` (`apps/harness/latency.py` names the marks and who
+    # writes each). First write wins; a turn with none simply was not traced.
+    latency = models.JSONField(default=dict, blank=True)
     # The turn / session / emdash task / Claude session this turn was started
     # FROM — from the X-Canopy-Parent-* headers, a `parent` object in the
     # payload, a confined session's caller token, or set by canopy itself (a

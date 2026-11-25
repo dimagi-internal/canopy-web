@@ -143,7 +143,7 @@ class _Client:
     def post_events(self, turn_id, evs):
         self.events.extend(evs)
 
-    def finish(self, turn_id, note="", status="done", emdash_task_id=""):
+    def finish(self, turn_id, note="", status="done", emdash_task_id="", latency=None):
         self.finished_status, self.finished_task = status, emdash_task_id
         if status == "failed":
             self.failed = note

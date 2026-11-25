@@ -290,7 +290,7 @@ class LiveBridge:
         (match or waiting[0]).received = True
 
     def step(self, new_records: list[dict], raw_lines: list[str] | None = None,
-             blocked: bool = False) -> None:
+             blocked: bool = False, tick: bool = True) -> None:
         """Consume one tick's worth of newly-appended records.
 
         `raw_lines` is the verbatim JSONL for those records (TailReader.last_raw).
@@ -304,13 +304,18 @@ class LiveBridge:
         its dialog was still on screen, so the phone showed a completed chat whose
         answer never came. MAX_TICKS still bounds it, so a
         dialog nobody ever answers cannot hold a session open forever.
+
+        `tick=False` is a fast pump between loop ticks (`pump_chat_bridges(fast=True)`):
+        it consumes records like any step but is not a tick, so the backstops, which
+        are counted in loop ticks, keep their meaning.
         """
-        self.ticks += 1
+        if tick:
+            self.ticks += 1
         if raw_lines and not self.transcript_truncated:
             self.raw_pending.extend(raw_lines)
         if new_records:
             self.idle_ticks = 0
-        else:
+        elif tick:
             self.idle_ticks += 1
         # In ORDER: a hand-back only ends the turn once every rider has been
         # received — one taken after this `end_turn` gets its own reply, which

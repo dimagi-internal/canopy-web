@@ -40,7 +40,7 @@ class _FakeClient:
             raise RuntimeError("network")
         self.events.extend(evs)
 
-    def finish(self, turn_id, note="", status="done", emdash_task_id=""):
+    def finish(self, turn_id, note="", status="done", emdash_task_id="", latency=None):
         self.finished.append((turn_id, status, note))
         self.finished_tasks.append(emdash_task_id)
 

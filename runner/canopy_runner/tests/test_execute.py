@@ -44,7 +44,7 @@ class FakeClient:
     def start(self, turn_id, session_id=""):
         self.started.append(turn_id)
 
-    def finish(self, turn_id, note="", emdash_task_id="", status="done"):
+    def finish(self, turn_id, note="", emdash_task_id="", status="done", latency=None):
         # emdash_task_id is the close-out join key the server stores on the turn.
         if status == "failed":
             self.failed.append((turn_id, note))

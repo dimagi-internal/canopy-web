@@ -15,7 +15,7 @@ from __future__ import annotations
 from django.db.models import Q
 from pydantic import ValidationError
 
-from . import routing, services
+from . import latency, routing, services
 from .models import Runner, Turn
 from .schemas import HeartbeatIn, TurnFinishIn
 
@@ -127,6 +127,15 @@ def parse_finish_frame(frame: dict) -> TurnFinishIn:
         raise ProtocolError(422, "Invalid finish", detail=str(exc)) from exc
 
 
+def _record_latency(turn: Turn, raw) -> None:
+    marks, facts = latency.runner_marks(raw)
+    kind = getattr(getattr(turn, "claimed_by", None), "kind", "")
+    if kind:
+        facts["runner_kind"] = kind
+    if marks or raw:
+        latency.mark(turn, facts, **marks)
+
+
 def finish(turn: Turn, payload: TurnFinishIn) -> Turn:
     """Finish a turn the calling runner claimed — THE call both channels make.
 
@@ -140,6 +149,10 @@ def finish(turn: Turn, payload: TurnFinishIn) -> Turn:
     if payload.session_key and not turn.session_key:
         turn.session_key = payload.session_key[:200]
         turn.save(update_fields=["session_key"])
+    # Before the terminal check and before finishing, for the same reason as the
+    # session key: the finish is the runner's one report of its own timings, and the
+    # reply push that finishing starts reads them.
+    _record_latency(turn, payload.latency)
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent finish
     # Read the state BEFORE finishing: a non-terminal result is ambiguous. It

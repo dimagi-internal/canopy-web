@@ -46,7 +46,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.canopy_sessions.services import EMBED_APP_KEY, RELAY_CHANNEL_KEY
-from apps.harness import sensitivity
+from apps.harness import latency, sensitivity
 from apps.harness.models import Turn, TurnEvent
 from apps.tokens.models import AppCredential, HostReplyDelivery
 
@@ -212,6 +212,13 @@ def _post(url: str, token: str) -> int:
     return resp.status_code
 
 
+def _mark_latency(turn_id, *, posted, acknowledged) -> None:
+    try:
+        latency.mark(turn_id, reply_posted=posted, site_acknowledged=acknowledged)
+    except Exception:  # noqa: BLE001 — a trace never costs a delivery
+        logger.debug("reply latency mark failed for turn %s", turn_id, exc_info=True)
+
+
 def attempt(row: HostReplyDelivery, *, now: dt.datetime | None = None, post=None) -> None:
     """One delivery attempt: signed afresh, POSTed, and what it answered recorded —
     delivered, rescheduled by `BACKOFF`, or given up on after `MAX_ATTEMPTS`."""
@@ -227,6 +234,10 @@ def attempt(row: HostReplyDelivery, *, now: dt.datetime | None = None, post=None
                 raise outbound.OutboundError("the site no longer takes reply push")
             status = (post or _post)(url, sign(row, now=now.timestamp(), url=url))
             ok, note = 200 <= status < 300, f"HTTP {status}"
+            if ok and row.ended:
+                # The reply's arrival at the site: when canopy began the POST that the
+                # site took, and when it answered (`harness.latency`).
+                _mark_latency(row.turn_id, posted=now, acknowledged=timezone.now())
         except Exception as exc:  # noqa: BLE001 — any failure is a retry
             ok, note = False, f"{type(exc).__name__}: {exc}"[:200]
         row.attempts += 1

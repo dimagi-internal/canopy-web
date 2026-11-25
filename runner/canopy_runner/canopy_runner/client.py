@@ -685,7 +685,7 @@ class Client:
         self._call("POST", f"/turns/{turn_id}/start", {"session_id": session_id})
 
     def finish(self, turn_id: str, note: str = "", status: str = "done",
-               emdash_task_id: str = "") -> None:
+               emdash_task_id: str = "", latency: dict | None = None) -> None:
         """`emdash_task_id` is the session this turn drove. It is the key the agent's
         own close-out is matched on later (the agent recovers the same name from its
         cwd), so a turn that created or reused a session should always report it —
@@ -693,6 +693,10 @@ class Client:
         body = {"status": status, "result_note": note}
         if emdash_task_id:
             body["session_key"] = emdash_task_id
+        if latency:
+            # The runner's reply-latency marks (latency_marks.py); canopy-web keeps the
+            # ones it knows and ignores the rest.
+            body["latency"] = latency
         self._call("POST", f"/turns/{turn_id}/finish", body)
 
     def report_project_result(self, runner_id: str, request_id: str, ok: bool, detail: str = "") -> dict:
