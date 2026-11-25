@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import {
   Check,
   CircleCheck,
@@ -40,7 +40,7 @@ export const NOTICE = "What's said here leaves this device for your laptop and y
 type Screen =
   | { kind: 'loading' }
   | { kind: 'unpaired'; problem?: string }
-  | { kind: 'pairing'; name: string; step: PairStep; byCode?: boolean; code?: string; error?: string }
+  | { kind: 'pairing'; name: string; step: PairStep; byCode?: boolean; code?: string; error?: string; slow?: boolean }
   | { kind: 'home'; pairing: Pairing; noticeAccepted: boolean }
   | { kind: 'meeting'; pairing: Pairing; meeting: Meeting }
 
@@ -58,9 +58,7 @@ export function defaultDeps(store: ListenStore = browserStore): ListenDeps {
         return await startMic(onChunk, onLevel)
       } catch (e) {
         if (e instanceof MicDenied && e.why === 'denied') {
-          throw new Error(
-            'Microphone access is off for this site. Allow it in your browser’s site settings (on iPhone: aA → Website Settings → Microphone), then try again.',
-          )
+          throw new Error(`Microphone access is off for this site. ${micSettingsHelp()}`)
         }
         throw e
       }
@@ -118,8 +116,11 @@ export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Ele
   const startCodePairing = useCallback(
     (runner: ListenRunner) => {
       setScreen({ kind: 'pairing', name: runner.name, step: 'connecting', byCode: true })
-      pairByCode(runner, deps, (step, code) =>
-        setScreen((s) => (s.kind === 'pairing' ? { ...s, step, code: code ?? s.code } : s)),
+      pairByCode(
+        runner,
+        deps,
+        (step, code) => setScreen((s) => (s.kind === 'pairing' ? { ...s, step, code: code ?? s.code, slow: false } : s)),
+        () => setScreen((s) => (s.kind === 'pairing' ? { ...s, slow: true } : s)),
       )
         .then(() => window.setTimeout(() => void goHome(), 900))
         .catch((e: unknown) =>
@@ -184,22 +185,43 @@ export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Ele
             }}
           />
         )}
-        {screen.kind === 'meeting' && <MeetingScreen meeting={screen.meeting} onBack={() => void goHome()} />}
+        {screen.kind === 'meeting' && (
+          <MeetingScreen
+            meeting={screen.meeting}
+            onBack={() => void goHome()}
+            onRepair={async () => {
+              await deps.store.setPairing(null).catch(() => undefined)
+              setScreen({ kind: 'unpaired' })
+            }}
+          />
+        )}
       </main>
     </div>
   )
 }
 
-function Centered({ children }: { children: ReactNode }) {
+export function Centered({ children }: { children: ReactNode }) {
   return <div className="flex-1 flex flex-col items-center justify-center text-center gap-4">{children}</div>
 }
 
-function Problem({ children }: { children: ReactNode }) {
+export function Problem({ children }: { children: ReactNode }) {
   return (
     <div role="alert" className="flex gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive text-left">
       <TriangleAlert className="size-4 mt-0.5 shrink-0" aria-hidden />
       <span>{children}</span>
     </div>
+  )
+}
+
+/** The laptop hasn't connected yet: most often asleep, or its connection to Canopy is down. */
+export function SlowLaptop({ name }: { name: string }) {
+  return (
+    <p role="status" className="flex gap-2 rounded-xl bg-muted px-4 py-3 text-sm text-muted-foreground text-left">
+      <WifiOff className="size-4 mt-0.5 shrink-0" aria-hidden />
+      <span>
+        {name} hasn’t answered yet. Make sure it’s awake and online, with Canopy running. Still trying…
+      </span>
+    </p>
   )
 }
 
@@ -319,6 +341,7 @@ function PairingScreen({ screen, onDone }: { screen: Extract<Screen, { kind: 'pa
           </li>
         ))}
       </ul>
+      {screen.slow && !screen.error && screen.step !== 'confirm' && <SlowLaptop name={name} />}
       {screen.error && (
         <div className="w-full space-y-3">
           <Problem>{screen.error}</Problem>
@@ -357,6 +380,149 @@ function useRunnerOnline(deps: ListenDeps, runnerId: string): { online: boolean 
   return state
 }
 
+const ON_A_PHONE = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+
+/**
+ * Whether this site may use the microphone, without asking: 'denied' means a tap would
+ * fail, and the page can't ask again. Only the browser's settings can undo that, so say
+ * how before the tap rather than after it. Browsers that can't tell answer 'unknown'.
+ */
+export function useMicPermission(): PermissionState | 'unknown' {
+  const [state, setState] = useState<PermissionState | 'unknown'>('unknown')
+  useEffect(() => {
+    let status: PermissionStatus | null = null
+    let alive = true
+    const update = () => alive && status && setState(status.state)
+    navigator.permissions
+      ?.query({ name: 'microphone' as PermissionName })
+      .then((s) => {
+        status = s
+        update()
+        s.addEventListener('change', update)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+      status?.removeEventListener('change', update)
+    }
+  }, [])
+  return state
+}
+
+/**
+ * Where to turn the microphone back on, for the phone and browser this page is open in. A
+ * page can't open the browser's or the phone's settings itself, so the steps name the taps.
+ * Each one also says where the phone's own switch for the browser is, because that blocks
+ * the microphone in the same way and the site setting can't show it.
+ */
+export function micSettingsHelp(
+  ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  installed: boolean = runningInstalled(),
+  host: string = typeof location === 'undefined' ? 'this site' : location.host,
+): string {
+  const ios = /iPhone|iPad|iPod/i.test(ua)
+  if (installed && /Android/i.test(ua)) {
+    // An installed app has no address bar, but it shares the browser's setting for the site.
+    return `This app has no address bar, so open ${host} in Chrome, tap the icon left of the address → Permissions → Microphone → Allow, then come back here. If it already says Allow, open your phone’s Settings → Apps → Chrome → Permissions → Microphone → Allow.`
+  }
+  if (installed && ios) {
+    return 'On iPhone, open Settings → Apps → Safari → Microphone and choose Ask or Allow, then come back here and try again.'
+  }
+  if (ios && /CriOS/i.test(ua)) {
+    return 'On iPhone in Chrome: open Settings → Apps → Chrome and turn Microphone on, then come back and try again.'
+  }
+  if (ios && /FxiOS/i.test(ua)) {
+    return 'On iPhone in Firefox: open Settings → Apps → Firefox and turn Microphone on, then come back and try again.'
+  }
+  if (ios) {
+    return 'On iPhone: tap aA in the address bar → Website Settings → Microphone → Allow. If that doesn’t show it, check Settings → Apps → Safari → Microphone.'
+  }
+  if (/Android/i.test(ua)) {
+    const [browser, steps] = /SamsungBrowser/i.test(ua)
+      ? ['Samsung Internet', 'tap the lock left of the address → Permissions → Microphone → Allow']
+      : /Firefox/i.test(ua)
+        ? ['Firefox', 'tap the lock left of the address and switch Microphone to Allowed']
+        : /EdgA/i.test(ua)
+          ? ['Edge', 'tap the lock left of the address → Permissions → Microphone → Allow']
+          : ['Chrome', 'tap the icon left of the address → Permissions → Microphone → Allow']
+    return `On Android in ${browser}: ${steps}, then try again. If Microphone isn’t there or is already allowed, open your phone’s Settings → Apps → ${browser} → Permissions → Microphone → Allow.`
+  }
+  return 'Click the icon left of the address bar, set Microphone to Allow, then reload.'
+}
+
+function runningInstalled(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false
+  return ['standalone', 'fullscreen', 'minimal-ui'].some((m) => window.matchMedia(`(display-mode: ${m})`).matches)
+}
+
+/** Whether this browser has Chrome's <usermedia> element, which can undo a blocked microphone in place. */
+export function canRegrantMic(): boolean {
+  return typeof window !== 'undefined' && 'HTMLUserMediaElement' in window
+}
+
+interface UserMediaElement extends HTMLElement {
+  setConstraints?(c: MediaStreamConstraints): void
+  readonly stream?: MediaStream | null
+}
+
+/**
+ * The browser's own "allow the microphone" button. A page can't reopen a permission the
+ * person blocked, but this element can: tapping it shows the browser's screen for turning
+ * it back on, right here. Once allowed, the stream it hands over is closed at once (the
+ * recording opens its own) and `onAllowed` runs. Draws nothing where the browser lacks it,
+ * so the written steps beside it stay the way there.
+ */
+export function MicRegrant({ onAllowed }: { onAllowed: () => void }): JSX.Element | null {
+  const ref = useRef<UserMediaElement | null>(null)
+  const allowed = useRef(onAllowed)
+  allowed.current = onAllowed
+  const supported = canRegrantMic()
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Chrome takes an object per kind here, never `true` or `false` (those throw), and
+    // asks for only the kinds named. Whatever it makes of this, it must not break the page.
+    try {
+      el.setConstraints?.({ audio: {} })
+    } catch {
+      // The button still works with the browser's defaults.
+    }
+    const onStream = () => {
+      el.stream?.getTracks().forEach((t) => t.stop())
+      allowed.current()
+    }
+    el.addEventListener('stream', onStream)
+    return () => el.removeEventListener('stream', onStream)
+  }, [supported])
+  if (!supported) return null
+  return createElement('usermedia', {
+    ref,
+    className: 'block mx-auto rounded-xl bg-primary text-primary-foreground px-5 py-3 text-base font-medium',
+  })
+}
+
+/**
+ * The microphone is blocked for this site. Where the browser can undo that in place, its
+ * button comes first and the written steps are the fallback; elsewhere the steps are all
+ * there is.
+ */
+export function MicBlocked({ onAllowed = () => undefined }: { onAllowed?: () => void }): JSX.Element {
+  if (!canRegrantMic()) {
+    return (
+      <Problem>
+        Microphone access is turned off for this site, and the page can’t ask again. {micSettingsHelp()}
+      </Problem>
+    )
+  }
+  return (
+    <div className="space-y-3">
+      <Problem>The microphone is blocked for this site. Tap the button below to allow it.</Problem>
+      <MicRegrant onAllowed={onAllowed} />
+      <p className="text-xs text-muted-foreground">If that doesn’t work: {micSettingsHelp()}</p>
+    </div>
+  )
+}
+
 function Home({
   deps, pairing, noticeAccepted, onAccept, onUnpair, onRecord,
 }: {
@@ -368,6 +534,7 @@ function Home({
   onRecord: (source: AudioSource) => void
 }) {
   const { online, gone } = useRunnerOnline(deps, pairing.runner_id)
+  const mic = useMicPermission()
   const [confirmUnpair, setConfirmUnpair] = useState(false)
   const canRecord = online === true && noticeAccepted
   return (
@@ -394,6 +561,8 @@ function Home({
             : `Open ${pairing.laptop_name} and make sure Canopy Runner is running. This updates by itself.`}
         </p>
       )}
+
+      {mic === 'denied' && <MicBlocked />}
 
       {!noticeAccepted && (
         <section className="rounded-2xl border border-warning/30 bg-warning/10 px-4 py-4 space-y-3">
@@ -465,7 +634,7 @@ function useMeetingView(meeting: Meeting): MeetingView {
 }
 
 /** Keeps the screen on while `active`; re-asked when the page is shown again. */
-function useWakeLock(active: boolean) {
+export function useWakeLock(active: boolean) {
   useEffect(() => {
     if (!active || !('wakeLock' in navigator)) return
     let lock: { release(): Promise<void> } | null = null
@@ -490,7 +659,7 @@ function useWakeLock(active: boolean) {
   }, [active])
 }
 
-function useClock(since: number | undefined, running: boolean): string {
+export function useClock(since: number | undefined, running: boolean): string {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!running) return
@@ -505,7 +674,7 @@ function useClock(since: number | undefined, running: boolean): string {
   return h ? `${h}:${String(mm).padStart(2, '0')}:${ss}` : `${mm}:${ss}`
 }
 
-function Meter({ level }: { level: number }) {
+export function Meter({ level }: { level: number }) {
   const bars = 24
   return (
     <div className="flex items-end justify-center gap-[3px] h-8" aria-hidden>
@@ -522,7 +691,7 @@ function speakerName(view: MeetingView, n: number): string {
   return view.speakers[n] || `Speaker ${n + 1}`
 }
 
-function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => void }) {
+function MeetingScreen({ meeting, onBack, onRepair }: { meeting: Meeting; onBack: () => void; onRepair: () => void }) {
   const view = useMeetingView(meeting)
   const live = view.status === 'recording' || view.status === 'waiting' || view.status === 'connecting'
   useWakeLock(live || view.status === 'ending')
@@ -536,8 +705,16 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
     if (el) el.scrollTop = el.scrollHeight
   }, [view.segments.length, view.partial])
 
-  if (view.status === 'saved' || view.status === 'discarded' || view.status === 'failed') {
-    return <Ended view={view} onBack={onBack} />
+  // Back from the lock screen or another app: carry on if the browser lets the old
+  // microphone run again; otherwise the paused banner asks for a tap.
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && void meeting.resumeMic(false)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [meeting])
+
+  if (view.status === 'saved' || view.status === 'unsaved' || view.status === 'discarded' || view.status === 'failed') {
+    return <Ended view={view} onBack={onBack} onRepair={onRepair} />
   }
 
   return (
@@ -560,9 +737,41 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
           <Laptop className="size-3.5" aria-hidden />
           <span className="truncate">{view.laptopName}</span>
           <span aria-hidden>·</span>
-          <span>{view.reconnecting ? 'Reconnecting…' : view.laptopConnected ? 'connected' : 'not connected yet'}</span>
+          <span>
+            {view.reconnecting
+              ? 'Reconnecting…'
+              : view.laptopConnected
+                ? 'connected'
+                : view.status === 'recording'
+                  ? 'away — still recording here'
+                  : 'not connected yet'}
+          </span>
+          {view.backlog >= 2 && (
+            <span className="ml-auto tabular-nums" title="Recorded on this phone; it goes to your laptop when the connection is back">
+              {Math.round(view.backlog)} s held here
+            </span>
+          )}
+        </div>
+        <div className={`text-xs text-muted-foreground ${ON_A_PHONE ? '' : 'hidden'}`}>
+          Keep this page open: locking the phone or switching apps pauses the recording.
         </div>
       </section>
+
+      {view.status === 'waiting' && view.laptopSlow && <SlowLaptop name={view.laptopName} />}
+
+      {view.micPaused && view.status !== 'ending' && (
+        <section role="alert" className="rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 space-y-2.5">
+          <p className="text-sm text-foreground">
+            Your phone paused the microphone, so nothing is being recorded. This happens when the screen locks, a call
+            comes in, or you switch apps.
+          </p>
+          {view.error && <p className="text-sm text-destructive">{view.error}</p>}
+          <Button className="w-full h-12 rounded-xl gap-2" onClick={() => void meeting.resumeMic()}>
+            <Mic className="size-4" aria-hidden />
+            Resume recording
+          </Button>
+        </section>
+      )}
 
       {view.chatUrl && (
         <a
@@ -677,7 +886,7 @@ function RenameSheet({ current, onCancel, onSave }: { current: string; onCancel:
   )
 }
 
-function Ended({ view, onBack }: { view: MeetingView; onBack: () => void }) {
+function Ended({ view, onBack, onRepair }: { view: MeetingView; onBack: () => void; onRepair: () => void }) {
   return (
     <Centered>
       {view.status === 'saved' && (
@@ -690,6 +899,18 @@ function Ended({ view, onBack }: { view: MeetingView; onBack: () => void }) {
               Open the meeting <ExternalLink className="size-4" aria-hidden />
             </a>
           )}
+          {view.chatUrl && (
+            <a href={view.chatUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-primary underline underline-offset-4">
+              Open the agent chat <ExternalLink className="size-4" aria-hidden />
+            </a>
+          )}
+        </>
+      )}
+      {view.status === 'unsaved' && (
+        <>
+          <span className="grid place-items-center size-16 rounded-full bg-warning/15 text-warning"><TriangleAlert className="size-7" aria-hidden /></span>
+          <h1 className="text-xl font-semibold">Recording ended</h1>
+          <p className="text-sm text-muted-foreground">{view.note ?? `${view.laptopName} didn’t confirm it saved the meeting.`}</p>
           {view.chatUrl && (
             <a href={view.chatUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-primary underline underline-offset-4">
               Open the agent chat <ExternalLink className="size-4" aria-hidden />
@@ -714,9 +935,13 @@ function Ended({ view, onBack }: { view: MeetingView; onBack: () => void }) {
           )}
         </>
       )}
-      <Button className="w-full h-12 rounded-xl text-base mt-4" onClick={onBack}>
-        {view.status === 'failed' ? 'Back' : 'Record another'}
-      </Button>
+      {view.unpaired ? (
+        <Button className="w-full h-12 rounded-xl text-base mt-4" onClick={onRepair}>Pair again</Button>
+      ) : (
+        <Button className="w-full h-12 rounded-xl text-base mt-4" onClick={onBack}>
+          {view.status === 'failed' ? 'Back' : 'Record another'}
+        </Button>
+      )}
     </Centered>
   )
 }

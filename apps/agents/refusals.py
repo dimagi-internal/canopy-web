@@ -198,6 +198,11 @@ def _profile_not_open(i: _In):
     if name == published_profiles.SESSION_REVIEW:
         why = f"a review chat needs read access to {i.slug}, and {i.say.your} place on its access list does not give it"
         how = f"Have {i.admins} give {i.say.you} the read only role on {i.slug}'s access list."
+    elif name == published_profiles.DOC_COMMENT:
+        why = (f"answering a Google Docs comment needs read access to {i.slug}, and {i.slug}'s access list "
+               "gives Google's comment notifications none")
+        how = (f"Have {i.admins} give comments-noreply@docs.google.com the read only role on {i.slug}'s access "
+               "list. It only ever answers on the Doc that was commented on.")
     elif name and published_profiles.is_read_mode(name):
         why = f"{i.say.your} place on {i.slug}'s access list does not open read mode"
         how = f"Have {i.admins} give {i.say.you} the read only role on {i.slug}'s access list."

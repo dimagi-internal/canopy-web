@@ -793,3 +793,123 @@ def test_a_run_saves_a_private_meeting_only_if_its_manifest_declares_it(world):
 def test_a_run_without_the_op_cannot_save_a_meeting(world):
     install(world, released(world))
     assert call(world, start(world), "meetings.save", {"text": "we ship"})["status"] == 403
+
+
+# --- account-menu items ------------------------------------------------------------------
+
+MEETING = {"label": "Meeting", "path": "/listen"}
+VOICE = {"key": "voice-session", "label": "Voice session", "path": "/listen/voice", "pick": "agent",
+         "shown_when": "voice_session", "links": [MEETING]}
+
+
+def with_menu(**over) -> dict:
+    m = manifest(**over)
+    m["settings"] = {**m["settings"], "voice_session": {"type": "bool", "label": "Voice session in my menu"}}
+    return {**m, "menu": [VOICE]}
+
+
+def test_a_menu_item_is_checked_for_shape_and_left_out_of_what_people_accept():
+    m = pkg.read(package(with_menu())).manifest
+    assert m["menu"] == [VOICE]
+    assert pkg.read(package(manifest())).manifest["menu"] == []
+    # Adding or rewording an item mustn't make everyone accept again: it links to canopy-web's own page.
+    assert trust.digest(m) == trust.digest({**m, "menu": []})
+    for bad in ({"path": "https://evil.example/x"}, {"path": "//evil.example"}, {"path": "/listen/../admin"},
+                {"pick": "person"}, {"shown_when": "brief"}, {"shown_when": "nope"}, {"label": ""},
+                {"key": "Not A Key"}, {"colour": "red"},
+                # Links sit beside an item's agents, so only an agent-picking item has them.
+                {"pick": ""}, {"links": [{"label": "Meeting", "path": "https://evil.example"}]},
+                {"links": [{"label": "", "path": "/listen"}]}, {"links": [{**MEETING, "colour": "red"}]},
+                {"links": [MEETING] * 4}, {"links": "Meeting"}):
+        with pytest.raises(pkg.BadPackage, match="menu"):
+            pkg.read(package({**with_menu(), "menu": [{**VOICE, **bad}]}))
+    with pytest.raises(pkg.BadPackage, match="menu"):
+        pkg.read(package({**with_menu(), "menu": [VOICE, VOICE]}))
+
+
+def _menu(world, user=None) -> dict:
+    r = client(user or world["person"]).get("/api/local-apps/menu/")
+    assert r.status_code == 200, r.content
+    return r.json()
+
+
+def test_a_menu_item_shows_only_once_its_person_turns_it_on(world):
+    install(world, released(world, with_menu()))
+    assert _menu(world) == {"items": []}
+    inst = LocalAppInstallation.objects.get(user=world["person"])
+    r = client(world["person"]).patch(
+        f"/api/local-apps/installations/{inst.pk}", {"settings": {"voice_session": True}}, content_type=J
+    )
+    assert r.status_code == 200, r.content
+    menu = _menu(world)
+    assert menu["items"] == [{"app": "meeting-assistant", "app_name": "Meeting assistant", "key": "voice-session",
+                              "label": "Voice session", "path": "/listen/voice", "pick": "agent",
+                              "agents": [{"slug": "helper", "name": "Helper", "workspace": "dimagi"}],
+                              "chosen": False, "links": [MEETING]}]
+    # Someone else's apps add nothing to your menu.
+    assert _menu(world, world["other"])["items"] == []
+
+
+def test_a_menu_item_shows_once_however_many_computers_have_the_app(world):
+    sub = released(world, with_menu())
+    install(world, sub, {"agent": "helper", "voice_session": True})
+    world["laptop"] = Runner.objects.create(name="desk", kind=Runner.EMDASH, owner=world["person"])
+    install(world, sub, {"agent": "helper", "voice_session": True})
+    assert LocalAppInstallation.objects.filter(user=world["person"]).count() == 2
+    assert [i["key"] for i in _menu(world)["items"]] == ["voice-session"]
+
+
+def test_a_withdrawn_app_adds_nothing_to_the_menu(world):
+    sub = released(world, with_menu())
+    install(world, sub, {"agent": "helper", "voice_session": True})
+    services.revoke(sub, reason="bad", user=world["root"])
+    assert _menu(world)["items"] == []
+
+
+def test_the_menu_is_only_for_the_person():
+    assert Client().get("/api/local-apps/menu/").status_code in (401, 403)
+    assert Client().get("/api/local-apps/menu/agents/").status_code in (401, 403)
+
+
+def _choose(world, agents, user=None, item="voice-session"):
+    return client(user or world["person"]).put(
+        f"/api/local-apps/menu/meeting-assistant/{item}/agents", {"agents": agents}, content_type=J
+    )
+
+
+def test_a_person_chooses_which_agents_a_menu_item_lists(world):
+    install(world, released(world, with_menu()), {"agent": "helper", "voice_session": True})
+    scribe = Agent.objects.create(slug="scribe", name="Scribe", workspace=world["ws"], owner=world["person"],
+                                  user=User.objects.create_user("scribe-bot", "scribe@dimagi-ai.com", "pw"))
+    r = client(world["person"]).get("/api/local-apps/menu/agents/")
+    assert [a["slug"] for a in r.json()["agents"]] == ["helper", "scribe"]
+    assert [a["slug"] for a in _menu(world)["items"][0]["agents"]] == ["helper", "scribe"]
+
+    # Their order, not the directory's; a repeat counts once.
+    r = _choose(world, [{"workspace": "dimagi", "slug": "scribe"}, {"workspace": "dimagi", "slug": "helper"},
+                        {"workspace": "dimagi", "slug": "scribe"}])
+    assert r.status_code == 200, r.content
+    item = r.json()["items"][0]
+    assert ([a["slug"] for a in item["agents"]], item["chosen"]) == (["scribe", "helper"], True)
+
+    # An agent they lose drops out of the list, without undoing the choice.
+    scribe.delete()
+    assert [a["slug"] for a in _menu(world)["items"][0]["agents"]] == ["helper"]
+
+    # Empty goes back to every agent they may use.
+    item = _choose(world, []).json()["items"][0]
+    assert ([a["slug"] for a in item["agents"]], item["chosen"]) == (["helper"], False)
+
+
+def test_a_menu_choice_is_only_of_agents_you_may_use_and_items_in_your_menu(world):
+    install(world, released(world, with_menu()), {"agent": "helper", "voice_session": True})
+    outside = Workspace.objects.create(slug="elsewhere", display_name="Elsewhere", created_by=world["root"])
+    Agent.objects.create(slug="secret", name="Secret", workspace=outside, owner=world["root"],
+                         user=User.objects.create_user("secret-bot", "secret@dimagi-ai.com", "pw"))
+    r = _choose(world, [{"workspace": "elsewhere", "slug": "secret"}])
+    assert r.status_code == 403 and "elsewhere/secret" in r.json()["detail"]
+    assert _choose(world, [{"workspace": "dimagi", "slug": "helper"}], item="nope").status_code == 404
+    # Someone without the app has no such item.
+    assert _choose(world, [{"workspace": "dimagi", "slug": "helper"}], user=world["other"]).status_code == 404
+    too_many = [{"workspace": "dimagi", "slug": f"a{i}"} for i in range(13)]
+    assert _choose(world, too_many).status_code == 422

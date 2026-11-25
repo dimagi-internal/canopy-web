@@ -38,6 +38,8 @@ function isPublicLinkRoute(): boolean {
     path.startsWith('/invite/') ||
     path === '/about' ||
     path === '/get-started' ||
+    // The browser extension's side panel (src/ext/): framed, so it shows its own sign-in.
+    path === '/ext/panel' || path === '/ext/panel/' ||
     isScopedViewerPath(path)
   )
 }

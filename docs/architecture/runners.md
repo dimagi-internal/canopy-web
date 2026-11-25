@@ -25,6 +25,7 @@ same functions, so they cannot disagree.
    A computer without the runner app gets a `computer` runner made for it that only holds its device
    keys: it never claims or heartbeats and is left out of every fleet list, routing picker and health
    report. Detail: [`access-direct-use-and-admission.md`](access-direct-use-and-admission.md) → "Direct use of an agent".
+   A stored agent's plugin is cloned from canopy's own repository of it instead of GitHub ([stored-agents.md](stored-agents.md)).
 2. **Let it run on its own, on a runner.** A laptop running the runner app or a fleet cloud box.
    Schedules, mail and dispatches start these turns; schedules fire from canopy-web itself, so no
    laptop has to be awake.
@@ -144,9 +145,11 @@ The stack parameter `Runners` lists them (`cloud_runner.parse_runners`); `up.sh 
 
 A runner's turn cannot reach the instance role (it reads the runner seed secrets). `runner/ec2/aws_broker.py`
 (root, uid from `SO_PEERCRED`) assumes ONLY the read-only roles it names and hands the runner an hour of keys
-in `credential_process` shape; its module docstring is the spec. **It never vends `labs-readwrite`**: the
-agent a runner names is a claim, so that role comes only from canopy-web, which checks the agent and
-`settings.CANOPY_AWS_ROLE_AGENTS` (`apps/agents/api_aws.py`). The canopy CLI asks `canopy aws credentials --role`.
+in `credential_process` shape; its module docstring is the spec. **It never vends a fenced role**
+(`labs-readwrite`, `labs-config`): the agent a runner names is a claim, so a fenced role comes only from
+canopy-web, which checks the agent and the live grant a person approved for it (`apps/agents/api_aws.py`,
+`apps/agents/aws_grants.py`). The canopy CLI asks `canopy aws credentials --role`; for a fenced role the agent
+first asks `canopy aws request --role <name> --reason "..."`, and a workspace owner approves it with a passkey.
 
 ### The job broker (`canopy-job-broker`)
 
@@ -201,6 +204,42 @@ from canopy-web. The flow is in the module docstrings of `apps/harness/runner_pr
 - The outcome is `added` when the project shows in the box's heartbeat report (observation discharges an ask
   whoever made the project), else `failed` with the box's reason; a failure never marks the runner not-ready.
 - A repo that is not an agent's also needs the owner's opt-in before repo work routes to it.
+
+## A stored agent on a runner
+
+A stored agent's definition is a git repository canopy-web hosts, not a GitHub repo. A runner's clone of it
+has canopy's origin (its `definition.git_url`, `<base>/git/<workspace>/<slug>.git`, which the canopy CLI
+fetches with the box's own token in a header; or `canopy://<workspace>/<slug>` from a CLI that unpacked an
+archive) and HEAD on `origin/main`, so everything downstream of a clone is unchanged. The server half is
+`apps/harness/stored_agents.py`. Rules:
+
+- **The claim says so.** `ClaimedTurnOut.definition` is `{source: "stored", revision, root_sha256}` for a
+  stored agent's turn, `{source: "repo", …}` for a repo agent's, and null for a turn with no agent. A stored
+  agent's turns get no GitHub identity (`turn_github_token` answers 409) and no `CANOPY_AGENT_REPO`.
+- **Cloud box:** `canopy agent prepare --runner` clones it (`cloud_runner._ensure_stored_clone`, also over a
+  GitHub clone of an agent converted since), and `canopy agent sync --runner` replaces `git pull`
+  (`cloud_runner._sync_stored_clone`, reached through `_fetch_clone`): the box never runs git against
+  canopy's origin itself (`cloud_runner._is_canopy_origin`). A turn never runs without the clone or on a
+  canopy CLI too old to sync one: it fails saying to update canopy (`cloud_runner.StoredAgentError`). Any
+  other failed sync runs the last synced revision and turns the `clones` check amber, as a failed pull does.
+  Confined turns work the same way: no credential is involved.
+- **Exported to GitHub since:** the claim says `source: "repo"` while the box's clone still has canopy's
+  origin, so the clone is moved aside to `WORK_DIR/retired-clones/` (its ignored files kept) and the agent
+  is cloned again from GitHub with the turn's identity (`cloud_runner._retire_stored_clone`). A server that
+  says nothing about the source leaves a canopy clone as it is.
+- **Laptop:** the checkout is `~/.canopy/agents/<slug>`, brought to the live revision before a new session
+  is cut from it (`runner/canopy_runner/canopy_runner/stored_agents.py::ensure_checkout`). Where emdash is
+  on the box, that checkout is also the agent's emdash project, named after its slug: the runner adds it
+  through emdash's Add Project dialog the first time a turn needs it and checks emdash's DB for it after
+  (`stored_agents.py::ensure_emdash_project`; a project of that name at another folder is refused, never
+  driven). emdash then drives the agent's new and confined turns exactly as it drives a repo agent's, with
+  the same caller pointer, profile and native permission rules. Only an emdash-runtime box without emdash
+  runs a stored agent's new thread headless (`desktop.maybe_execute`), and a caller's confined turn never
+  runs headless. Routing never refuses a laptop for lacking the project (`routing.cannot_serve`). A laptop
+  whose runner predates this does not report `stored_projects` on its heartbeat and is never handed a
+  stored agent's confined turn (`apps/harness/clis.py::laptop_cannot_confine_stored`); it waits for a
+  runner that can take it. Once exported, the agent is a repo agent and runs in its emdash project like
+  any other.
 
 ## An agent's state document
 

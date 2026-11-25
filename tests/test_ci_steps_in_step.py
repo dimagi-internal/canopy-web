@@ -7,6 +7,8 @@ above the copy says "keep them in step"; this is that, enforced.
 """
 from __future__ import annotations
 
+import re
+
 import yaml
 
 from tests._source import ROOT
@@ -31,7 +33,9 @@ def _job_named(prefix: str) -> dict:
 
 
 def _step_for(job: dict, needle: str) -> dict:
-    (step,) = [s for s in job["steps"] if needle in str(s.get("run", ""))]
+    # The command as a whole word: `manage.py check` is not `manage.py check_migration_rollout`.
+    command = re.compile(re.escape(needle) + r"(\s|$)")
+    (step,) = [s for s in job["steps"] if command.search(str(s.get("run", "")))]
     return step
 
 

@@ -151,15 +151,21 @@ def for_scope(scope, *, via: str) -> Initiator:
 def channel(request, default: str) -> str:
     """The channel a request came through. An app-delegated or contact token
     means an embedding host's widget, and names the host — "chat" would hide
-    that the person was on connect-labs rather than in canopy.
+    that the person was on connect-labs rather than in canopy. A RELAY contact
+    token (`ContactToken.channel`) is the host carrying the conversation over a
+    channel of its own: `relay:<site>:<channel>`.
 
     Takes a WebSocket scope (a dict) too: a widget's chat socket is the same
     host's widget as its REST sends."""
     if isinstance(request, dict):
         app = request.get("delegated_app")
+        relay = request.get("relay_channel") or ""
     else:
         app = getattr(request, "delegated_app", None)
-    return f"widget:{app.name}" if app is not None else default
+        relay = getattr(request, "relay_channel", "") or ""
+    if app is None:
+        return default
+    return f"relay:{app.name}:{relay}" if relay else f"widget:{app.name}"
 
 
 def _agent_login_of(user) -> str | None:

@@ -5,6 +5,9 @@ import uuid
 
 from ninja import Schema
 
+from .runner_protocol import CloseOut, HandoffDueOut, MenuAnswerOut, SessionInterruptOut
+from .runners import RunnerProjectAskOut
+
 
 class StreamDescriptorOut(Schema):
     session_id: str
@@ -129,3 +132,25 @@ class BackfillWriteOut(Schema):
 # ---------------------------------------------------------------------------
 # Deferred turns — what a task runs when it is approved
 # ---------------------------------------------------------------------------
+
+
+class RunnerSyncOut(Schema):
+    """`GET /runners/{id}/sync`: every piece of work this box owes, in one read.
+
+    Each list is the same rows its own drain route answers (`/session-interrupts`,
+    `/menu-answers`, `/closes`, `/backfills`, `/handoffs`, `/streams`); `sections`
+    holds what other apps register (`runner_sync.register_section`, e.g. `listen`).
+    `mint_due` says `/mint/claim` has something (claiming it consumes a code, so it
+    stays its own call). `version` is the ETag's number."""
+
+    version: int
+    interrupts: list[SessionInterruptOut] = []
+    answers: list[MenuAnswerOut] = []
+    closes: list[CloseOut] = []
+    backfills: list[BackfillDescriptorOut] = []
+    handoffs: list[HandoffDueOut] = []
+    streams: list[StreamDescriptorOut] = []
+    cancel_turn_ids: list[str] = []
+    add_projects: list[RunnerProjectAskOut] = []
+    mint_due: bool = False
+    sections: dict[str, list[dict]] = {}

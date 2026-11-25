@@ -83,7 +83,7 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [prfHint, setPrfHint] = useState<boolean | null>(null)
-  const [mode, setMode] = useState<'passphrase' | null>(null)
+  const [mode, setMode] = useState<'passphrase' | 'new-test-key' | null>(null)
   const [pass1, setPass1] = useState('')
   const [pass2, setPass2] = useState('')
   const [kit, setKit] = useState<string | null>(null)
@@ -151,7 +151,9 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
     e.preventDefault()
     if (problem || mismatch || !pass1) return
     const replace = Boolean(ks?.exists)
-    if (ks?.exists && ks.public_jwk) void run(() => addPassphraseToVaultKey(prompt, pass1))
+    // An agent's test key is never re-sealed in place: a new passphrase is a new key.
+    if (mode === 'new-test-key') void run(() => setUpVaultKeyWithPassphrase(pass1, true))
+    else if (ks?.exists && ks.public_jwk) void run(() => addPassphraseToVaultKey(prompt, pass1))
     else void run(() => setUpVaultKeyWithPassphrase(pass1, replace))
   }
 
@@ -222,11 +224,19 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
       ) : (
         <div className="space-y-2">
           {ks.test_key && (
-            <p className="text-xs text-warning" data-testid="vault-key-test-key">
-              Agent test key: this login is an agent&rsquo;s, and its key opens only the private conversations it is in.
-            </p>
+            <div className="space-y-2">
+              <p className="text-xs text-warning" data-testid="vault-key-test-key">
+                Agent test key: this login is an agent&rsquo;s. Its key opens only the private conversations it is in
+                and its own connections. A new key starts with none of them.
+              </p>
+              <Button size="sm" variant="outline" disabled={busy} data-testid="vault-key-new-test-key"
+                      onClick={() => setMode(mode === 'new-test-key' ? null : 'new-test-key')}>
+                Make a new key
+              </Button>
+              {mode === 'new-test-key' && passphraseForm}
+            </div>
           )}
-          <table className="w-full text-xs">
+          {!ks.test_key && <table className="w-full text-xs">
             <thead>
               <Tr head="plain">
                 <Th>Opens your agents&rsquo; secrets</Th>
@@ -249,8 +259,8 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
                 </Td>
               </Tr>
             </tbody>
-          </table>
-          <div className="flex flex-wrap gap-2">
+          </table>}
+          {!ks.test_key && <div className="flex flex-wrap gap-2">
             {unsealed.length > 0 && passkeyOk && (
               <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(() => addPasskeyToVaultKey(prompt))}
                       data-testid="vault-key-add-passkey">
@@ -265,7 +275,7 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
                     onClick={() => { setMode(null); setError(''); setNotice(''); setCreatingKey(true) }}>
               Create a new vault key
             </Button>
-          </div>
+          </div>}
           {mode === 'passphrase' && passphraseForm}
           {creatingKey && (
             <NewVaultKey userId={ks.user_id} passkeyOk={passkeyOk} prompt={prompt}

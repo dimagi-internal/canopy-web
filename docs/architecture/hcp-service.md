@@ -28,7 +28,7 @@ self-audit against the spec is `hcp-conformance.md`.
 | A person's own instance, with or without a workspace | `PersonFact.workspace` NULL = a **personal** entry (`contacts/0020`); `/people/me` |
 | Client registry (superusers) | `HcpClient`; `/api/hcp-admin/clients` (`hcp_clients_api.py`); page `/hcp-clients` (`HcpClientsPage.tsx`): register an app, disable it, view and set its `allowed_scopes` from the scopes the service publishes (`scopes_supported` in the RFC 8414 metadata) |
 | Authorization server | `hcp_oauth.py`, `hcp_oauth_views.py`; issuer `<origin>/api/hcp`; PKCE, token-endpoint redirect_uri and one-time redemption shared with the MCP sign-in in `apps/common/oauth_core.py` |
-| Consent screen | `templates/contacts/hcp_consent.html` (act 1), `hcp_keep.html` (act 2) |
+| Consent screen | `apps/contacts/templates/contacts/hcp_consent.html` (act 1), `hcp_keep.html` (act 2) |
 | Tokens | `HcpToken` (access 1 h; refresh rotates), `HcpAuthorizationCode` (10 min, single use) |
 | Bearer access | `apps/tokens/middleware.py` → `request.hcp_access`; `hcp_api._principal` |
 | Revocation notices | `HcpRevocationDelivery`; signed, retried from the off-request clock; all in `hcp_webhooks.py` (`hcp_webhooks.attempt` is where to start) |
@@ -618,6 +618,61 @@ form is under "Seeing and tuning search"). Each has its usage in the module docs
 | `hcp_embed [--dry-run]` | Gives every served entry a vector from the current model. Prints the zero-retention check first and refuses on a no. | Right after turning embeddings on or changing `HCP_EMBEDDINGS_MODEL`. Searches fill missing vectors a batch at a time on their own. |
 | `hcp_explain --person <email> "<question>" [--floor --weight --boost --project --limit]` | Scores every one of a person's entries against a question and says why each did or did not come back. Read-only, but the read lands in the person's own audit. | Tuning search. |
 | `hcp_backfill_searches [--dry-run]` | Rebuilds a `PersonSearch` for each search that ran before searches were recorded, from the audit (`preference.read` rows sharing a `retrievalId`). Idempotent; the rebuilt rows are unscored. | Once, if old searches should show on `/people/me` → What happened. |
+
+## HCP v2 (draft 3): canopy's model, v1 as the wire
+
+canopy's model is HCP v2's (spec `2.0-draft-3`, `loyalagents/hcp-spec`, invited-partner-review
+material: sections are cited here and in code, spec text is never copied). The v1 wire above stays
+exactly what every caller uses (`hcp_addPreference` and the other MCP tools, `/api/hcp/v1/`, the
+caller-context envelope, the agent closeout write): it is an adapter over the same `PersonFact`
+rows, and a v1 call that names no v2 thing is served the v2 default. `/api/hcp/v2/`
+(`hcp_v2_api.py`) is the v2 binding, HTTP only: v2 governance operations (1.6) are the person's,
+over HTTP, and are never MCP tools (each is listed in `apps/mcp/api_tools.py`). Its context clients
+are canopy's own agents; an OAuth client of the HCP service is not served there (its `hcpat_` token
+opens `/api/hcp/v1/` only), and both discovery documents say so (`hcp.conformance.V2_OAUTH_CLIENTS`).
+
+**Governance is the person's browser session or a PAT, and nothing else.** Every person-only
+route, v1 (audit, export, grants) and v2 (rules, directives, confirmation, purposes, audit, export,
+disclosures), goes through `hcp_api._person_principal`, which accepts only the credential kinds in
+`hcp_api.GOVERNANCE_KINDS` (`session`, `pat`) and refuses, besides any agent or turn
+(`acting_person.refusal`), an `oauth` token (a connector or a self-registered MCP client acting for
+the person, which otherwise reaches everything its user may), a site's delegated token, an act-as
+token, a contact's token and an `hcpat_` token.
+
+| v2 concept | Where | What the v1 adapter does |
+|---|---|---|
+| The entry form (4.2) | `hcp.v2.to_v2_entry` renders a `PersonFact` as content / assertion / classification / evidence / record | v1's grouped envelope (`hcp.to_entry`) is unchanged |
+| Purposes (4.2.6, 6.1.5.2, 7.1) | `hcp.purposes`; `PersonGrant.purposes`, `PersonFact.permitted_purposes` (the writer's) and `PersonFact.restricted_purposes` (the person's, `hcp.restrict_purposes`) | v1 `purpose` stays free text for the audit; the read runs under the grant's own default code (`hcp.read_purpose`); `purposeCode` / `permittedPurposes` are optional additions |
+| Relationships (4.2.3) | `EntryRelationship`, `hcp.relationships`; `derivedFrom` may name another entry or a source `(kind, ref)` (a session), so a memory learned from a session can say so. A client naming an entry needs read on it; a `contradicts` or `supersedes`, which change what every client is served of the target, need write on the target's category | `hcp_addPreference` takes an optional `derivedFrom` |
+| Confirmation and standing (3.8, 4.7.1) | `EntryConfirmation`, `hcp.confirmations`; `POST /api/hcp/v2/entries/{id}/confirmation` (person, HTTP only) | v1 `userVerified` = the person wrote it or confirmed this version |
+| Conflicts (4.7, 15) | `hcp.detect_conflicts`, `hcp.reevaluate` write `contradicts` relationships; `hcp.CONFLICT_DETECTION`. What a conflict changes follows the form of the write that found it (below) | v1 callers keep v1's rule: an inference against a declared entry is held, whoever wrote the declaration |
+| Standing rules (6.3) | `StandingRule`, `hcp.rules`; `/api/hcp/v2/rules` (person, HTTP only). Enforced when a grant is issued (`hcp.grants._record_grant`, `hcp_oauth.scopes_after_rules`: the grant simply omits denied categories, or is refused when none remain) and on every request (`hcp.enforce_rules`, `hcp.allows`, `hcp.within_grant`, `rules.permitted`): a rule set after a grant fails its next read, and revokes it when it covers everything it reaches (`hcp.set_standing_rule`) | a v1 read or write the rule covers is 403 `scope-denied`, like any out-of-scope one |
+| Directives (6.4) | `Directive`; `/api/hcp/v2/directives`; delivered as `directives` in every v1 search / get result for a client, in the caller-context envelope's `person` block, and named in the read's audit detail | additive key; a person's own reads carry none |
+| Operators and claims | `HcpClient.operator_id`, `HcpClient.claims` (set by a canopy admin from what the operator attests); canopy's own agents are the operator `hcp.rules.PROVIDER_OPERATOR` and claim nothing | |
+| Disclosure (7.4) | `hcp.disclosure.to_disclosure`: what a context client receives over `/api/hcp/v2/` (content, assertion, only the categories its grant covers, `standing`, a grant-scoped `ref` from `hcp.disclosure.ref_for`, `useUntil`); never the id, subject, status or provenance | the v1 envelope is unchanged; a v1 read adds `canopy:useUntil` to `record.metadata` |
+| Use-until (7.6) | `hcp.disclosure.use_until`: an explicit time, else 10% of the entry's age, a 1 h floor, 30 d (24 h for a High category) ceilings, and 1 h for a client with no notification endpoint (`hcp.disclosure.has_notification_endpoint`: canopy's own agents have none, so what they read is good for an hour; an OAuth client with a webhook gets the full range). Told before the act: the consent screen and the session prompt | |
+| Disclosure summary (8.6) | `hcp.disclosure.summary`, `GET /api/hcp/v2/disclosures`: computed from `PersonAuditEvent.data` (`retrievalId`, `version`, `useUntil`, `directives`, `categoriesSearched`) and the revocation deliveries. `usableUntil` is worked out per grant (a delivered notice ends that grant's copies, not another's) and the latest grant's end is the client's. A search that returned nothing names no category; what it searched is in `categoriesSearched` | |
+| The v2 context plane (5.2, 9.4) | `hcp_v2_api.py`: query, get, create, revise, withdraw, grants, audit, export. A client names an entry by its `ref`, the person by its id; `person-declared` from a client is recorded `unverified`; `issuer-attested` is refused (canopy cannot authenticate an issuer); a write that fails leaves nothing | v1 and v2 are two views of the same rows |
+| Discovery of both | `GET /api/hcp/.well-known/hcp-configuration`: v1 by default, `HCP-Version: 2.0` returns `hcp.discovery_v2` (and the v1 document points at it, `canopy.v2`). `hcp.V2_CONFORMS_TO` is empty: canopy claims **no** v2 conformance identifier, and v1 discovery still claims Core, not Interop | |
+| Assurance (3.6, 3.7) | `PersonFact.assurance`: `authenticated` only for the person's own write (their own login, no agent: the rule migration `contacts/0031` applied to older rows), never another member's and never taken from a request | not exposed in v1 |
+| Revisions | A new version keeps the old one's other categories, basis, writer's purposes and the person's narrowing unless its caller sets them (`people.record_fact`), on every path: v1 and v2 revisions, `/api/people/{id}/facts/` with `supersedes_id`, the contact-notes mirror | |
+
+**Standing: v2's rule for v2 callers, v1's for everyone else.** A write through the v2 binding
+(`hcp.add_entry(..., v2=True)`, `hcp.update_entry(..., v2=True)`, a `contradicts` a client asserts)
+is decided by standing: a declared entry the person wrote themself (`authenticated`) or confirmed
+has it; an agent's "the person said it" is `unverified` and has none, so against an inference
+*both* are held until the person confirms or rejects one. Every other write (the v1 routes and MCP
+tools, `/api/people/{id}/facts/`, the CLI, the contact-notes mirror) keeps v1's rule unchanged: only
+a declared entry and an inference conflict, and the declared side outranks the inference whoever
+wrote it, so only the inference is held (`hcp.entries.has_standing`). In both, an attestation is
+never held and never set aside by the person's acceptance of another entry, and the person editing a
+held entry is their own statement (3.8): it has standing and sets aside the entry it contradicted.
+
+**Purposes.** A grant carries at least one (a grant that predates them reads as those of its
+scopes, so none was migrated); the consent screen and the session prompt show each in words before
+the act; a read naming one the grant lacks is 403, and an entry limited to other purposes by its
+writer or by the person is not served for this one (`PersonAuditEvent.purpose_code` records the
+code, `purpose` the words). Only the person narrows an entry's purposes, and only down.
 
 ## What keeps this page true
 

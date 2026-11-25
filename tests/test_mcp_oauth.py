@@ -20,6 +20,7 @@ from django.test import Client, override_settings
 
 from apps.mcp.auth import CanopyPATVerifier
 from apps.oauth_server.models import OAuthGrant
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 
 User = get_user_model()
@@ -42,6 +43,7 @@ def user():
 def browser(user):
     c = Client()
     c.force_login(user)
+    grant_step_up(c)  # approving a client takes a passkey (`views.authorize`)
     return c
 
 
@@ -414,3 +416,52 @@ def test_the_sign_in_kept_its_tables_and_routes_when_it_got_its_own_app():
     paths = api.get_openapi_schema()["paths"]
     assert paths["/api/tokens/authorized-apps"]["get"]["operationId"] == "list_authorized_apps"
     assert paths["/api/tokens/authorized-apps/{grant_id}"]["delete"]["operationId"] == "disconnect_authorized_app"
+
+
+# -- consent needs the person's passkey -------------------------------------
+
+def test_approving_without_a_passkey_step_up_issues_nothing(user):
+    """A link anyone can send puts the consent page in front of a signed-in
+    person; one click must not mint a token for a self-named client."""
+    c = Client()
+    c.force_login(user)
+    client_id = _client_id()
+    _, challenge = _pkce()
+    resp = c.post("/oauth/authorize", {**_authorize_params(client_id, challenge), "decision": "approve"})
+    assert resp.status_code == 403
+    assert "passkey" in resp.content.decode()
+    assert not OAuthGrant.objects.exists()
+    from apps.oauth_server.models import OAuthAuthorizationCode
+    assert not OAuthAuthorizationCode.objects.exists()
+
+
+def test_an_expired_step_up_does_not_count(user):
+    c = Client()
+    c.force_login(user)
+    grant_step_up(c, seconds=-1)
+    client_id = _client_id()
+    _, challenge = _pkce()
+    resp = c.post("/oauth/authorize", {**_authorize_params(client_id, challenge), "decision": "approve"})
+    assert resp.status_code == 403
+
+
+def test_denying_needs_no_passkey(user):
+    c = Client()
+    c.force_login(user)
+    client_id = _client_id()
+    _, challenge = _pkce()
+    resp = c.post("/oauth/authorize", {**_authorize_params(client_id, challenge), "decision": "deny"})
+    assert resp.status_code == 302 and "error=access_denied" in resp["Location"]
+
+
+def test_the_page_leads_with_the_redirect_host_and_calls_the_name_unverified(browser):
+    resp = Client().post("/oauth/register", {"client_name": "Claude",
+                                             "redirect_uris": ["https://evil.example/cb"]},
+                         content_type="application/json")
+    client_id = resp.json()["client_id"]
+    _, challenge = _pkce()
+    page = browser.get("/oauth/authorize", _authorize_params(
+        client_id, challenge, redirect_uri="https://evil.example/cb")).content.decode()
+    assert '<p class="host">evil.example</p>' in page
+    assert "name not verified" in page
+    assert "Allow with passkey" in page

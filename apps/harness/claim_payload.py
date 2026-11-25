@@ -13,13 +13,15 @@ here, once. The credentials are minted per claim and exist only in this answer.
 """
 from __future__ import annotations
 
+from django.conf import settings
+
 
 def issue_credentials(turn):
     """Mint what only the claiming runner may hold, onto the turn object:
     a chat's key, and a confined turn's caller token — plus the model its CLI
     starts on (`cli_model`), which both claim channels send. Returns the turn."""
     agent = turn.acting_agent
-    turn.cli_model = str((agent.cli_models or {}).get(turn.cli) or "")[:64] if agent else ""
+    turn.cli_model = conversation_model(turn, agent)
     if turn.chat_session_id:
         # The chat's key (canopy_sessions.ChatKey): the one credential that lets
         # the session driving this chat reach the chat's own secrets and page.
@@ -46,6 +48,52 @@ def issue_credentials(turn):
         if is_caller_scoped(turn):
             turn.mcp_token = mint(turn, scoped=True)
     return turn
+
+
+def start_model(agent, cli: str | None) -> str:
+    """The model a turn's CLI starts on: its agent's `cli_models` entry for that CLI,
+    else the server's `DEFAULT_CLI_MODELS` for it, else "" (the CLI's own default on
+    that box, which is whatever the box's account defaults to, not what a person
+    gets on their own machine). A project's turn has no agent, so it always takes
+    the server default."""
+    cli = cli or "claude-code"
+    named = (agent.cli_models or {}).get(cli) if agent else None
+    return str(named or (settings.DEFAULT_CLI_MODELS or {}).get(cli) or "")[:64]
+
+
+def page_model(turn, agent) -> str:
+    """The model a turn held on a host site's page starts on when the agent's entry for
+    that site names one (`page_model:`), else "". Claude Code's model names only: a
+    turn on another CLI keeps that CLI's own."""
+    if agent is None or (turn.cli or "claude-code") != "claude-code":
+        return ""
+    from apps.agents import published_profiles  # noqa: PLC0415 — the interface reads models, loaded with a call
+
+    site = published_profiles.page_site_of(turn, agent)
+    return published_profiles.page_model_of(agent, site)[:64] if site else ""
+
+
+def conversation_model(turn, agent) -> str:
+    """The model this turn starts on. A chat's turn takes the one its conversation
+    already holds (`Session.cli_model`); the conversation's first claim picks it
+    (`start_model`) and holds it, first write wins. So changing an agent's model or
+    the server default moves new conversations, never one mid-history. Every turn
+    still SENDS it: a runner starts a fresh CLI process per turn, which would
+    otherwise start on its box's own default. A turn with no chat is not held.
+    A conversation held on a site's page whose agent names a `page_model` for that
+    site starts on it (`page_model`); every other turn keeps the agent's own."""
+    session = turn.chat_session if turn.chat_session_id else None
+    if session is not None and session.cli_model:
+        return session.cli_model
+    model = page_model(turn, agent) or start_model(agent, turn.cli)
+    if session is not None and model:
+        from apps.canopy_sessions.models import Session  # noqa: PLC0415 — sessions import harness
+
+        if not Session.objects.filter(pk=session.pk, cli_model="").update(cli_model=model):
+            # Another claim held one first: that one is the conversation's.
+            model = Session.objects.filter(pk=session.pk).values_list("cli_model", flat=True).first() or model
+        session.cli_model = model
+    return model
 
 
 def claim_payload(turn) -> dict:

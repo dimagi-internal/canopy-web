@@ -1,4 +1,5 @@
-"""The allowlist for connection calls: which Salesforce paths a screen may reach.
+"""The allowlist for connection calls: which Salesforce paths a screen may reach (Google's:
+`test_connection_calls_google`).
 
 A security boundary: a path that slips out would send a real token somewhere
 unintended, so the refusals here are tested against every escape we know of.
@@ -101,11 +102,20 @@ def test_refusal_is_a_sentence_without_jargon_leakage():
     assert text.endswith(".") and len(text.split()) >= 4
 
 
-def test_refuses_composite():
+def test_only_the_two_composite_calls_are_on_the_list():
+    """`composite/batch` and sObject Collections, which `expand` takes apart; never `composite` itself,
+    a tree, a graph, or another method on them."""
+    for method, path in (("POST", "composite/batch"), ("POST", "composite/sobjects"), ("PATCH", "composite/sobjects"),
+                         ("DELETE", "composite/sobjects"), ("GET", "composite/sobjects/Lead")):
+        assert calls.is_composite(calls.match("salesforce", method, path))
     for method in ("GET", "POST", "PATCH", "DELETE"):
-        for path in ("composite", "composite/batch", "composite/tree/Account", "composite/sobjects"):
+        for path in ("composite", "composite/tree/Account", "composite/graph", "composite/sobjects/Lead/x/y"):
             with pytest.raises(NotAllowed):
                 calls.match("salesforce", method, path)
+    for method, path in (("GET", "composite/batch"), ("PATCH", "composite/batch"), ("GET", "composite/sobjects"),
+                         ("POST", "composite/sobjects/Lead")):
+        with pytest.raises(NotAllowed):
+            calls.match("salesforce", method, path)
 
 
 @pytest.mark.parametrize("method,path", [
@@ -155,11 +165,11 @@ def test_refuses_shapes_outside_the_list(path):
             calls.match("salesforce", method, path)
 
 
-def test_google_not_supported():
+def test_google_is_drive_only():
+    # Google's own list is `test_connection_calls_google`: Gmail is not on it.
     with pytest.raises(NotAllowed) as exc:
         calls.match("google", "GET", "users/me/messages")
-    assert isinstance(exc.value, calls.NotSupported)
-    assert "Google" in str(exc.value)
+    assert not isinstance(exc.value, calls.NotSupported)
 
 
 def test_unknown_provider_not_supported():
@@ -211,9 +221,9 @@ def test_build_url_refuses_a_host_that_is_not_a_my_domain(instance):
         calls.build_url("salesforce", instance, "query", None, method="GET")
 
 
-def test_build_url_google_not_supported():
+def test_build_url_unknown_provider_not_supported():
     with pytest.raises(calls.NotSupported):
-        calls.build_url("google", "", "users/me/messages", None, method="GET")
+        calls.build_url("nope", "", "query", None, method="GET")
 
 
 def test_percent_encoded_letters_decode_to_the_canonical_path():
@@ -265,7 +275,7 @@ def test_query_accepts_strings_lists_and_nothing():
 
 
 def test_build_url_matches_the_allowlist_itself():
-    for method, path in (("GET", "composite"), ("POST", "composite/batch"), ("GET", "tooling/query"),
+    for method, path in (("GET", "composite"), ("POST", "composite/tree/Account"), ("GET", "tooling/query"),
                          ("DELETE", "query"), ("POST", f"sobjects/User/{LEAD}")):
         with pytest.raises(NotAllowed):
             calls.build_url("salesforce", INSTANCE, path, None, method=method)

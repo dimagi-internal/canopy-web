@@ -56,14 +56,22 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
-from apps.common.token_hash import hash_token
 from apps.common import oauth_core
 from apps.common.oauth_core import OAuthError
+from apps.common.token_hash import hash_token
 
 from . import hcp
 from .hcp_webhooks import _deliver_soon
-from .models import (HcpAuthorizationCode, HcpClient, HcpRevocationDelivery, HcpToken, Person,
-                     PersonAuditEvent, PersonFact, PersonGrant)
+from .models import (
+    HcpAuthorizationCode,
+    HcpClient,
+    HcpRevocationDelivery,
+    HcpToken,
+    Person,
+    PersonAuditEvent,
+    PersonFact,
+    PersonGrant,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +287,25 @@ def _restrictions(scopes: list[str], sources: list[str]) -> list[dict]:
     return [{"scope": s, "narrowedTo": {"sources": named}} for s in scopes]
 
 
+def client_purposes(client: HcpClient, scopes: list[str]) -> list[str]:
+    """What a grant to this client carries and the consent screen shows (6.1.5.2): the purposes it
+    was registered for, else those of the scopes it asks for."""
+    return list(client.purposes or []) or hcp.purposes.for_scopes(scopes)
+
+
+def scopes_after_rules(person: Person, client: HcpClient, scopes: list[str]) -> tuple[list[str], list[str]]:
+    """(scopes a grant may carry, categories a standing rule of the person's excludes) — 6.3: a
+    grant never reaches a category a rule denies its operator."""
+    op, claims = hcp.rules.operator_of(PersonGrant(hcp_client=client))
+    cats = []
+    for sc in scopes:
+        cat = ":".join(sc.split(":")[1:-1])
+        if cat not in cats:
+            cats.append(cat)
+    _, excluded = hcp.rules.exclusions(person, op, claims, cats)
+    return [sc for sc in scopes if ":".join(sc.split(":")[1:-1]) not in excluded], excluded
+
+
 @transaction.atomic
 def issue_grant(pending: dict, *, person: Person, user, persistent: bool) -> PersonGrant:
     """Write the grant both acts produced, and audit it (4.1.4: the elected type and
@@ -288,10 +315,14 @@ def issue_grant(pending: dict, *, person: Person, user, persistent: bool) -> Per
     expires = None if persistent else now + TEMPORARY_CHOICES.get(
         pending.get("expiry") or TEMPORARY_DEFAULT, TEMPORARY_CHOICES[TEMPORARY_DEFAULT])
     sources = [s for s in pending.get("sources") or [] if s in workspace_sources(person)]
+    pending = {**pending, "scopes": scopes_after_rules(person, client, pending["scopes"])[0]}
+    if not pending["scopes"]:
+        raise hcp.denied("a standing rule of yours denies this app every category it asked for")
     grant = PersonGrant.objects.create(
         person=person, workspace=None, agent=None, hcp_client=client, channel="oauth", host="",
         client_key=f"oauth-client={client.client_id}|grant={uuid.uuid4()}",
         client_name=client.name[:200], scopes=list(pending["scopes"]),
+        purposes=client_purposes(client, pending["scopes"]),
         restrictions=_restrictions(pending["scopes"], sources),
         grant_type=PersonGrant.PERSISTENT if persistent else PersonGrant.TEMPORARY,
         modality="oauth2", expires_at=expires)
@@ -300,6 +331,7 @@ def issue_grant(pending: dict, *, person: Person, user, persistent: bool) -> Per
                       f"type={grant.grant_type}"
                       + (f"; expires={expires.isoformat()}" if expires else "; until revoked")
                       + f"; modality={MODALITY}; scopes={' '.join(grant.scopes)}; "
+                        f"purposes={' '.join(grant.purposes)}; "
                         f"restrictions={json.dumps(grant.restrictions)}"))
     return grant
 

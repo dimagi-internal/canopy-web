@@ -32,6 +32,7 @@ from apps.agents.models import (
     AgentCredentialRead,
     AgentLicense,
     AgentPatRotation,
+    AgentVaultEndorsement,
     AgentVaultWrap,
     Vault,
     VaultKeyWrap,
@@ -509,6 +510,57 @@ def test_a_device_without_a_wrap_gets_409_and_the_owner_an_alert(fleet):
     # Says whose machine, what is missing and that it was never given the key.
     assert alert.user.email in alert.detail and "never given" in alert.detail
     assert not AgentCredentialRead.objects.exists()
+
+
+# ---- who a wrap wait is told to (`zk.wrap_route`) ---------------------------------------------
+
+def _endorse(f, *, age=None):
+    AgentVaultEndorsement.objects.create(agent=f.agent, kind="device", target=f.device.ecdh_jkt,
+                                         key_jkt=f.device.ecdh_jkt, endorser=f.user,
+                                         endorser_jkt="x", sig="x")
+    if age is not None:
+        AgentVaultEndorsement.objects.update(created_at=timezone.now() - age)
+
+
+def test_a_wrap_wait_its_own_person_can_end_is_told_to_them_not_the_owner(fleet, mailoutbox):
+    """Its person holds a vault key, so only they act (Confirm access): the refusal tells
+    the session how, and the email names them as the reason, not ownership."""
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    res = _resolve(fleet)
+    assert res.status_code == 409 and "Confirm access" in res.json()["detail"]
+    alert = AgentCredentialAlert.objects.get()
+    assert alert.context["route"] == "person"
+    (msg,) = mailoutbox
+    assert msg.to == [fleet.user.email]
+    assert "Confirm access" in msg.body and "the machine is yours" in msg.body
+    assert "because you own" not in msg.body
+
+
+def test_an_endorsed_machine_waits_for_a_keeper_and_nobody_is_emailed(fleet, mailoutbox):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    _endorse(fleet)
+    res = _resolve(fleet)
+    assert res.status_code == 409 and "keeper" in res.json()["detail"]
+    assert not AgentCredentialAlert.objects.exists() and not mailoutbox
+
+
+def test_a_keeper_that_sits_on_an_endorsed_machine_reaches_the_owner(fleet, mailoutbox):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    _endorse(fleet, age=zk.KEEPER_GRACE * 2)
+    assert _resolve(fleet).status_code == 409
+    alert = AgentCredentialAlert.objects.get()
+    assert alert.context["route"] == "admin"
+    (msg,) = mailoutbox
+    assert "Give access" in msg.body and "because you own" in msg.body
+
+
+def test_a_machine_whose_person_has_no_vault_key_reaches_the_owner(fleet, mailoutbox):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    UserVaultKeyset.objects.filter(user=fleet.user).delete()
+    res = _resolve(fleet)
+    assert res.status_code == 409 and "an admin" in res.json()["detail"]
+    assert AgentCredentialAlert.objects.get().context["route"] == "admin"
+    assert len(mailoutbox) == 1
 
 
 # ---- values, grants ---------------------------------------------------------------------------
@@ -1718,7 +1770,9 @@ def test_a_member_approving_their_own_machine_is_asked_to_sign_for_it_and_a_keep
     assert res.status_code == 200, res.content
     body = res.json()
     assert body["zk_pending_agents"] == []          # they manage nothing: no grant to offer
-    assert body["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+    [entry] = body["zk_vouch_agents"]
+    assert (entry["slug"], entry["agent_id"], entry["kv"]) == ("eva", _aid(fleet), 1)
+    assert entry["my_wrap"] is not None             # their own copy, to hand the key over with
     key.refresh_from_db()
 
     # Before they sign, the owner's box will not pass the key on.
@@ -1751,6 +1805,80 @@ def test_a_member_vouches_for_nobody_but_their_own_machine(fleet):
     assert res.status_code == 403 and res.json()["error"] == "zk_not_your_machine", res.content
 
 
+def _my_copy_to_my_machine(fleet, ed, priv, key, ecdh, entry):
+    """What the browser does in the approval touch: open MY member wrap with my keyset,
+    wrap the vault key to my machine."""
+    vk = ref.unwrap_ecdh_es(entry["my_wrap"], priv, ref.member_info(_aid(fleet), entry["kv"], str(ed.pk)))
+    return device_wrap(fleet, kv=entry["kv"], vk=vk, key=key, ecdh=ecdh), vk
+
+
+def test_a_member_hands_their_own_machine_the_key_from_their_own_copy(fleet):
+    """No owner, admin or keeper: a member who holds the vault key approves their own new
+    laptop and their browser gives it the key, which the machine then opens."""
+    from apps.agents.credentials import zk
+
+    assert _enable(fleet).status_code == 200
+    ed, priv, key, ecdh, c = _members_own_laptop(fleet, "amie")
+    assert fleet.client.post(f"{ZK}/wraps", content_type="application/json", data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=ed, pub=priv.public_key())]}).status_code == 200
+    res = c.post(f"/api/runner-device-keys/{key.pk}/approve")
+    assert res.status_code == 200, res.content
+    [entry] = res.json()["zk_vouch_agents"]
+    key.refresh_from_db()
+    fleet.agent.refresh_from_db()
+    assert zk.device_waits(fleet.agent, key)
+
+    wrap, vk = _my_copy_to_my_machine(fleet, ed, priv, key, ecdh, entry)
+    assert vk == fleet.vk
+    res = c.post(f"{ZK}/wraps/mine", content_type="application/json", data={"kv": 1, "wraps": [wrap]})
+    assert res.status_code == 200 and res.json() == {"granted": 1}, res.content
+    assert not zk.device_waits(fleet.agent, key)
+    stored = AgentVaultWrap.objects.get(agent=fleet.agent, kv=1, kind="device", device_key=key)
+    assert ref.unwrap_ecdh_es(stored.wrap, ecdh, ref.device_info(_aid(fleet), 1, key.ecdh_jkt)) == fleet.vk
+    # Nothing more waits on the machine, so nothing more is offered.
+    assert c.get(f"/api/runner-device-keys/?runner={key.runner_id}").json()[0]["zk_vouch_agents"] == []
+
+
+def test_a_member_grants_only_their_own_waiting_machine_from_a_copy_they_hold(fleet):
+    assert _enable(fleet).status_code == 200
+    ed, priv, key, ecdh, c = _members_own_laptop(fleet, "amie2")
+    res = c.post(f"/api/runner-device-keys/{key.pk}/approve")
+    [entry] = res.json()["zk_vouch_agents"]
+    assert entry["my_wrap"] is None                     # no copy of the key yet
+    key.refresh_from_db()
+    wrap = device_wrap(fleet, key=key, ecdh=ecdh)
+    res = c.post(f"{ZK}/wraps/mine", content_type="application/json", data={"kv": 1, "wraps": [wrap]})
+    assert res.status_code == 409 and res.json()["error"] == "zk_no_copy", res.content
+
+    assert fleet.client.post(f"{ZK}/wraps", content_type="application/json", data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=ed, pub=priv.public_key())]}).status_code == 200
+    # Not someone else's machine, nor a person.
+    for other in (device_wrap(fleet), member_wrap(fleet, user=ed, pub=priv.public_key())):
+        res = c.post(f"{ZK}/wraps/mine", content_type="application/json", data={"kv": 1, "wraps": [other]})
+        assert res.status_code == 403 and res.json()["error"] == "zk_not_your_machine", res.content
+    # Without a fresh passkey touch, a browser is asked for one.
+    plain = Client()
+    plain.force_login(ed)
+    res = plain.post(f"{ZK}/wraps/mine", content_type="application/json", data={"kv": 1, "wraps": [wrap]})
+    assert res.status_code == 403 and res.json()["error"] == "step_up_required", res.content
+    # Once granted it is never replaced from here.
+    assert c.post(f"{ZK}/wraps/mine", content_type="application/json",
+                  data={"kv": 1, "wraps": [wrap]}).status_code == 200
+    res = c.post(f"{ZK}/wraps/mine", content_type="application/json", data={"kv": 1, "wraps": [wrap]})
+    assert res.status_code == 409 and res.json()["error"] == "zk_not_pending", res.content
+
+
+def test_someone_outside_the_vault_grants_no_machine(fleet):
+    assert _enable(fleet).status_code == 200
+    ed, priv, key, ecdh, c = _members_own_laptop(fleet, "amie3")
+    assert c.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
+    key.refresh_from_db()
+    _leave_the_vault(fleet)
+    res = c.post(f"{ZK}/wraps/mine", content_type="application/json",
+                 data={"kv": 1, "wraps": [device_wrap(fleet, key=key, ecdh=ecdh)]})
+    assert res.status_code == 403, res.content
+
+
 def test_someone_outside_the_vault_vouches_for_nothing(fleet):
     assert _enable(fleet).status_code == 200
     ed, priv, key, ecdh, c = _members_own_laptop(fleet, "beth3")
@@ -1781,6 +1909,10 @@ def _owners_own_box(fleet, name="isma-box"):
     return Vault.objects.get(pk=vid), binding, vk, box, key, ecdh
 
 
+def _named(entries):
+    return [(e["slug"], e["agent_id"]) for e in entries]
+
+
 def _vouch_row(fleet, box):
     [row] = fleet.client.get(f"/api/runner-device-keys/?runner={box.pk}").json()
     return row
@@ -1794,9 +1926,9 @@ def test_an_owner_approving_their_own_box_for_a_kv0_agent_signs_it_and_a_keeper_
     # The approve screen (key still pending) already names the agent to sign under, so the
     # approval touch signs it — approveAndGrant no longer returns early.
     row = _vouch_row(fleet, box)
-    assert row["status"] == "pending" and row["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+    assert row["status"] == "pending" and _named(row["zk_vouch_agents"]) == [("eva", _aid(fleet))]
     res = fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve")
-    assert res.status_code == 200 and res.json()["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+    assert res.status_code == 200 and _named(res.json()["zk_vouch_agents"]) == [("eva", _aid(fleet))]
     key.refresh_from_db()
 
     # The person's own signature, under the kv-0 agent.
@@ -1827,7 +1959,7 @@ def test_a_box_approved_before_this_is_offered_confirm_access(fleet):
     vault, binding, vk, box, key, ecdh = _owners_own_box(fleet)
     assert fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
     row = _vouch_row(fleet, box)
-    assert row["status"] == "active" and row["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+    assert row["status"] == "active" and _named(row["zk_vouch_agents"]) == [("eva", _aid(fleet))]
 
 
 def test_a_box_whose_person_is_in_no_served_agents_vault_is_offered_nothing(fleet):

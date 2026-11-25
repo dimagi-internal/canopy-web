@@ -96,14 +96,14 @@ export function SlackSettingsPage(): JSX.Element {
         ) : (
           <p className="mt-1 text-[13px] text-foreground-secondary">
             Not connected.{' '}
-            <a href={config.install_url} className="text-primary hover:underline">Connect Slack</a> (workspace
-            owners).
+            <a href={config.install_url} className="text-primary hover:underline">Connect Slack</a> (workspace admins
+            and owners).
           </p>
         )}
         {config.reinstall.needed && (
           <div className="mt-3 rounded-lg border border-border bg-card p-4 text-[13px]" data-testid="slack-reinstall">
             <p className="text-foreground">
-              Slack needs a reinstall to turn on: {config.reinstall.turns_on.join('; ')}. Workspace owners can
+              Slack needs a reinstall to turn on: {config.reinstall.turns_on.join('; ')}. Workspace admins and owners can
               do this.
             </p>
             <a
@@ -193,7 +193,7 @@ export function SlackSettingsPage(): JSX.Element {
                   Connect
                 </button>
               </div>
-              <p className="mt-2 text-[11px] text-muted-foreground">Workspace owners only.</p>
+              <p className="mt-2 text-[11px] text-muted-foreground">Workspace admins and owners.</p>
             </form>
           )}
         </section>
@@ -211,7 +211,7 @@ export function SlackSettingsPage(): JSX.Element {
             active threads, each whole, and <code>--history 9am</code> reads back to 9:00 on the
             asker&apos;s own clock (their Slack timezone). The limit below applies to minutes and clock times, not to a
             count. Pasting a link to a thread hands the agent that thread, if the asker is in its channel; a private
-            channel&apos;s thread goes only to that channel or a DM with canopy. Turning history off stops all of these. Workspace owners set this.
+            channel&apos;s thread goes only to that channel or a DM with canopy. Turning history off stops all of these. Workspace admins and owners set this.
           </p>
           <form
             className="rounded-lg border border-border bg-card p-4 text-[13px]"
@@ -393,7 +393,7 @@ export function SlackSettingsPage(): JSX.Element {
             <h3 className="text-[13px] font-semibold text-foreground">Ask in the channel</h3>
             <p className="mt-1 text-[12px] text-muted-foreground">
               For a channel not on the list, an agent can ask instead. canopy posts Approve and Decline buttons in
-              the channel, and an owner or admin who is in it, or whoever created it, decides. Owners turn this on.
+              the channel, and an owner or admin who is in it, or whoever created it, decides. Admins and owners turn this on.
             </p>
             <p className="mt-2 text-foreground">
               {config.channel_ingest.enabled ? 'On — agents can ask.' : 'Off — agents can only read channels on the list.'}

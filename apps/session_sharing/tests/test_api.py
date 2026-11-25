@@ -407,3 +407,22 @@ def test_link_shares_are_not_listed_to_someone_outside_the_team(auth_client, oth
     other_client.force_login(other)
     _upload(other_client, _transcript("theirs-link"), title="Agent share")
     assert auth_client.get("/api/sessions/").json() == []
+
+
+@pytest.mark.django_db
+def test_a_teammates_shares_in_another_organisation_are_not_listed(auth_client, owner, other):
+    """A teammate of the caller who is also in another tenant tree shares there
+    too. Listing that row would hand the caller its token, so the list keeps to
+    rows IN the caller's workspaces."""
+    from apps.workspaces.models import WorkspaceMembership
+    from apps.workspaces.testing import a_member, a_workspace
+
+    _teammates(owner, other)
+    a_member(a_workspace("elsewhere-org"), email=other.email, role=WorkspaceMembership.EDITOR)
+    other_client = Client()
+    other_client.force_login(other)
+    _upload(other_client, _transcript("theirs-here"), ws="share-team", title="Here")
+    _upload(other_client, _transcript("theirs-there"), ws="elsewhere-org", title="Elsewhere")
+
+    titles = {r["title"] for r in auth_client.get("/api/w/share-team/sessions/").json()}
+    assert titles == {"Here"}

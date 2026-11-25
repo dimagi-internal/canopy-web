@@ -11,11 +11,12 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.models import AgentProject, ProjectParticipant
+from apps.agents.models import Agent, AgentProject, ProjectParticipant
 from apps.canopy_sessions import access, audience
 from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
 from apps.contacts import services as contacts
 from apps.harness.models import Runner
+from tests.fixtures.brain_world import reads
 from tests.fixtures.session_world import make_member
 from tests.fixtures.session_world import session_world as _world
 
@@ -24,7 +25,6 @@ pytestmark = pytest.mark.django_db
 
 def _more_shapes(people, shapes, ws):
     """Add the shapes `_world` lacks: an email thread, a laptop session in a project's repo, a dispatched session, a sensitive laptop session."""
-    from apps.agents.models import Agent
 
     hal = Agent.objects.get(slug="hal")
     email = Session.objects.create(workspace=ws, agent=hal, origin=Session.ORIGIN_RUNNER,
@@ -55,8 +55,10 @@ def _more_shapes(people, shapes, ws):
     shapes["dispatched"] = dispatched
 
 
-def test_the_audience_is_exactly_who_the_acl_lets_read():
+@pytest.mark.parametrize("brain", [False, True])
+def test_the_audience_is_exactly_who_the_acl_lets_read(brain, settings):
     people, shapes, ws = _world()
+    reads(ws, brain)
     _more_shapes(people, shapes, ws)
     # The audience names who MAY read, the coach included: its login reads inside a turn its
     # administrator asked (`access.review_grantors`), which is the widest case.
@@ -67,7 +69,7 @@ def test_the_audience_is_exactly_who_the_acl_lets_read():
     for label, s in shapes.items():
         readers = audience.readers(s)
         for who, user in people.items():
-            assert (user.pk in readers) is access.can_read(user, s), f"{who} on {label}"
+            assert (user.pk in readers) is access.can_read(user, s, brain=True), f"{who} on {label}"
         assert audience.summary(s, people["owner"])["count"] == len(readers), label
 
 
@@ -112,3 +114,22 @@ def test_the_session_view_carries_it():
     body = c.get(f"/api/canopy-sessions/{shapes['shared_web'].id}").json()
     assert body["audience"]["label"] == "Only you and 1 person you added"
     assert body["audience"]["count"] == 3     # owner, the viewer added, Trellis reviewing
+
+
+def test_the_audience_names_the_coaches_of_a_person_who_opted_in():
+    from apps.canopy_sessions.models import CoachingOptIn, CoachingRole, Session
+
+    people, shapes, ws = _world()
+    chat = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB)
+    CoachingOptIn.objects.create(user=people["mate"])
+    CoachingRole.objects.create(workspace=ws, user=people["viewer"])
+    from apps.harness import turn_asker
+
+    setattr(people["coach"], turn_asker.STANDING_ATTR,
+            turn_asker.AnsweringTo("t", person_id=people["mate"].pk, operator=False))
+    readers = audience.readers(chat)
+    assert people["viewer"].pk in readers and people["owner"].pk not in readers
+    for who, user in people.items():
+        assert (user.pk in readers) is access.can_read(user, chat, brain=True), who
+    extras = audience.summary(chat, people["mate"])["extras"]
+    assert any("Trellis" in e and "may review (coaching)" in e and "viewer" in e for e in extras), extras

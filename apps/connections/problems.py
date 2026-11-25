@@ -73,22 +73,29 @@ _CALL_PROBLEMS: dict[str, tuple[int, str]] = {
     "needs_operation": (409, "Needs a click"),
     "declaration_changed": (409, "Changed since you looked"),
     "rate_limited": (429, "Too many calls"),
+    "provider_rate_limited": (429, "The provider is limiting calls"),
     "session_ended": (409, "Connection needs connecting again"),
+    "scope_added": (409, "Connection needs allowing again"),
     "response_too_large": (502, "Answer too large"),
     "response_unreadable": (502, "Answer could not be read"),
     "provider_unavailable": (502, "Provider unavailable"),
 }
-_CALL_TYPES = {"rate_limited": TYPE_RATE_LIMIT, "request_too_large": TYPE_PAYLOAD_TOO_LARGE}
+_CALL_TYPES = {"rate_limited": TYPE_RATE_LIMIT, "provider_rate_limited": TYPE_RATE_LIMIT,
+               "request_too_large": TYPE_PAYLOAD_TOO_LARGE}
 
 
 def problem_for_call(exc: services.ConnectionError) -> ProblemError:
     """The response for a refused screen call (`call_service`). Its sentence is the exception's:
     each one there is written for the person looking at the screen. `exc.members` adds to the body."""
     status, heading = _CALL_PROBLEMS.get(exc.code) or _PROBLEMS.get(exc.code, (502, "Provider error"))
-    headers = {"Retry-After": "60"} if exc.code == "rate_limited" else None
+    members = getattr(exc, "members", {})
+    headers = None
+    if exc.code == "rate_limited":
+        headers = {"Retry-After": "60"}
+    elif exc.code == "provider_rate_limited" and isinstance(members.get("retry_after"), int):
+        headers = {"Retry-After": str(members["retry_after"])}  # the provider's own wait, never one of ours
     return ProblemError(status, heading, type_=_CALL_TYPES.get(exc.code, "about:blank"), detail=str(exc),
-                        members={"error": exc.code or "provider_error", **getattr(exc, "members", {})},
-                        headers=headers)
+                        members={"error": exc.code or "provider_error", **members}, headers=headers)
 
 
 # Each refusal of a share, by its `error` code; the status comes with the refusal.

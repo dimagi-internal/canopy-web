@@ -162,6 +162,13 @@ export function useSessionMemory(
   return { ...loaded, features, busy, failed, toggle, keep }
 }
 
+/** What a grant for this feature is for, in words (HCP v2 6.1.5.2) — shown before the act. */
+function purposeOf(state: SessionMemory, f: MemoryFeature): string {
+  const codes = state.purposes_by_feature?.[f] ?? []
+  const said = (state.purposes ?? []).filter((p) => codes.includes(p.code))
+  return said.map((p) => p.description).join('; ')
+}
+
 /** Green when it is working here, red when it is not. */
 export function MemoryDot({ on }: { on: boolean }) {
   return (
@@ -216,6 +223,9 @@ export function SessionMemoryPanel({ memory }: { memory: SessionMemoryControl })
                   {LABELS[f].name}
                 </span>
                 <span className="block text-muted-foreground">{on ? LABELS[f].on : LABELS[f].off}</span>
+                {purposeOf(state, f) && (
+                  <span className="block text-muted-foreground">For: {purposeOf(state, f)}</span>
+                )}
               </span>
               {editable ? (
                 <button
@@ -238,6 +248,15 @@ export function SessionMemoryPanel({ memory }: { memory: SessionMemoryControl })
           )
         })}
       </ul>
+      <p className="mt-1 text-muted-foreground">
+        What an agent reads may be used for at most {state.longest_copy_hours ?? 1} hour
+        {(state.longest_copy_hours ?? 1) === 1 ? '' : 's'}, and stops at once if you revoke.
+      </p>
+      {(state.excluded_categories ?? []).length > 0 && (
+        <p className="mt-1 text-muted-foreground">
+          Left out by your standing rules: {(state.excluded_categories ?? []).join(', ')}
+        </p>
+      )}
       {editable && keepable && (
         <button type="button" disabled={busy !== null} className={`mt-1.5 ${QUIET}`}
                 onClick={() => void memory.keep()}>

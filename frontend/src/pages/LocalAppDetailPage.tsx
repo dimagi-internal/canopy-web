@@ -24,6 +24,7 @@ import {
 } from '@/components/apps/AppDetailLayout'
 import { initialSettings, SettingsFields, settingsToSend, type SettingValues } from '@/components/localApps/SettingsFields'
 import { describeRun } from '@/components/localApps/runState'
+import { refreshAppMenu } from '@/components/AppLayout/appMenuStore'
 import { useScopedPath } from '@/lib/scopedLinks'
 
 const START_HERE = 'You start it from the menu bar on that computer. This page can\u2019t start it.'
@@ -262,7 +263,10 @@ function InstalledCopy({ install, reload }: { install: LocalAppInstallation; rel
 
   async function save(e: FormEvent) {
     e.preventDefault()
-    if (await act(() => configureLocalApp(install.id, settingsToSend(spec, values, install.settings)))) setConfiguring(false)
+    if (await act(() => configureLocalApp(install.id, settingsToSend(spec, values, install.settings)))) {
+      setConfiguring(false)
+      void refreshAppMenu() // a setting may turn an account-menu item on or off
+    }
   }
 
   function remove() {

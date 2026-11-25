@@ -770,6 +770,62 @@ ensure_tmp_age_rule() {
   rm -f "$tmp"
 }
 
+# --- box-wide tools ---------------------------------------------------------
+#
+# gcloud (the Google Cloud CLI) is on every box so an agent can read a Google
+# Cloud project with its OWN service account: gshubdesk reads GS Hub's Cloud Run
+# logs (`gcloud logging read`, `gcloud run services|revisions describe|list`),
+# signing in from a key in its vault into its own CLOUDSDK_CONFIG. So the box
+# installs the binary only — no login, no config, no credential.
+#
+# Installed HERE, not in bootstrap_agents.sh beside gog: on a box of several
+# runners no runner user has sudo (install_runners removes the rule), so a runner
+# could only put a copy in its own home, ~0.5 GB per runner on boxes that already
+# run short of disk. Root's tick installs one system-wide copy (/usr/bin/gcloud),
+# on boxes already up and, 30 minutes after boot, on new ones (runner.cfn.yaml
+# installs it at first boot too). Google's apt repo, so unattended-upgrades keeps
+# it current. Skipped when the volume has under 5 GB free; a failure is logged
+# and retried next tick, never fails it.
+GCLOUD_PATH="${GCLOUD_PATH:-/usr/bin/gcloud}"
+GCLOUD_INSTALLER="${GCLOUD_INSTALLER:-install_gcloud_apt}"
+GCLOUD_KEYRING="${GCLOUD_KEYRING:-/usr/share/keyrings/cloud.google.asc}"
+GCLOUD_APT_LIST="${GCLOUD_APT_LIST:-/etc/apt/sources.list.d/google-cloud-sdk.list}"
+install_gcloud_apt() {
+  [ -d "$(dirname "$GCLOUD_APT_LIST")" ] || return 1   # not a Debian/Ubuntu box
+  local key list
+  key="$(mktemp)"; list="$(mktemp)"
+  # An armored key named .asc: apt reads it as-is, so no gpg --dearmor step.
+  if ! curl -fsSL --retry 3 https://packages.cloud.google.com/apt/doc/apt-key.gpg -o "$key"; then
+    rm -f "$key" "$list"; return 1
+  fi
+  echo "deb [signed-by=$GCLOUD_KEYRING] https://packages.cloud.google.com/apt cloud-sdk main" > "$list"
+  # shellcheck disable=SC2086 # PRIV_CMD is empty or `sudo -n`
+  $PRIV_CMD install -m 0644 "$key" "$GCLOUD_KEYRING" \
+    && $PRIV_CMD install -m 0644 "$list" "$GCLOUD_APT_LIST" \
+    && $PRIV_CMD env DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    && $PRIV_CMD env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq google-cloud-cli
+  local rc=$?
+  rm -f "$key" "$list"
+  return $rc
+}
+ensure_gcloud() {
+  [ -x "$GCLOUD_PATH" ] && return 0
+  # Gate on free space, not percent full: gcloud needs ~1 GB, and a 145 GB
+  # volume at the 80% warning still has 30 GB free (cloud-ec2-2 sat there and
+  # never got it).
+  local avail_kb
+  avail_kb="$(df -Pk "${DISK_USAGE_ROOT:-/}" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "$avail_kb" ] && [ "$avail_kb" -lt "${GCLOUD_MIN_FREE_KB:-5242880}" ]; then
+    log "gcloud not installed: only $((avail_kb / 1024)) MB free on the volume"
+    return 0
+  fi
+  if "$GCLOUD_INSTALLER" >/dev/null 2>&1 && [ -x "$GCLOUD_PATH" ]; then
+    log "gcloud installed ($GCLOUD_PATH)"
+  else
+    log "could not install gcloud; retrying next tick"
+  fi
+}
+
 # The user a box ran as before it had several runners keeps a home full of caches
 # nothing reads any more (on cloud-ec2-2: plugin versions at 1.8 GB each, uv's cache).
 # Only regenerable caches go, never work, keys or config, and only on a box of
@@ -852,6 +908,7 @@ V="$(verdict "$EXPECTED")"
 if [ "$MODE" != "check" ]; then
   ensure_needrestart_exclusion
   ensure_tmp_age_rule
+  ensure_gcloud
   retire_legacy_caches
   record_disk_usage
 fi

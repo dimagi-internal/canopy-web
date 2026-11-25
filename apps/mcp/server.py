@@ -88,5 +88,11 @@ def build_http_app():
 
     `path="/"` because config/asgi.py mounts this app under the
     /api/mcp prefix; the MCP endpoint then lives at /api/mcp/.
+
+    Stateless (`stateless_http=True`), as are the project and gateway servers: no
+    `mcp-session-id` is issued, so any web process or task answers any call. Keep it
+    that way unless a tool needs server-initiated messages (sampling, elicitation,
+    resource-updated notifications, a standalone GET stream); none does — page and
+    app-view updates reach a browser over the realtime socket, not MCP.
     """
-    return mcp.http_app(path="/", transport="streamable-http")
+    return mcp.http_app(path="/", transport="streamable-http", stateless_http=True)

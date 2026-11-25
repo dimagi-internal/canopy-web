@@ -18,7 +18,7 @@ someone merely for being in the same workspace:
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
   run; you are an agent's own login and its person let that agent review
-  their sessions (`SessionReviewGrant`, read-only, never a sensitive one); or
+  their sessions (`CoachingOptIn` + `CoachingRole`, read-only, never a sensitive one); or
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
   can be emptied — `may_move`).
 * **Reach** — a request made with an agent turn's caller token reads as the asker, but
@@ -81,23 +81,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from django.db.models import Q
+from django.db.models import Exists, Q
 from django.utils import timezone
 
 from apps.harness import runner_requirements as rr
 from apps.harness import runners, sensitivity
 from apps.harness.models import Runner, Turn
 
-from . import channel_bindings
+from . import channel_bindings, staleness
 from .models import (
+    BRAIN_RUN_METADATA_KEY,
     REVIEW_METADATA_KEY,
+    CoachingOptIn,
+    CoachingRole,
     RunnerBinding,
     Session,
     SessionParticipant,
     SessionReviewAsk,
-    SessionReviewGrant,
 )
-
 
 #: On a request's user: the `Reach` an agent turn's caller token holds its reads to (`limit_reach`).
 REACH_ATTR = "_canopy_session_reach"
@@ -121,6 +122,12 @@ def is_review_conversation(session) -> bool:
     """A chat opened by asking an agent to review one session. Everything in it runs in the
     `published_profiles.SESSION_REVIEW` profile, because what it read stays in its context."""
     return session is not None and REVIEW_METADATA_KEY in (session.metadata or {})
+
+
+def is_brain_conversation(session) -> bool:
+    """A chat that is one run of a brain learning feature (`apps.brain.runs`): no other turn reads it, and
+    what it learns from comes only through `brain_read`."""
+    return session is not None and BRAIN_RUN_METADATA_KEY in (session.metadata or {})
 
 
 def live_review_ask(conversation_id, *, user_id):
@@ -157,6 +164,8 @@ def turn_reach(turn) -> Reach | None:
     conversation = turn_conversation(turn)
     own = Q(pk=conversation.pk) if conversation is not None else Q(pk__in=[])
     turn_id = str(turn.pk)
+    if is_brain_conversation(conversation):
+        return Reach(own, turn_id=turn_id)         # its own conversation; what it reads comes through the brain
     if is_review_conversation(conversation):
         ask = live_review_ask(conversation.pk, user_id=turn.initiator_user_id)
         return Reach(own | Q(pk=ask.session_id) if ask is not None else own, turn_id=turn_id)
@@ -202,13 +211,13 @@ def turn_in_reach(user, turn) -> bool:
     return reach.agent_id is not None and agent is not None and agent.pk == reach.agent_id
 
 
-def visible_session_q(user) -> Q:
+def visible_session_q(user, *, brain: bool = False) -> Q:
     """Sessions `user` may read, *within a workspace they already belong to*.
 
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Six ways in, and no seventh:
+    Six ways in, and a seventh that is the brain's (`_brain_project_q`, inert until its rollout gate):
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -231,21 +240,32 @@ def visible_session_q(user) -> Q:
        agent's OWN login also reads its own work (`_own_work_q`: no creator,
        its agent) — read-only, no pull; never a conversation a person started
        with it, which has a creator.
-    5. you are an agent's own login (`Agent.user`) and the session's person let
-       THAT agent review their sessions (a live `SessionReviewGrant`, the
-       person's own act), and only inside a running turn of that agent whose asker is that
-       same person, nobody, or the agent's admin (`review_grantors`). Their sessions are the ones they created and the
-       runner-discovered sessions on a box they own that are not an agent's own
-       work (`sessions_of_q`). Never a sensitive one: a session carrying any
-       runner requirement is left out (`_not_sensitive_q`, the SQL form of
-       `sensitivity.is_sensitive`, failing closed). Another agent's login, or a
-       person who administers the agent, gains nothing from the grant; revoking
-       it drops the next read.
+    5. you are a COACH of the session's person (`_coach_q`): they opted into coaching
+       (a live `CoachingOptIn`, the person's own act, naming no agent), and you hold a
+       `CoachingRole` covering the workspace the session lives in: an agent's own login or
+       a person designated for that workspace and below (today Trellis and Ada, tomorrow
+       a division's director). Their sessions are the ones they created and the
+       runner-discovered sessions on a box they own that are not an agent's own work
+       (`sessions_of_q`). Never a sensitive one (a session carrying any runner requirement
+       is left out, `_not_sensitive_q`, failing closed), never a contact's, never words
+       the person deleted. An AGENT coach reads only inside a running turn and only as that
+       turn answers to someone (`review_grantors`); a PERSON coach reads as themselves,
+       in the app or on a step-up. Another agent, a plain member, or an admin who holds no
+       role gains nothing; revoking the opt-in or the role drops the next read.
+    7. (the brain's) the session is tied to a project you may read and everyone whose words are in it
+       agreed to project learning (`brain.readers.project_q`): read-only, redacted, stored rows, never
+       a pull; only in a workspace with "Learning reads" on (`brain.learning_reads`).
     6. you administer the runner it is bound to (`RunnerAdmin`, an explicit
        per-box grant its owner made) and it is a runner-discovered session
        (`_runner_admin_q`). READ-ONLY (`role_for` gives a viewer) and no pull
        (`may_pull`): it exists so the person trusted with a box can see what is
        on it and move it off (`may_move`, `transfer-all`), not to work in it.
+
+    **Leg 7 is opt-in, per surface (`brain=True`).** Every other caller (turn content, attachments,
+    the chat socket, exports, Slack, people, push, a turn's reach) reads legs 1 to 6 only, so a
+    surface added later fails closed. Only a surface that serves no words, or runs them through
+    `transcript_read.brain_redacted` (scrubbed and recorded), passes `brain=True`: the session list
+    and search, `GET /{id}`, its scroll-back and human inputs, and the brain's own project listing.
 
     **Known consequence — an orphaned session becomes invisible.**
     `Session.created_by` is `on_delete=SET_NULL`, so deleting a user leaves
@@ -255,17 +275,65 @@ def visible_session_q(user) -> Q:
     everyone. Losing them from a list is the cheaper mistake than handing a
     departed colleague's conversations to every co-tenant.
     """
-    legs = (
+    legs = (_own_legs_q(user) | _brain_project_q(user)) if brain else _own_legs_q(user)
+    reach = reach_of(user)
+    return legs if reach is None else legs & reach.q
+
+
+def _own_legs_q(user) -> Q:
+    """Legs 1 to 6: the sessions of people, boxes, agents and review grants. The brain's project leg
+    (`_brain_project_q`) is the seventh and is kept apart, so `read_through_brain_only` can ask whether
+    it was the ONLY way in."""
+    return (
         Q(created_by=user)
         | Q(participants__user=user)
         | _box_owner_q(user)
         | (Q(origin=Session.ORIGIN_RUNNER) & _agent_admin_q(user))
         | _own_work_q(user)
-        | _review_grant_q(user)
+        | _coach_q(user)
         | _runner_admin_q(user)
     )
-    reach = reach_of(user)
-    return legs if reach is None else legs & reach.q
+
+
+def _brain_project_q(user) -> Q:
+    """Leg 7: a session tied to a project, readable by that project's readers, read-only and redacted,
+    when everyone whose words are in it agreed (`apps.brain.readers.project_q`). Inert for a session whose
+    workspace has "Learning reads" off (`brain.learning_reads`). Never `may_pull`, never a write: `role_for` gives it a
+    viewer, the role every read-only leg gets. A person reading as themselves only: never a request
+    held to a reach (an agent turn's caller token, a turn scoped to one grantor), and never an agent's
+    login (`readers.project_q`); an agent reads a project's sessions through a brain run."""
+    from apps.brain import learning_reads, readers  # noqa: PLC0415 — brain imports this module
+
+    if not learning_reads.any_on() or reach_of(user) is not None:
+        return Q(pk__in=[])
+    return readers.project_q(user)
+
+
+def read_through_brain_only(user, session) -> bool:
+    """Whether the brain's project leg is the ONLY thing that lets `user` read `session`: such a read is
+    redacted (`transcript_read.readable_window`) and recorded. False while no workspace has "Learning reads"
+    on, so this costs one read while the brain reads nothing."""
+    from apps.brain import learning_reads  # noqa: PLC0415 — brain imports this module
+
+    if session is None or not learning_reads.any_on() or not getattr(user, "is_authenticated", False):
+        return False
+    return session.pk in brain_only_ids(user, [session.pk])
+
+
+def brain_only_ids(user, session_ids) -> set:
+    """`read_through_brain_only` for a whole page, in two queries: which of `session_ids` `user` reads
+    ONLY through the brain's project leg. Asked once per request by a list, never per row. Empty while
+    no workspace has "Learning reads" on."""
+    from apps.brain import learning_reads  # noqa: PLC0415 — brain imports this module
+
+    ids = {i for i in session_ids if i}
+    if not ids or not learning_reads.any_on() or not getattr(user, "is_authenticated", False):
+        return set()
+    own = set(Session.objects.filter(pk__in=ids).filter(_own_legs_q(user)).values_list("pk", flat=True))
+    rest = ids - own
+    if not rest:
+        return set()
+    return set(Session.objects.filter(pk__in=rest).filter(_brain_project_q(user)).values_list("pk", flat=True))
 
 
 def _discovered_q() -> Q:
@@ -354,29 +422,42 @@ def is_own_session(user, session) -> bool:
 MAX_LINEAGE_DEPTH = 32
 
 
+def _scheduled_by(user, pks) -> set:
+    """The pks among `pks` driven by a schedule `user` set up: a turn canopy's
+    scheduler fired (`schedule_turns.schedule_initiator` records the schedule's
+    creator as the turn's `initiator_user`)."""
+    if not pks:
+        return set()
+    theirs = staleness.driving_turns().filter(
+        origin=Turn.ORIGIN_CANOPY_SCHEDULER, initiator_user=user)
+    return set(Session.objects.filter(pk__in=pks).filter(Exists(theirs))
+               .values_list("pk", flat=True))
+
+
 def started_by_you_among(user, sessions) -> set:
-    """The pks among `sessions` that `user` started: their own (`is_own_session`), or
-    one dispatched from a conversation of theirs — an agent they asked created it
-    under its own login, so `created_by` is the agent, but `parent_session` leads
-    back to the chat they typed in. Two queries per level of nesting for the whole page.
+    """The pks among `sessions` that `user` started: their own (`is_own_session`),
+    one a schedule of theirs fired (`_scheduled_by`), or one dispatched from either —
+    an agent created it under its own login, so `created_by` is the agent, but
+    `parent_session` leads back to the chat they typed in or the scheduled run they
+    set up. A few queries per level of nesting for the whole page.
 
     A DISPLAY rule for the "Started by me" filter, never an access one: it grants
     nothing, which is why it is not folded into `sessions_of_q` (review grants and
     coaching read that)."""
     if not getattr(user, "is_authenticated", False):
         return set()
-    mine, frontier = set(), {}  # frontier: row pk -> the ancestor we are asking about
-    for s in sessions:
-        if is_own_session(user, s):
-            mine.add(s.pk)
-        elif s.parent_session_id:
-            frontier[s.pk] = s.parent_session_id
+    mine = {s.pk for s in sessions if is_own_session(user, s)}
+    mine |= _scheduled_by(user, {s.pk for s in sessions} - mine)
+    # frontier: row pk -> the ancestor we are asking about
+    frontier = {s.pk: s.parent_session_id for s in sessions
+                if s.pk not in mine and s.parent_session_id}
     for _ in range(MAX_LINEAGE_DEPTH):
         if not frontier:
             break
         asked = set(frontier.values())
         own = set(Session.objects.filter(sessions_of_q([user.pk]), pk__in=asked)
                   .values_list("pk", flat=True))
+        own |= _scheduled_by(user, asked - own)
         parents = dict(Session.objects.filter(pk__in=asked - own, parent_session_id__isnull=False)
                        .values_list("pk", "parent_session_id"))
         nxt = {}
@@ -396,34 +477,54 @@ def _not_sensitive_q() -> Q:
     return ~Q(metadata__has_key=rr.METADATA_KEY)
 
 
+def coach_scope(user) -> set[str]:
+    """The workspaces `user` coaches: every live `CoachingRole` held by `user` (a person) or by the
+    agent whose own login `user` is, each covering its workspace and everything below it.
+    Empty for anyone who coaches nothing. Membership is the caller's tenant gate."""
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    from apps.workspaces import services as wsvc  # noqa: PLC0415 — as `_tenant_slugs`
+
+    roots = set(CoachingRole.objects.filter(revoked_at__isnull=True)
+                .filter(Q(user=user) | Q(agent__user=user)).values_list("workspace_id", flat=True))
+    return roots | wsvc.descendant_slugs(roots) if roots else set()
+
+
 def review_grantors(user):
-    """THE rule for leg 5, in one place: whose review grants `user`'s request may use.
+    """THE rule for who a coach may read, in one place: the opt-ins `user`'s request may use.
 
-    `user` must be an agent's own login, and the request must be made INSIDE a running
-    turn of that agent (`turn_asker.standing`, worked out from the turn's server-side
-    record, never from anything the agent sends). Then:
+    `user` is a coach (`coach_scope`), and an opt-in counts only for people who are members of a
+    workspace the coach covers. Then:
 
-    * a turn a person asked for (verified, or the person an agent was started for)
-      reads the sessions of THAT person alone — "coach me" is me only — so only their
-      own grant counts;
-    * a turn canopy started on a PERSON's account (a schedule, an agent task's follow-up)
-      answers to that person, as if they had asked: whoever may create it chose its prompt;
-    * a turn nobody asked for (a schedule or trigger no person owns, or a dispatch from
-      such a turn: the server stamps `unattended_dispatch`) sees every grantor on the
-      ROSTER, which is what the coaching sweep needs, and reads none of their sessions
-      (`_review_grant_q`) unless it was dispatched for one of them (`turn_asker.READS_FOR`),
-      when both the roster and the reads are that one person;
-    * a turn asked by an administrator of the agent itself reads every grantor's: they
-      run it for all it serves (`Agent.is_admin`);
-    * no turn at all — a stored token, a session, a socket, a finished, confined or
-      unverified-asker turn, or a dispatch from a turn like those — reads nobody's: it
-      cannot show whom it is answering to.
+    * a PERSON coach reads every such person, as themselves (no turn is involved);
+    * an AGENT coach must make the request INSIDE a running turn of that agent (`turn_asker.standing`,
+      worked out from the turn's server-side record, never from anything the agent sends). Then:
+      - a turn a person asked for (verified, or the person an agent was started for) reads the sessions
+        of THAT person alone, "coach me" is me only, so only their own opt-in counts;
+      - a turn canopy started on a PERSON's account (a schedule, an agent task's follow-up) answers to
+        that person, as if they had asked: whoever may create it chose its prompt;
+      - a turn nobody asked for (a schedule or trigger no person owns, or a dispatch from such a turn:
+        the server stamps `unattended_dispatch`) sees every opt-in in scope, which is what the coaching
+        sweep needs, and reads none of their sessions (`_coach_q`) unless it was dispatched for one of
+        them (`turn_asker.READS_FOR`), when both the roster and the reads are that one person;
+      - a turn asked by an administrator of the agent reads every opt-in in scope: they run it for all
+        it serves (`Agent.is_admin`);
+      - no turn at all (a stored token, a session, a socket, a finished, confined or unverified-asker
+        turn, or a dispatch from a turn like those) reads nobody's: it cannot show whom it answers to.
 
-    Returns a `SessionReviewGrant` queryset (user ids via `.values("user_id")`). The
-    agent's roster of who enrolled (`granted-to-me`) is this same queryset."""
+    Returns a `CoachingOptIn` queryset (user ids via `.values("user_id")`). The coach's roster of who
+    enrolled (`granted-to-me`) is this same queryset."""
+    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
     from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
+    from apps.workspaces.models import WorkspaceMembership  # noqa: PLC0415 — as `_tenant_slugs`
 
-    grants = SessionReviewGrant.objects.filter(agent__user=user, revoked_at__isnull=True)
+    scope = coach_scope(user)
+    if not scope:
+        return CoachingOptIn.objects.none()
+    in_scope = WorkspaceMembership.objects.filter(workspace_id__in=scope).values("user_id")
+    grants = CoachingOptIn.objects.filter(revoked_at__isnull=True, user_id__in=in_scope)
+    if not Agent.objects.filter(user=user).exists():
+        return grants                                   # a person coaching as themselves
     stand = turn_asker.standing(user)
     if stand is None:
         return grants.none()
@@ -434,20 +535,62 @@ def review_grantors(user):
     return grants.filter(user_id=stand.person_id)
 
 
-def _review_grant_q(user) -> Q:
-    """Leg 5: the sessions of the people `review_grantors` allows this request to read.
-    Empty for anyone else, and for a turn nobody asked that names no one grantor: it holds the
-    roster and no transcript, so a dispatch from an older plugin, with no scope, reads nothing.
-    Never a session whose words its person deleted: a coach has no business with the row left."""
+def _coach_q(user) -> Q:
+    """Leg 5: the sessions of the people `review_grantors` allows this request to read, in the
+    workspaces the coach covers. Empty for anyone else, and for an agent turn nobody asked that names no
+    one opt-in: it holds the roster and no transcript, so a dispatch from an older plugin, with no scope,
+    reads nothing. Never a session whose words were deleted, a contact's, or a sensitive one."""
     if not getattr(user, "is_authenticated", False):
         return Q(pk__in=[])
+    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
     from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
 
-    stand = turn_asker.standing(user)
-    if stand is not None and stand.unattended and stand.reads_for is None:
+    if Agent.objects.filter(user=user).exists():
+        stand = turn_asker.standing(user)
+        if stand is not None and stand.unattended and stand.reads_for is None:
+            return Q(pk__in=[])
+    scope = coach_scope(user)
+    if not scope:
         return Q(pk__in=[])
-    return (sessions_of_q(review_grantors(user).values("user_id"))
-            & Q(contact__isnull=True, content_deleted_at__isnull=True) & _not_sensitive_q())
+    return (_grantors_sessions_q(review_grantors(user).values_list("user_id", flat=True), scope)
+            & Q(contact__isnull=True, content_deleted_at__isnull=True) & _not_sensitive_q()
+            & ~Q(pk__in=removed_from_learning()))
+
+
+def _grantors_sessions_q(grantor_ids, scope) -> Q:
+    """The grantors' own sessions in the workspaces the coach covers, each person held to what their learning
+    consent allows coaching (`brain.eligibility.coaching_allows`): the workspaces it covers, less any a standing
+    rule of theirs denies to coaching. Coaching is the `individual` class; a person who narrowed it narrowed
+    coaching too."""
+    from apps.brain.eligibility import coaching_allows  # noqa: PLC0415 — brain imports this module
+    from apps.brain.models import LearningConsent  # noqa: PLC0415 — brain imports this module
+
+    ids = list(grantor_ids)
+    if not ids:
+        return Q(pk__in=[])
+    scoped = {c.user_id: c for c in LearningConsent.objects.filter(revoked_at__isnull=True, user_id__in=ids)
+              if c.workspaces or c.standing_rules}
+    q = sessions_of_q([i for i in ids if i not in scoped]) & Q(workspace_id__in=scope)
+    for uid, consent in scoped.items():
+        within = {ws for ws in scope if coaching_allows(consent, ws)}
+        if within:
+            q |= sessions_of_q([uid]) & Q(workspace_id__in=within)
+    return q
+
+
+def removed_from_learning():
+    """Sessions someone in them took out of learning (`brain.consent.exclude`): unavailable to every
+    learning read, coaching included, for as long as the exclusion stands."""
+    from apps.brain.models import SourceExclusion  # noqa: PLC0415 — brain imports this module
+
+    return SourceExclusion.objects.filter(source__session__isnull=False).values("source__session_id")
+
+
+def is_removed_from_learning(session) -> bool:
+    """`removed_from_learning` for one session in hand."""
+    from apps.brain.models import SourceExclusion  # noqa: PLC0415 — brain imports this module
+
+    return SourceExclusion.objects.filter(source__session_id=session.pk).exists()
 
 
 def _agent_admin_q(user) -> Q:
@@ -494,8 +637,9 @@ def _tenant_slugs(user) -> set:
     return set(wsvc.user_workspace_slugs(user))
 
 
-def readable_sessions(user, *, workspace_slugs=None):
-    """Every session `user` may read — the tenant gate AND the six legs.
+def readable_sessions(user, *, workspace_slugs=None, brain: bool = False):
+    """Every session `user` may read — the tenant gate AND the six legs, and the brain's
+    project leg too with `brain=True` (`visible_session_q`: only a surface that scrubs).
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
     never widen past the caller's own workspaces.
@@ -506,7 +650,7 @@ def readable_sessions(user, *, workspace_slugs=None):
     if workspace_slugs is not None:
         slugs &= set(workspace_slugs)
     return (Session.objects.filter(Q(workspace_id__in=slugs) | _guest_app_q(user))
-            .filter(visible_session_q(user)).distinct())
+            .filter(visible_session_q(user, brain=brain)).distinct())
 
 
 def _guest_app_q(user) -> Q:
@@ -525,23 +669,25 @@ def _guest_app_q(user) -> Q:
     return q
 
 
-def readable_ids(user, session_ids) -> set:
+def readable_ids(user, session_ids, *, brain: bool = False) -> set:
     """Which of `session_ids` `user` may read — `can_read` for a whole list, in
     one query. The same predicate (`readable_sessions`), so it cannot disagree
     with `can_read`; it exists because a page of turns asked once per row."""
     ids = {i for i in session_ids if i}
     if not ids or not getattr(user, "is_authenticated", False):
         return set()
-    return set(readable_sessions(user).filter(pk__in=ids).values_list("pk", flat=True))
+    return set(readable_sessions(user, brain=brain).filter(pk__in=ids).values_list("pk", flat=True))
 
 
-def can_read(user, session) -> bool:
+def can_read(user, session, *, brain: bool = False) -> bool:
+    """Whether `user` may read `session`'s words as they are: legs 1 to 6. With `brain=True`, the
+    brain's project leg too, for a surface that serves the words scrubbed (`visible_session_q`)."""
     if session is None or not getattr(user, "is_authenticated", False):
         return False
-    return readable_sessions(user).filter(pk=session.pk).exists()
+    return readable_sessions(user, brain=brain).filter(pk=session.pk).exists()
 
 
-def role_for(user, session) -> str | None:
+def role_for(user, session, *, brain: bool = False) -> str | None:
     """The caller's EFFECTIVE role in this session, or None if they cannot read it.
 
     The HIGHER of two sources. The first is what the rule gives you: the creator
@@ -552,8 +698,11 @@ def role_for(user, session) -> str | None:
     somebody else's chat. A row can raise you but never demote what the rule
     already gives you. An auto-join row would make an agent's owner a mere "editor"
     of their own agent's thread, unable to share it.
+
+    Without `brain`, None for a reader whose only way in is the brain's project leg: every write,
+    share, pull and the chat socket ask this, so that leg never acts. With it, such a reader is a viewer.
     """
-    if not can_read(user, session):
+    if not can_read(user, session, brain=brain):
         return None
     ranks = {SessionParticipant.VIEWER: 0, SessionParticipant.EDITOR: 1, SessionParticipant.OWNER: 2}
     row = (SessionParticipant.objects.filter(session=session, user=user)

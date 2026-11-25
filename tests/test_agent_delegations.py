@@ -41,48 +41,11 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
 from tests.fixtures.device_proof import accept_device_proof
+from tests.fixtures.fake_github import FakeGitHub
 from tests.fixtures.machines import a_machine
 from tests.fixtures.vault_zk import ref
 
 pytestmark = pytest.mark.django_db
-
-EXPIRY = "2026-12-01 10:00:00 UTC"
-
-
-class FakeGitHub:
-    """Answers `/user` and the two probes like GitHub does. `pr` / `push` map a
-    repo to a probe's status code: 422 allowed, 403 no permission, 404 unseen.
-    Push defaults to whatever the PR probe says, as it does for a token that
-    has both permissions or neither."""
-
-    def __init__(self, *, login="olive", pr=None, push=None, user_status=200, expiry=EXPIRY):
-        self.login, self.pr, self.user_status, self.expiry = login, pr or {}, user_status, expiry
-        self.push = push or {}
-        self.probed: list[str] = []
-
-    def _resp(self, status, body=None, headers=None):
-        r = mock.Mock(status_code=status, headers=headers or {})
-        r.json.return_value = body or {}
-        return r
-
-    def get(self, url, **_):
-        assert url.endswith("/user")
-        return self._resp(self.user_status, {"login": self.login, "id": 4242, "name": "Olive Owner"},
-                          {"github-authentication-token-expiration": self.expiry} if self.expiry else {})
-
-    def post(self, url, json=None, **_):
-        path = url.split("/repos/", 1)[1]
-        if path.endswith("/git/refs"):
-            repo = path.rsplit("/git/refs", 1)[0]
-            # A ref at a commit that cannot exist: nothing is ever created.
-            assert json["ref"].startswith("refs/heads/canopy-permission-probe/")
-            assert json["sha"] == "0" * 39 + "1"
-            return self._resp(self.push.get(repo, self.pr.get(repo, 404)))
-        repo = path.rsplit("/pulls", 1)[0]
-        self.probed.append(repo)
-        assert json["head"].startswith("canopy-permission-probe/")  # never a real branch
-        return self._resp(self.pr.get(repo, 404))
-
 
 @pytest.fixture
 def github():
@@ -168,9 +131,9 @@ def test_the_owner_delegates_a_working_token_sealed_to_the_machines_that_run_the
     assert entry.identity == {"login": "olive", "user_id": 4242, "name": "Olive Owner"}
     assert entry.checks == [{"repo": "dimagi-internal/echo", "ok": True,
                              "detail": "can push and open pull requests"}]
-    assert entry.provider_expires_at == dt.datetime(2026, 12, 1, 10, 0, tzinfo=dt.UTC)
+    assert entry.provider_expires_at == dt.datetime(2099, 12, 1, 10, 0, tzinfo=dt.UTC)
     assert accounts.label(entry, agent) == (
-        "GitHub · delegated by Olive · GitHub says it expires 1 Dec 2026")
+        "GitHub · delegated by Olive · GitHub says it expires 1 Dec 2099")
 
 
 def test_a_token_is_refused_when_no_machine_that_runs_the_agent_can_open_it(agent, owner, github):

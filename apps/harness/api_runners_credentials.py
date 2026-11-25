@@ -22,6 +22,7 @@ from . import (
     routing,
     runner_vault_resolve,
     sensitivity,
+    stored_agents,
 )
 from . import runners as harness_runners
 from .api import (  # noqa: E402
@@ -320,6 +321,11 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
     agent = delegations.turn_agent(turn)
     if agent is not None and not runner_may_hold_agent(runner, agent):
         raise HttpError(404, "turn not found")
+    if stored_agents.is_stored(agent):
+        # Its definition is kept in canopy-web: no repo to push to, so no identity.
+        raise ProblemError(409, "No GitHub identity for this turn",
+                           detail=f"{agent.slug} is a stored agent: it has no GitHub repo, and its "
+                                  "turns get no GitHub identity")
     try:
         issued = delegations.github_token_for_turn(turn)
     except delegations.DelegationError as exc:
@@ -412,6 +418,11 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
     runner = runner_or_404(request, runner_id)
     out = []
     for agent in routing.agents_routed_to(runner):
+        if stored_agents.is_stored(agent):
+            out.append({"agent_slug": agent.slug, "status": "ok",
+                        "detail": "a stored agent: no GitHub repo, so no token to check",
+                        "login": "", "expires_at": None})
+            continue
         delegations.check_github(agent)
         status, detail = delegations.readiness(agent)
         st = delegations.status(agent)

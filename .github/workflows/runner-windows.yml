@@ -74,7 +74,7 @@ jobs:
         with:
           enable-cache: true
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
       # Both steps run even when the first fails: each suite is its own finding.
       - name: canopy_runner tests
         if: ${{ !cancelled() }}
@@ -114,7 +114,7 @@ jobs:
       # scripts), unsigned.
       - name: Build the runtime payload
         run: |
-          uv run --no-project --python 3.12 python runner/packaging/build_payload.py `
+          uv run --no-project --python 3.13 python runner/packaging/build_payload.py `
             --platform windows-x86_64 --out "$env:RUNNER_TEMP\payload" --cache "$env:RUNNER_TEMP\cache"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -134,7 +134,7 @@ jobs:
             $out = "$env:RUNNER_TEMP\dist-$k"
             ./runner/packaging/windows/build_installer.ps1 -Payload $payload -OutDir $out
             $exe = Join-Path $out 'Canopy-Runner-Setup-windows-x86_64.exe'
-            uv run --no-project --python 3.12 python runner/packaging/manifest.py record `
+            uv run --no-project --python 3.13 python runner/packaging/manifest.py record `
               --platform windows-x86_64 --sha $shas[$k] --installer $exe --update $exe `
               --out (Join-Path $out 'windows-x86_64.json')
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

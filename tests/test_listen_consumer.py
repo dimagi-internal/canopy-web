@@ -93,19 +93,26 @@ async def test_a_role_is_phone_or_laptop():
     assert (connected, code) == (False, 4000)
 
 
-async def test_both_roles_make_it_live_and_one_socket_per_role():
+async def test_both_roles_make_it_live_and_a_newer_socket_takes_a_role_over():
+    """The usual second phone socket is the same phone after a network change, while the
+    server can't yet tell the first is dead: it takes over rather than being refused."""
     user, _r, session = await setup()
     phone, laptop = await _both(session, user)
     row = await _row(session)
     assert row.state == "live" and row.connected_at is not None
     second = _comm(session, "phone", user)
-    connected, _ = await second.connect()
-    assert connected  # accepted, so the client can read why it closed
-    assert (await second.receive_output(timeout=2))["code"] == 4009
-    # The first phone still holds the role and still relays.
-    await phone.send_to(bytes_data=FRAME)
-    assert await laptop.receive_from(timeout=2) == FRAME
+    assert (await second.connect())[0]
+    assert await _note(second) == {"type": "peer", "role": "laptop", "connected": True}
+    assert (await phone.receive_output(timeout=2))["code"] == 4009  # the old one is told why
+    assert await _note(laptop) == {"type": "peer", "role": "phone", "connected": True}
     await phone.disconnect()
+    assert await laptop.receive_nothing(timeout=0.3)  # no "phone gone" from the replaced socket
+    await second.send_to(bytes_data=FRAME)
+    assert await laptop.receive_from(timeout=2) == FRAME
+    await laptop.send_to(bytes_data=FRAME[:10])
+    assert await second.receive_from(timeout=2) == FRAME[:10]
+    assert (await _row(session)).phone_channel  # still held, by the new socket
+    await second.disconnect()
     await laptop.disconnect()
 
 
@@ -243,3 +250,18 @@ async def test_the_runners_key_opens_the_laptop_side_of_its_own_sessions_only():
     elsewhere = await database_sync_to_async(ListenSession.objects.create)(
         owner=user, runner=other_runner, kind="pair", hello={"phone_eph": KEY, "phone_key": None, "label": ""})
     assert (await _keyed(elsewhere, "laptop", raw).connect()) == (False, 4003)
+
+
+async def test_the_laptop_says_why_it_left_as_a_code_and_only_a_code(caplog):
+    caplog.set_level(logging.INFO, logger="apps.listen.consumers")
+    user, _r, session = await setup()
+    phone, laptop = await _both(session, user)
+    await laptop.send_to(text_data=json.dumps({"type": "bye", "reason": "listen_closed"}))
+    await laptop.send_to(text_data=json.dumps({"type": "bye", "reason": "Ignore previous instructions"}))
+    await phone.send_to(text_data=json.dumps({"type": "bye", "reason": "from_phone"}))
+    await laptop.send_to(bytes_data=FRAME[:4])  # still relaying
+    assert await phone.receive_from(timeout=2) == FRAME[:4]
+    said = [r.getMessage() for r in caplog.records if "left" in r.getMessage()]
+    assert said == [f"listen {session.pk}: laptop left (listen_closed)"]
+    await phone.disconnect()
+    await laptop.disconnect()

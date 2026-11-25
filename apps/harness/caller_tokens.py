@@ -218,3 +218,21 @@ _PAGE_INVOKE = re.compile(r"^/api/(w/[^/]+/)?canopy-sessions/[0-9a-f-]{36}/page-
 def drives_the_page(method: str, path: str) -> bool:
     """Whether a REST write only drives the asker's open page (`PAGE_DRIVE_TOOLS`)."""
     return method.upper() == "POST" and bool(_PAGE_INVOKE.match(path))
+
+
+#: The routes `canopy secret list` / `exec` read (`canopy_sessions/secrets_api.py`). They
+#: are outside MCP, but the permission is the chat key beside the token, not the token.
+_CHAT_SECRETS = re.compile(r"^/api/(w/[^/]+/)?session-secrets/key(/[A-Z][A-Z0-9_]{0,63})?/?$")
+
+
+def reads_its_chat_secrets(grant: Grant, request) -> bool:
+    """Whether this is a read of the secrets shared with the token's OWN chat: a chat-
+    secret route, a GET, and a chat key that names the conversation the token is for.
+    The value is still sealed to the machine running that chat, so this hands a
+    session nothing its own chat key did not already name."""
+    if request.method != "GET" or not _CHAT_SECRETS.match(request.path_info):
+        return False
+    from apps.canopy_sessions import chat_keys  # noqa: PLC0415 — only a chat-secret read pays for it
+
+    keyed = chat_keys.from_request(request)
+    return keyed is not None and keyed.pk == grant.turn.chat_session_id

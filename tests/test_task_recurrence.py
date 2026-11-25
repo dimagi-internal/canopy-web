@@ -253,6 +253,14 @@ def test_daily_spawns_once_a_day(w):
     assert _instances(t["key"]) == [dt.date(2026, 11, 9), dt.date(2026, 11, 10)]
 
 
+def test_weekdays_spawns_monday_to_friday_and_skips_the_weekend(w):
+    t = _template(w["c"], every="weekdays", auto=True)
+    _created_on(t["key"], _at(2026, 11, 13, 8))  # a Friday
+    for day in range(13, 18):  # Fri, Sat, Sun, Mon, Tue
+        recurrence.spawn_due(_at(2026, 11, day))
+    assert _instances(t["key"]) == [dt.date(2026, 11, 13), dt.date(2026, 11, 16), dt.date(2026, 11, 17)]
+
+
 def test_weekly_spawns_on_monday_due_on_its_weekday_and_not_mid_week_after_creation(w):
     t = _template(w["c"], every="week", weekday="thu", auto=True)
     _created_on(t["key"], _at(2026, 11, 11))  # a Wednesday: this week had begun

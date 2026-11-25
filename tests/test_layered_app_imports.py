@@ -53,11 +53,11 @@ LAYERS: list[tuple[str, set[str]]] = [
     ("kit", {"common", "events", "workspaces", "api"}),
     # L1 core — the agent/turn/session substrate and who may reach it.
     ("core", {"agents", "harness", "canopy_sessions", "tokens", "contacts", "admission", "retention",
-              "realtime", "push", "passkeys", "embedding", "host_grants", "mcp_apps_host", "attention", "agent_tasks"}),
+              "realtime", "push", "passkeys", "embedding", "host_grants", "mcp_apps_host", "attention", "agent_tasks", "brain"}),
     # L2 features — framework surfaces built on the core; nothing below names them.
     ("features", {"agent_runs", "capabilities", "connections", "feedback", "github_connect", "huddles",
                   "inbound", "issues", "mcp", "oauth_server", "plugins", "session_sharing", "slack",
-                  "system", "timeline", "threads", "approvals"}),
+                  "system", "timeline", "threads", "approvals", "agent_definitions"}),
     # L3 product — canopy's own features (the tiers in test_architecture_boundary).
     ("product", _product_tier()),
     # L4 the composition root.

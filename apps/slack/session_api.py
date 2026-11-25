@@ -103,7 +103,7 @@ def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
                                  mode=payload.mode, session=session, workspace=payload.workspace,
                                  own_turn=own, actions=[a.model_dump() for a in payload.actions],
                                  exclusive=payload.exclusive)
-    if result.status == share.SENSITIVE:
+    if result.status in (share.SENSITIVE, share.CANNOT_WRITE):
         raise HttpError(403, result.message)
     if not result.ok:
         raise HttpError(422 if result.status == share.BAD_REQUEST else 409, result.message)

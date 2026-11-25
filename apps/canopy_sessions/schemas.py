@@ -12,6 +12,8 @@ from pydantic import AliasChoices, Field, field_validator
 from apps.harness import clis
 from apps.harness.schemas import ChatSendOrigin, ParentIn, TurnOut, chat_send_origin
 
+from . import transcript_read
+
 
 class ConversationKeyWrapIn(Schema):
     """A conversation key's private half wrapped to a vault key: `{alg: "ecdh-es", epk,
@@ -297,6 +299,12 @@ class MessageOut(Schema):
     #: conversation's own people on its chat surfaces (`sensitivity.readable`); null
     #: for every other reader and every ordinary conversation.
     sealed: str | None = None
+    #: A line on the person's side of the transcript that no person typed — an
+    #: agent's scheduled wake-up, a skill's instructions, a command a trigger ran
+    #: (`Message.typed`, the `transcript_read.is_human_input` rule). The chat shows
+    #: it on the person's side but not as their words. True or null, never false:
+    #: null whenever unsure, so an unjudged line stays the person's.
+    automatic: bool | None = None
 
     @staticmethod
     def resolve_id(obj) -> str:
@@ -311,6 +319,12 @@ class MessageOut(Schema):
         if isinstance(obj, MessageOut):  # already built (a response re-validates it)
             return obj.sealed
         return getattr(obj, "readable_sealed", None)
+
+    @staticmethod
+    def resolve_automatic(obj) -> bool | None:
+        if isinstance(obj, MessageOut):  # already built (a response re-validates it)
+            return obj.automatic
+        return True if transcript_read.is_automatic(obj) else None
 
 
 class SealedKeyWrapOut(Schema):
@@ -485,9 +499,11 @@ class SessionOut(Schema):
     # (`Runner.signed_out`): it takes no turns, and `runner_online` alone reads
     # it as fine.
     runner_signed_out: bool = False
-    # The model the bound runner's sessions start on, as its settings name it
-    # (`opus[1m]`, from its heartbeat) — what the chat sizes the context window
-    # by. "" when unbound, or the box does not report it.
+    # The model the conversation runs on (`opus[1m]`): the one it holds from its
+    # first claim (`Session.cli_model`), else its agent's `cli_models`,
+    # else the bound box's reported setting, else the server's DEFAULT_CLI_MODELS
+    # (`session_row._session_model`) — what the chat sizes the context window by.
+    # "" when unbound.
     runner_model: str = ""
     session_key: str = ""
     #: The agent CLI this conversation runs on ("claude-code", "codex"), chosen by its
@@ -525,8 +541,8 @@ class SessionOut(Schema):
     #: private conversation by this, since it keeps no title. Not content.
     started_by_name: str = ""
     #: The session is the reader's own: they started it, it was found on their own
-    #: box and is not an agent's own work (`access.sessions_of_q`), or an agent they
-    #: asked dispatched it from a conversation of theirs (`access.started_by_you_among`).
+    #: box and is not an agent's own work (`access.sessions_of_q`), a schedule they set
+    #: up fired it, or an agent dispatched it from one of those (`access.started_by_you_among`).
     started_by_you: bool = False
     #: The page it was started on: the `resource` its page first declared, set once
     #: (`Session.origin_resource`). "" when it was not started on a page that names one.

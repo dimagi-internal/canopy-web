@@ -244,8 +244,11 @@ read and never written, when no runner has reported it within `SESSION_LIVE_WIND
   this list are the same `active()` set.
 - On the cloud, `staleness.CLOUD_CHAT_IDLE` closes a person's auto-mode web chat (or a
   Slack-thread session, or the work session of mail a member sent,
-  `staleness.person_mail_q`); a session an agent started ran on its own and closes once
-  nothing is in flight, as does one from a mail trigger or an outside sender. Manual
+  `staleness.person_mail_q`, or a session an agent started for a person,
+  `staleness.for_a_person_q`: that person is waiting on its answer). Any other session an
+  agent started ran on its own and closes once nothing is in flight, as does one from a
+  mail trigger or an outside sender. The two person legs stay out of `ran_on_its_own`,
+  so the Feed and pushes still treat them as auto work. Manual
   sessions and a dialog up hold one open.
 - `GET /api/canopy-sessions/?reply=true` stamps every row with `feed_status`; the Feed
   only sorts and counts that verdict. The "is asking" / "is done" pushes go to the first
@@ -318,6 +321,14 @@ read and never written, when no runner has reported it within `SESSION_LIVE_WIND
   (`transcript_ingest.ORDINAL_SCHEME`); a stale session is reset automatically on its next write.
 - The runner reports sessions change-driven; `harness.signals.sessions_reported` fans the
   owner's sessions out as `supervisor.sessions` frames.
+- **A page turn's reply streams while it is written.** A stored assistant row arrives only
+  when the reply is finished, so the cloud runner also posts the reply being written, whole
+  so far, to `POST /api/harness/turns/{id}/live-text` (`cloud_runner._LiveText`, from ACP's
+  `agent_message_chunk`s via `canopy_acp.turn.drive_turn`'s `on_text`). canopy-web fans it out
+  as `chat.live_text` under a `live:<turn>:<n>` id and never stores it (a sensitive
+  conversation's words are not streamed at all); on AG-UI it rides `CUSTOM`. The client
+  (`sessionReducer.withoutFinishedLive`) drops a live reply once a stored reply after the last
+  human line starts with its text, so a reply is never shown twice.
 
 ## The transcript row contract
 

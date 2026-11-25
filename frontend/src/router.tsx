@@ -21,6 +21,9 @@ import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { PairRunnerPage } from './pages/PairRunnerPage'
 import { ListenPage } from './pages/ListenPage'
+import { ExtPanelPage } from './ext/ExtPanelPage'
+import { ExtSignedInPage } from './ext/ExtSignedInPage'
+import { VoiceNotePage } from './pages/VoiceNotePage'
 import { HostSitesPage } from './pages/HostSitesPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceRetentionPage } from './pages/WorkspaceRetentionPage'
@@ -71,6 +74,7 @@ import { ProjectRefRedirect } from './pages/work/ProjectRefRedirect'
 import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import { RunnerPage, RunnerTabRoute } from './pages/runner/RunnerPage'
+import { RunnerRedirect } from './pages/runner/RunnerRedirect'
 import { VaultPage } from './pages/vault/VaultPage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
@@ -80,6 +84,7 @@ import NarrativeReviewPage from './pages/NarrativeReviewPage'
 import { PublicLayout } from './components/PublicLayout'
 import { AboutPage } from './pages/AboutPage'
 import SupervisorPage from '@/pages/SupervisorPage'
+import { BrainPage } from '@/pages/BrainPage'
 import ActivityPage from '@/pages/ActivityPage'
 import SchedulesPage from './pages/SchedulesPage'
 import { scopedPath } from './lib/scopedLinks'
@@ -135,6 +140,9 @@ const TriggersSection = lazySection(() =>
 )
 const AgentSettingsSection = lazySection(() =>
   import('./pages/agents/AgentSettingsSection').then((m) => ({ default: m.AgentSettingsSection })),
+)
+const AgentDefinitionSection = lazySection(() =>
+  import('./pages/agents/AgentDefinitionSection').then((m) => ({ default: m.AgentDefinitionSection })),
 )
 const AgentCapabilitiesSection = lazySection(() =>
   import('./pages/agents/AgentCapabilitiesSection').then((m) => ({ default: m.AgentCapabilitiesSection })),
@@ -331,10 +339,15 @@ export const routeTable: RouteObject[] = [
       // What the runner's menu bar opens: it knows no workspace.
       { path: '/apps', element: <TenantRedirect to="apps?tab=personal" /> },
       { path: '/supervisor', element: <SupervisorPage /> },
+      // The app's "Settings…": its runner's page, before it knows the workspace.
+      { path: '/runners/:runnerId', element: <RunnerRedirect /> },
+      { path: '/runners/:runnerId/:tab', element: <RunnerRedirect /> },
       { path: '/ide', element: <LazySection><IdePage /></LazySection> },
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },
+      // The brain is a workspace's page now (/w/:workspace/brain); the old flat link lands on the active workspace's.
+      { path: '/brain', element: <TenantRedirect to="brain" /> },
       { path: '/new-workspace', element: <FirstRunPage alwaysOfferForm /> },
       // Requests for access to Canopy itself (the public site's form) — they
       // name no workspace, so they live outside /w/:workspace.
@@ -423,6 +436,8 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/health', element: <WorkspaceHealthPage /> },
       { path: '/w/:workspace/analytics', element: <WorkspaceAnalyticsPage /> },
       { path: '/w/:workspace/network', element: <WorkspaceNetworkPage /> },
+      // Canopy learning for this workspace and the ones below it, as the viewer's role there allows.
+      { path: '/w/:workspace/brain', element: <BrainPage /> },
       { path: '/w/:workspace/shareouts', element: <ShareoutsPage /> },
       { path: '/w/:workspace/shareouts/:period', element: <ShareoutsPage /> },
       { path: '/w/:workspace/walkthroughs', element: <WalkthroughsPage /> },
@@ -531,6 +546,8 @@ export const routeTable: RouteObject[] = [
           { path: 'mail', element: <LazySection><AgentMailSection /></LazySection> },
           // Cloud capabilities it declares, and the workspace admin's grants.
           { path: 'capabilities', element: <LazySection><AgentCapabilitiesSection /></LazySection> },
+          // A stored agent's files, revisions and draft (no git repo; apps/agent_definitions).
+          { path: 'definition', element: <LazySection><AgentDefinitionSection /></LazySection> },
           // Settings is tabs (`settings/security`, …); bare `settings` opens the
           // tab an old `#anchor` belongs to (settingsTabs.ts), else Overview.
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
@@ -598,6 +615,15 @@ export const routeTable: RouteObject[] = [
   // signed-out phone to sign in. The server serves its shell to anyone so the page can
   // lift the pairing secret out of `#pair=` before that bounce (pairLink.ts).
   { path: '/listen', element: <ListenPage /> },
+  // A voice note to an agent (the account menu's Voice assistant, from the app of that name):
+  // the paired laptop reads it, then it opens a chat. Same phone screen as /listen.
+  { path: '/listen/voice', element: <VoiceNotePage /> },
+  // The browser extension's side panel (src/ext/): framed by the extension, chrome-less, and
+  // reachable signed out so it can offer its own sign-in (a framed Google sign-in is refused).
+  // The server serves it framable only by the allowed extension origins (apps/embedding/extension.py).
+  { path: '/ext/panel', element: <ExtPanelPage /> },
+  // Where the panel's sign-in tab lands; signed in like any page, never framed.
+  { path: '/ext/signed-in', element: <ExtSignedInPage /> },
   // Public, chrome-less route — mounted OUTSIDE AppLayout so anonymous
   // visitors aren't bounced to login by the app shell's authed calls. Carries
   // its own light-themed `errorElement` (see `ShareRouteErrorBoundary`) so

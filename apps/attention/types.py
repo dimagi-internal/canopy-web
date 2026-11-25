@@ -1,10 +1,13 @@
 """The one shape every attention source returns — `AttentionRow`.
 
-A thing waiting on a person, wherever it lives: a chat whose agent needs the
-next message, a task asking for a decision or parked on them, a request to join
-a workspace. Each owning app builds its own items (`<app>/attention.py`), so the
-rule for "is this waiting on you" stays where the thing is; this module only
-fixes the shape everyone reads — Home, the API (and so MCP), and any client.
+A thing waiting on a person, wherever it lives: a task asking for a decision or
+parked on them, a request to join a workspace, a sign-off. Sessions are not
+attention items: Home lists the sessions you started from the session list
+itself (`/api/me/sessions/`, `started_by_you`), the same list /ide reads.
+
+Each owning app builds its own items (`<app>/attention.py`), so the rule for
+"is this waiting on you" stays where the thing is; this module only fixes
+the shape everyone reads — Home, the API (and so MCP), and any client.
 """
 from __future__ import annotations
 
@@ -16,19 +19,10 @@ from dataclasses import dataclass, field
 #: A question or decision is put to you: a dialog, a review, a question, a
 #: request to join.
 ASKING = "asking"
-#: Nothing specific is asked, but it is on you: the agent finished and the next
-#: message is yours, or a task is parked with you.
+#: Nothing specific is asked, but it is on you: a task is parked with you.
 YOUR_MOVE = "your_move"
-#: Waiting on you, but held behind a runner that is paused or offline: a reply
-#: would queue until that box is back.
-PARKED = "parked"
-#: Not waiting on you: yours and being worked right now.
-RUNNING = "running"
-#: Not waiting on you: an agent running on its own (auto mode), yours to watch.
-RUNNING_AUTO = "running_auto"
 
-STATES = (ASKING, YOUR_MOVE, PARKED, RUNNING, RUNNING_AUTO)
-IN_FLIGHT = (RUNNING, RUNNING_AUTO)
+STATES = (ASKING, YOUR_MOVE)
 
 
 @dataclass(frozen=True)
@@ -55,8 +49,3 @@ class AttentionRow:
     target: dict[str, str] = field(default_factory=dict)
     #: A private (sensitive) conversation, listed by who started it, not what it says.
     private: bool = False
-
-    @property
-    def in_flight(self) -> bool:
-        """Being worked right now: listed apart (`running`) so nothing counts it as an ask."""
-        return self.state in IN_FLIGHT

@@ -43,6 +43,36 @@ or `test_hcp_relevance.py`.
 |---|---|---|
 | **4.1.4 / 4.1.6 for canopy's own agents** (no grant presumed persistent by the control plane). | Grants are per agent and only the person's act. In a session's UI the person is shown the agent, categories, actions and expiry, then **allows it for this session** (temporary, the default outcome, ≤ 24 h and ending with the session). **Keeping it** is a second, separate act asked afterwards, with what persistent means stated first and nothing preselected; the server refuses `always` unless that session already allows it. Each act is a `grant.issued` recording type, modality (`canopy-chat` / `canopy-widget`) and what was shown. The person's settings are policy that bounds a grant, never a grant. No presumed grant is active: migration `contacts/0022` revokes each, with a `grant.revoked` on the person's log. | `hcp.issue_agent_grant`, `hcp._record_grant`; `tests/test_hcp_agent_grants.py`: `test_nothing_is_granted_without_the_persons_act`, `test_one_act_never_both_allows_and_keeps_it`, `test_a_session_grant_is_temporary_shown_logged_and_works`, `test_a_session_grant_lapses_with_the_session_and_after_the_cap`, `test_an_always_grant_is_reused_in_later_sessions_without_asking`, `test_granting_one_agent_grants_no_other`, `test_widening_is_its_own_act_and_replaces_the_grant`; frontend `SessionMemoryToggles.test.tsx` |
 
+## HCP v2 (2.0-draft-3), tracked
+
+<!-- hcp-spec-probe: tracked 1.0-draft-4, 2.0-draft-3 -->
+
+The v1 audit above is what discovery claims. canopy also models HCP v2 internally and serves a
+v2 HTTP binding at `/api/hcp/v2/` (`docs/architecture/hcp-service.md`, "HCP v2"). It does **not**
+yet claim any v2 conformance identifier: the marker line above names the drafts it has read
+(only that line counts, not a draft mentioned elsewhere on the page) so that
+`scripts/hcp_spec_probe.py` reports the next draft rather than these. v2 is an
+unstable draft in invited partner review; each v2 concept lands as its own piece and this section
+grows a row per piece, with the same evidence rule as above.
+
+| v2 concept | Status | Evidence |
+|---|---|---|
+| Purposes on every grant and every read (6.1.5.2), per-entry limits (4.2.6, 7.1) | built | `hcp.read_purpose`, `hcp.restrict_purposes`; `tests/test_hcp_purposes.py`: `test_a_search_naming_a_purpose_the_grant_does_not_carry_is_refused`, `test_an_entry_limited_to_other_purposes_is_not_served_for_this_one` |
+| Relationships: `derivedFrom` (an entry, or a source by a loose `(kind, ref)` pair), `supersedes`, `contradicts` (symmetric), `duplicates`; the provider records who and when (4.2.3) | built (`derivedFrom` writable over v1 `hcp_addPreference`; the rest by the provider and, in the v2 context plane, by clients) | `EntryRelationship`; `tests/test_hcp_v2_conflicts.py`: `test_derived_from_names_an_entry_or_a_source_and_the_provider_records_who`, `test_a_client_may_not_name_an_entry_its_grant_cannot_read_and_is_not_told_whether_it_exists` |
+| Confirmation records replace `userVerified` (3.8); standing (4.7.1); assurance (3.6, 3.7) | built; v1 `userVerified` is derived | `EntryConfirmation`, `hcp.confirmations.confirm`, `PersonFact.assurance`; `test_a_confirmation_belongs_to_one_version_and_a_revision_starts_with_none`, `test_an_agents_claim_that_the_person_said_it_has_no_standing_until_they_confirm_it` |
+| Conflicts by relationship, consequences by standing (4.7, 4.7.2, 4.7.3) | built for v2 callers; v1 callers keep v1's rule (a declared entry outranks an inference) | `hcp.detect_conflicts`, `hcp.reevaluate`; `tests/test_hcp.py`: `test_over_v1_an_agents_declared_entry_still_outranks_an_inference`; `test_a_persons_own_declaration_has_standing_and_holds_only_the_inference`, `test_rejecting_withdraws_it_and_releases_what_it_held`, `test_accepting_a_held_entry_deprecates_the_authoritative_one_but_never_an_attestation`, `test_two_inferences_by_the_same_asserter_set_the_earlier_aside_and_different_asserters_are_both_held` |
+| Memory Manager detection method declared (15.2) | **partial**: `hcp.CONFLICT_DETECTION` is `structural` (same category and dimension, different words, one side model-inferred). It is a hint-driven method, so it goes beyond "a dimension alone must not conflict" only by requiring different content; semantic judgment would need a model call, which canopy-web does not make. Re-evaluated on every revision (15.3) | `test_sharing_a_dimension_alone_is_not_a_conflict`, `test_a_revision_that_no_longer_conflicts_removes_the_relationship_and_releases_the_entry` |
+| Confirm or reject is governance (1.6, 9.4.9) | built | `test_the_confirmation_route_is_the_persons_and_refuses_an_agent_login` |
+| Standing rules: deny-only, every grant now and later, enforced at issue and on every request; revokes a grant it covers entirely; an entry is withheld by any denied category (6.3, 7.1, 4.5) | built | `hcp.set_standing_rule`, `hcp.enforce_rules`, `hcp.rules.denial`; `tests/test_hcp_v2_rules.py`: `test_a_rule_set_after_a_grant_fails_the_grants_next_read`, `test_a_rule_that_covers_everything_a_grant_reaches_revokes_it`, `test_a_grant_is_never_issued_reaching_a_category_a_rule_denies_its_operator`, `test_an_entry_with_a_denied_category_is_withheld_whichever_category_is_asked`, `test_requires_denies_only_clients_that_do_not_make_every_claim` |
+| Directives delivered with every result and named in the audit (6.4, 8.2) | built | `hcp.rules.delivered`; `test_directives_ride_with_every_result_and_the_log_names_them` |
+| Rules and directives are governance: the person, HTTP only (1.6, 9.4.14, 9.4.15) | built: their browser session or a PAT, never an OAuth sign-in | `test_rules_and_directives_are_the_persons_and_an_agent_login_is_refused`, `test_an_oauth_sign_in_cannot_govern_even_as_the_person` |
+| Disclosures carry a grant-scoped `ref`, only the grant's categories, `standing`, `useUntil`; never the stored entry (7.4) | built | `hcp.disclosure.to_disclosure`; `tests/test_hcp_v2_disclosure.py`: `test_a_client_receives_a_disclosure_and_never_the_stored_entry`, `test_a_ref_is_stable_for_one_grant_and_means_nothing_under_another`, `test_a_relationship_is_disclosed_only_where_its_target_is_too` |
+| Use-until: explicit first, 10% heuristic, 1 h floor, 30 d / 24 h ceilings, 1 h with no notification endpoint (7.6) | built | `hcp.disclosure.use_until`; `test_use_until_is_a_tenth_of_the_age_between_a_floor_and_a_ceiling`, `test_an_explicit_time_applies_first_even_below_the_floor_and_is_still_capped`, `test_a_client_that_cannot_be_notified_gets_at_most_an_hour_and_a_high_category_a_day` |
+| Disclosure summary computed from the audit log (8.6) | built | `hcp.disclosure.summary`; `test_the_summary_matches_the_raw_events`, `test_a_delivered_revocation_notice_ends_the_copies_in_the_summary` |
+| The v2 HTTP binding: query, get, create, revise (`version-conflict`), withdraw, grants, audit, export, disclosures (9.2); `HCP-Version` on every response (9.3) | built (no MCP binding, no import, no delegation, no onward sharing, no VC evidence, no end-to-end storage) | `hcp_v2_api.py`; `test_an_agent_creates_revises_and_withdraws_through_v2`, `test_v2_create_refuses_what_the_spec_does`, `test_the_person_revokes_and_a_client_may_only_relinquish_its_own_grant` |
+| Discovery advertises both versions; no v2 identifier is claimed (19, 18) | built | `hcp.discovery_v2`; `test_discovery_serves_v1_by_default_and_v2_to_a_client_that_asks_and_each_points_at_the_other` |
+| Restrict purposes is governance: the person, HTTP only (1.6, 9.4.10) | built | `test_the_governance_route_is_the_persons_and_refuses_an_agent_login` |
+
 ## Data model
 
 | Criterion | Status | Evidence |
@@ -56,9 +86,9 @@ or `test_hcp_relevance.py`.
 | Category change only by the person, audited | pass | `hcp.update_entry` refuses non-person; audit detail names both categories |
 | Complete provenance as stored | pass | `provenance_source`, `captured_by` on every row; redaction is response-only. Extension: `record.provenance.site` (`provenance_site`) — the host site and page an agent was reached through when it recorded the entry; never affects scope, redacted with the 4.4.4 fields (`test_an_entry_recorded_through_a_site_carries_the_site`) |
 | Version history; `version` / `previousVersion` | pass | `record_fact(supersedes=…)`; `test_an_update_is_a_new_version…` |
-| Conflict detection both write orders, same category + dimension | pass | `hcp.detect_conflicts` |
+| Conflict detection both write orders, same category + dimension | pass | `hcp.detect_conflicts`; what is held is decided by standing, not declaration type alone (v2 section below) |
 | Conflicted entries withheld from agents, visible to the person | pass | `hcp.servable`; `/people/me` and export include them |
-| Conflict resolution transitions logged `conflict.resolved` | pass | `update_entry`, `delete_entry`, `release_conflicts_against` |
+| Conflict resolution transitions logged `conflict.resolved` | pass | `update_entry`, `delete_entry`, `hcp.confirmations.confirm` |
 
 ## Actions
 

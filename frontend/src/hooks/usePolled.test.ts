@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { usePolled } from './usePolled'
+import { backedOff, MAX_BACKOFF_MS, usePolled } from './usePolled'
 
 let visibility: DocumentVisibilityState = 'visible'
 
@@ -53,8 +53,39 @@ describe('usePolled', () => {
     expect(result.current.data).toBe('ok')
     expect(result.current.error?.message).toBe('boom')
     fail = false
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
     expect(result.current.error).toBeNull()
+  })
+
+  it('backs off a fixed period while fetches fail, and restores it on success', async () => {
+    let fail = true
+    const fn = vi.fn(async () => {
+      if (fail) throw new Error('boom')
+      return 'ok'
+    })
+    renderHook(() => usePolled(fn, { ms: 1000 }))
+    await flush()
+    expect(fn).toHaveBeenCalledTimes(1)
+    // 1 failure: 2s, then 2 failures: 4s.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1999) })
+    expect(fn).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(fn).toHaveBeenCalledTimes(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(3999) })
+    expect(fn).toHaveBeenCalledTimes(2)
+    fail = false
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(fn).toHaveBeenCalledTimes(3)
+    // Success: back to every 1s.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(fn).toHaveBeenCalledTimes(4)
+  })
+
+  it('caps the backoff', () => {
+    expect(backedOff(1000, 0)).toBe(1000)
+    expect(backedOff(1000, 3)).toBe(8000)
+    expect(backedOff(1000, 50)).toBe(MAX_BACKOFF_MS)
+    expect(backedOff(600_000, 4)).toBe(600_000)
   })
 
   it('stops while hidden and refetches at once when visible again', async () => {

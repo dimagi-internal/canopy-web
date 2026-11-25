@@ -629,6 +629,27 @@
   },
   {
     "canopy": {
+      "event": "chat.live_text",
+      "data": {
+        "message_id": "live:t1:0",
+        "turn_id": "t1",
+        "text": "EHA is furthest behind"
+      }
+    },
+    "agui": [
+      {
+        "type": "CUSTOM",
+        "name": "canopy.chat.live_text",
+        "value": {
+          "message_id": "live:t1:0",
+          "turn_id": "t1",
+          "text": "EHA is furthest behind"
+        }
+      }
+    ]
+  },
+  {
+    "canopy": {
       "event": "session.activity",
       "data": {
         "state": "working"

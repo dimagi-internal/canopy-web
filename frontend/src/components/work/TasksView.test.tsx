@@ -295,3 +295,33 @@ describe('edits', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })
+
+describe('TasksView on a phone', () => {
+  it('folds the dropdowns behind one Filter button that counts what is set', async () => {
+    show('?tab=all&priority=1')
+    const toggle = await screen.findByTestId('filters-toggle')
+    expect(toggle.textContent).toContain('Filter · 1')
+    const more = screen.getByTestId('filters-more')
+    expect(more.className).toContain('hidden sm:contents')
+    fireEvent.click(toggle)
+    expect(more.className).not.toContain('hidden')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('a repeating list groups the templates apart, with their rhythm', async () => {
+    api.listTasks.mockImplementation(async (q) =>
+      (q as Record<string, unknown>).recurring === 'true'
+        ? [task({ key: 'DIM-5', title: 'Sweep', status: 'backlog', recurrence: { every: 'week', weekday: 'wed', auto: true } })]
+        : [task({ key: 'DIM-6', title: 'Sweep', template_key: 'DIM-5', due: '2026-11-18' })],
+    )
+    show('?tab=all', { fixed: { project: 'dim/home', recurring: 'false' }, repeating: true })
+    expect((await screen.findAllByTestId('copy-of-DIM-6')).length).toBeGreaterThan(0)
+    const group = await screen.findByTestId('repeating')
+    expect(group.textContent).toContain('Repeating')
+    // Folded while there is work; open, it shows each template's rhythm.
+    expect(within(group).queryByTestId('rhythm-DIM-5')).toBeNull()
+    fireEvent.click(within(group).getByRole('button', { name: /Repeating/ }))
+    expect(within(group).getAllByTestId('rhythm-DIM-5')[0].textContent).toBe('Every Wed')
+    expect(api.listTasks).toHaveBeenCalledWith(expect.objectContaining({ project: 'dim/home', recurring: 'true' }), 'dim')
+  })
+})

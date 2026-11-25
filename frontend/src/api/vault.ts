@@ -63,6 +63,12 @@ export async function addZkWraps(slug: string, body: { kv: number; wraps: ZkWrap
     'Could not grant access')
 }
 
+/** Give MY OWN approved machine the vault key, wrapped in this browser from my own copy. */
+export async function addMyZkWraps(slug: string, body: { kv: number; wraps: ZkWrapIn[] }): Promise<{ granted: number }> {
+  return need<{ granted: number }>(await apiV2.POST('/api/agents/{slug}/vault/zk/wraps/mine', { params: { path: { slug } }, body: body as never }),
+    'Could not give your machine access')
+}
+
 export async function rotateZk(slug: string, body: { new_kv: number; wraps: ZkWrapIn[]; values: Value[] }): Promise<ZkStateOut> {
   return need<ZkStateOut>(await apiV2.POST('/api/agents/{slug}/vault/zk/rotate', { params: { path: { slug } }, body: body as never }),
     'Could not rotate the vault key')

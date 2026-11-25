@@ -122,6 +122,12 @@ def test_only_a_profile_that_sends_mail_gets_the_mail_keyring(cr):
     ("canopy emailx read", False),
     ("bin/ace-emailer --x", False),
     ("echo canopy email read", False),
+    # canopy's doc_comment profile: gog on one Doc, as the agent's own account
+    ("gog docs cat 1QDxfhS_gWTYbu31_vhT6gdFxin1WL3XmX8q_B-_QAhE --account eva@x.org", True),
+    ("gog drive comments list 1QDxfhS_gWTYbu31_vhT6gdFxin1WL3XmX8q_B-_QAhE --json --account eva@x.org", True),
+    ("gog drive comments reply 1QDxfhS_gWTYbu31_vhT6gdFxin1WL3XmX8q_B-_QAhE * * --account eva@x.org", True),
+    ("gog gmail thread get x", False),
+    ("gog drive download 1QDx", False),
 ])
 def test_mail_is_derived_from_the_profiles_own_bash_rules(cloud_runner, rule, mail):
     assert cloud_runner._profile_uses_mail({"bash": [rule]}) is mail

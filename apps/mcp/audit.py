@@ -41,17 +41,19 @@ def current_user_id() -> int | None:
 
 
 def _attributed_workspace(user_id: int | None, workspace: str | None) -> str:
-    """The workspace a call is filed under: the one it named, else the caller's
-    sole workspace, else none."""
-    if workspace:
-        return workspace[:64]
+    """The workspace a call is filed under: the one it named when the caller is a
+    member there, else the caller's sole workspace, else none."""
     if user_id is None:
-        return ""
+        return (workspace or "")[:64]
     from django.contrib.auth import get_user_model
 
     from apps.workspaces import services as wsvc
 
     user = get_user_model().objects.filter(pk=user_id).first()
+    if workspace:
+        # A named workspace is the caller's word: filing a non-member's call
+        # there would put them in that workspace's call log and analytics.
+        return workspace[:64] if user is not None and wsvc.is_member(user, workspace) else ""
     ws = wsvc.user_default_workspace(user) if user is not None else None
     return ws.slug if ws is not None else ""
 

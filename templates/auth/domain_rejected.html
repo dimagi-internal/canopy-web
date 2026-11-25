@@ -64,6 +64,16 @@
 <body>
   <div class="card">
     <h1>Access restricted</h1>
+    {% if reason == "not_workspace" %}
+    <p>
+      {% if email %}<code>{{ email }}</code> is{% else %}This is{% endif %} a personal Google account,
+      not one managed by your organisation's Google Workspace.
+      Canopy accepts <code>@{{ allowed_domain }}</code> addresses only from the organisation's own Google accounts.
+    </p>
+    <p>
+      Sign in with your work Google account for that address instead.
+    </p>
+    {% else %}
     <p>
       Canopy is currently limited to <code>@{{ allowed_domain }}</code> accounts.
       {% if email %}You signed in as <code>{{ email }}</code>, which isn't on the allowlist.{% endif %}
@@ -71,6 +81,7 @@
     <p>
       Invited to a workspace? Sign in with the Google account the invite was sent to.
     </p>
+    {% endif %}
     {% comment %}
       {% url %}, not a literal path: canopy is mounted at /canopy on a hostname
       it shares with connect-labs (root) and ace (/ace), so a hardcoded

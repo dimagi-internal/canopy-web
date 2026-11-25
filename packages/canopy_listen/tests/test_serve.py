@@ -271,45 +271,129 @@ def test_the_laptop_key_is_made_once_and_kept_private():
 # --- the meeting session -----------------------------------------------------------
 
 
-def test_an_unpaired_phone_is_refused_and_told_nothing():
-    async def go():
-        s = make()
-        session, _, _, sent = await meeting_session(s, Phone())
-        assert await session.open() is False
-        assert sent == []
-    asyncio.run(go())
-
-
 def test_ready_comes_first_and_says_who_this_is():
     async def go():
         s, phone = make(), Phone()
         s.phones.add(phone.key, "Pixel")
         session, _, down, sent = await meeting_session(s, phone)
         assert await session.open()
-        assert opened(down, sent) == [{"type": "ready", "name": "Test Mac"}]
+        got = opened(down, sent)
+        assert got == [{"type": "ready", "name": "Test Mac", "nonce": session.start_nonce,
+                        "modes": ["meeting", "note"]}]
     asyncio.run(go())
 
 
-def test_a_forged_or_replayed_frame_drops_the_session():
+def test_a_start_must_answer_this_sessions_ready():
+    """The laptop's `ready` carries a fresh nonce that `start` must carry back, so frames
+    kept from an older session with the same keys can't start a meeting here."""
     async def go():
-        s, phone = make(), Phone()
+        runner = Runner()
+        s, phone = make(runner), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent = await meeting_session(s, phone)
+        await session.open()
+        ready = opened(down, sent)[0]
+        assert ready["type"] == "ready" and len(rc.unb64u(ready["nonce"])) == 16
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": "b2xk"}))
+        await settle(s)
+        assert session.input is None and runner.calls == []  # an old session's start: ignored
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        assert opened(down, sent[1:])[-1] == {"type": "state", "state": "failed", "detail": "update_page"}
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": ready["nonce"]}))
+        await settle(s)
+        assert session.input is not None and len(runner.calls) == 1
+    asyncio.run(go())
+
+
+def test_an_unknown_phone_is_told_it_isnt_paired():
+    async def go():
+        s = make()
+        session, _, _, sent = await meeting_session(s, Phone())  # never paired
+        assert await session.open() is False
+        assert rc.read_handshake(sent[0]) == {"type": "refused", "reason": "unpaired"}
+    asyncio.run(go())
+
+
+def test_an_unreadable_key_is_kept_aside_not_silently_replaced(tmp_path):
+    path = tmp_path / "relay-key.json"
+    path.write_text("{not json")
+    key = serve.LaptopKey(path)
+    assert key.public()
+    assert json.loads(path.read_text())["public"] == key.public()
+    kept = list(tmp_path.glob("relay-key.json.unreadable-*"))
+    assert len(kept) == 1 and kept[0].read_text() == "{not json"
+
+
+def test_a_start_that_never_records_gives_up_and_unqueues_its_input():
+    async def go():
+        clock = [1000.0]
+        s = serve.Serve(run=Runner(), name="Test Mac", clock=lambda: clock[0])
+        inp = s.hub.create("phone")
+        assert s.controller.start("phone", inp.id)["ok"]
+        await settle(s)
+        assert s.controller.busy() and (store.home() / "next-input.json").exists()
+        clock[0] += serve.BIND_DEADLINE + 1
+        view = s.controller.view()
+        assert (view["phase"], view["detail"]) == ("failed", "did_not_start")
+        assert not s.controller.busy() and inp.ended and not (store.home() / "next-input.json").exists()
+    asyncio.run(go())
+
+
+def test_a_declined_pairing_makes_the_next_wait():
+    async def go():
+        clock = [1000.0]
+        s = serve.Serve(run=Runner(), name="Test Mac", clock=lambda: clock[0], confirm=lambda *a: _no())
+        s.declined_at = clock[0]
+        sent = []
+
+        async def send(frame):
+            sent.append(frame)
+
+        session = serve.RelaySession(s, "pair-1", "pair", {"phone_eph": "x", "commit": "c" * 43}, send)
+        assert await session.open() is False
+        assert rc.read_handshake(sent[0]) == {"type": "refused", "reason": "wait"}
+        clock[0] += serve.DECLINE_COOLDOWN + 1
+        session = serve.RelaySession(s, "pair-2", "pair", {"phone_eph": "x", "commit": "c" * 43}, send)
+        assert await session.open() is True
+        assert rc.read_handshake(sent[1])["type"] == "hello"
+    asyncio.run(go())
+
+
+async def _no():
+    return False
+
+
+def test_a_forged_or_replayed_frame_is_dropped_and_does_nothing():
+    """A pipe that reconnects may resend a frame, so one that doesn't open is dropped on its
+    own; it never acts. A stream of them ends the session."""
+    async def go():
+        runner = Runner()
+        s, phone = make(runner), Phone()
         s.phones.add(phone.key, "Pixel")
         session, up, _, _ = await meeting_session(s, phone)
         await session.open()
-        frame = up.control({"type": "rename", "speaker": 0, "name": "x"})
-        assert await session.receive(frame)
-        assert await session.receive(frame) is False  # replayed
+        start = up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce})
+        assert await session.receive(start)
+        await settle(s)
+        started = len(runner.calls)
+        assert await session.receive(start)  # replayed: dropped
+        await settle(s)
+        assert len(runner.calls) == started and session.bad_frames == 1
 
         session, up, _, _ = await meeting_session(s, phone, "sess-2")
         await session.open()
-        forged = bytearray(up.control({"type": "end"}))
+        forged = bytearray(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
         forged[-1] ^= 1
-        assert await session.receive(bytes(forged)) is False
+        assert await session.receive(bytes(forged))
+        assert session.input is None  # it started nothing
 
         session, up, _, _ = await meeting_session(s, phone, "sess-3")
         await session.open()
         other_session = rc.Sealer(rc.unb64u(rc.b64u(os.urandom(32))), "sess-3")
-        assert await session.receive(other_session.control({"type": "start", "notice_accepted": True})) is False
+        start = {"type": "start", "notice_accepted": True, "nonce": session.start_nonce}
+        frames = [other_session.control(start) for _ in range(201)]
+        results = [await session.receive(f) for f in frames]
+        assert session.input is None and results[0] is True and results[-1] is False
     asyncio.run(go())
 
 
@@ -320,11 +404,13 @@ def test_start_queues_the_relay_input_then_starts_meeting_assistant():
         s.phones.add(phone.key, "Pixel")
         session, up, down, sent = await meeting_session(s, phone)
         await session.open()
-        assert await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True,
+                                                 "nonce": session.start_nonce}))
         await settle(s)
         argv, queued = runner.calls[0]
         assert argv == APP_START
-        assert queued == {"relay": session.input.id, "source": "phone"}
+        assert {k: queued[k] for k in ("relay", "source")} == {"relay": session.input.id, "source": "phone"}
+        assert abs(queued["queued_at"] - time.time()) < 60
         assert opened(down, sent)[1] == {"type": "state", "state": "starting", "detail": ""}
         await session.close()
         assert session.input.ended
@@ -345,7 +431,8 @@ def test_start_needs_the_notice_accepted_and_one_meeting_at_a_time():
         meeting = store.new_meeting("", "microphone")
         proc = fake_recorder(meeting)
         try:
-            await session.receive(up.control({"type": "start", "notice_accepted": True}))
+            await session.receive(up.control({"type": "start", "notice_accepted": True,
+                                              "nonce": session.start_nonce}))
             assert opened(down, sent[2:])[-1] == {"type": "state", "state": "failed", "detail": "busy"}
             assert runner.calls == []
         finally:
@@ -370,7 +457,7 @@ def test_the_phone_hears_its_meeting_live_and_its_end():
         s.phones.add(phone.key, "Pixel")
         session, up, down, sent = await meeting_session(s, phone)
         await session.open()
-        await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
         await settle(s)
         meeting = store.new_meeting("", "phone")
         meeting.update(input=session.input.id, state="recording", speakers=[{"name": "Speaker 1", "number": 0}],
@@ -380,7 +467,8 @@ def test_the_phone_hears_its_meeting_live_and_its_end():
         proc = fake_recorder(meeting)
         await asyncio.sleep(serve.FOLLOW_SECONDS * 2.5)
         got = opened(down, sent)
-        assert {"type": "segment", "start": 0.0, "end": 1.2, "speaker": 0, "text": "hello there"} in got
+        assert {"type": "segments", "from": 0,
+                "items": [{"start": 0.0, "end": 1.2, "speaker": 0, "text": "hello there"}]} in got
         assert {"type": "speakers", "speakers": [{"name": "Speaker 1", "number": 0}]} in got
         assert {"type": "state", "state": "recording", "detail": ""} in got
         assert [m for m in got if m["type"] == "partial"] == [{"type": "partial", "text": "and the budget"}]
@@ -395,7 +483,7 @@ def test_the_phone_hears_its_meeting_live_and_its_end():
         await asyncio.wait_for(session.follow, 5)
         got = opened(down, sent[len(got):])
         assert {"type": "chat", "url": "https://c.example/s/1"} in got
-        assert {"type": "state", "state": "ended", "detail": ""} in got
+        assert {"type": "state", "state": "ended", "detail": "saved"} in got
         assert {"type": "saved", "url": "https://canopy.example/meetings"} in got
     asyncio.run(go())
 
@@ -407,7 +495,7 @@ def test_end_discard_and_rename_reach_the_right_commands():
         s.phones.add(phone.key, "Pixel")
         session, up, _, _ = await meeting_session(s, phone)
         await session.open()
-        await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
         await settle(s)
         meeting = store.new_meeting("", "phone")
         meeting.update(input=session.input.id, state="ended", speakers=[{"name": "Speaker 1", "number": 0}],
@@ -479,7 +567,8 @@ def test_the_page_starts_a_browser_meeting_and_pairs_a_phone():
         code, body = s.api_start({"input": "browser-tab", "notice_accepted": True})
         assert code == 200 and s.hub.get(body["input"]).source == "browser-tab"
         await settle(s)
-        assert runner.calls[0] == (APP_START, {"relay": body["input"], "source": "browser-tab"})
+        argv, queued = runner.calls[0]
+        assert argv == APP_START and (queued["relay"], queued["source"]) == (body["input"], "browser-tab")
         assert s.api_live()["phase"] == "starting"
 
         code, pairing = s.api_pair()
@@ -635,3 +724,317 @@ def test_the_qr_code_has_its_finder_patterns_and_fits_a_pairing_link():
         assert ring == [True] * 7
         assert code.modules[cy + 1][cx + 1] is False and code.modules[cy + 3][cx + 3] is True
     assert qr.svg("hi").count("<path") == 1
+
+
+# --- a meeting outlives its pipe ----------------------------------------------------
+
+
+class Pipe:
+    """The runner's pipe to serve, in memory: frames in through a StreamReader, frames out
+    collected; `hang_up` is the pipe dying, `end` the runner's explicit end (an empty frame)."""
+
+    def __init__(self):
+        self.reader = asyncio.StreamReader()
+        self.out: list[bytes] = []
+        self._buf = b""
+
+    def write(self, data):
+        self._buf += data
+        while len(self._buf) >= 4:
+            (n,) = struct.unpack(">I", self._buf[:4])
+            if len(self._buf) < 4 + n:
+                break
+            self.out.append(self._buf[4:4 + n])
+            self._buf = self._buf[4 + n:]
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+    def frame(self, data: bytes):
+        self.reader.feed_data(struct.pack(">I", len(data)) + data)
+
+    def hang_up(self):
+        self.reader.feed_eof()
+
+    def end(self):
+        self.reader.feed_data(struct.pack(">I", 0))
+
+
+async def run_pipe(s, sid, hello, pipe):
+    op = {"op": "session", "session_id": sid, "kind": "meeting", "hello": hello}
+    return asyncio.get_running_loop().create_task(s._session(op, pipe.reader, pipe))
+
+
+def test_a_meeting_waits_for_its_runner_to_rejoin_and_carries_on():
+    async def go():
+        s, phone = make(), Phone()
+        s.phones.add(phone.key, "Pixel")
+        hello, up, down = phone.session(s.key.public(), "sess-r")
+        first = Pipe()
+        task = await run_pipe(s, "sess-r", hello, first)
+        await asyncio.sleep(0.05)
+        first.frame(up.control({"type": "start", "notice_accepted": True, "nonce": s.relays["sess-r"].start_nonce}))
+        await asyncio.sleep(0.05)
+        await settle(s)
+        session = s.relays["sess-r"]
+        inp = session.input
+        first.hang_up()  # the runner restarted
+        await task
+        assert s.relays["sess-r"] is session and not inp.ended and not session.attached
+
+        second = Pipe()
+        task = await run_pipe(s, "sess-r", hello, second)
+        await asyncio.sleep(0.05)
+        assert session.attached and session.conn == 2
+        second.frame(up.seal(rc.AUDIO, b"\x01\x00" * 800))  # the counter carries on: same keys, same session
+        second.frame(up.control({"type": "resume", "have": 0}))
+        await asyncio.sleep(0.05)
+        assert inp.seconds > 0 and session.bad_frames == 0
+        assert opened(down, first.out)[0] == {"type": "ready", "name": "Test Mac", "nonce": session.start_nonce,
+                                              "modes": ["meeting", "note"]}
+        assert all(m["type"] != "ready" for m in opened(down, second.out))  # no second ready
+
+        second.end()  # the server ended the session
+        await task
+        assert inp.ended and "sess-r" not in s.relays
+    asyncio.run(go())
+
+
+def test_a_pipe_that_never_comes_back_ends_the_meeting(monkeypatch):
+    monkeypatch.setattr(serve, "DETACHED_GRACE", 0.05)
+
+    async def go():
+        s, phone = make(), Phone()
+        s.phones.add(phone.key, "Pixel")
+        hello, up, _ = phone.session(s.key.public(), "sess-g")
+        pipe = Pipe()
+        task = await run_pipe(s, "sess-g", hello, pipe)
+        await asyncio.sleep(0.05)
+        pipe.frame(up.control({"type": "start", "notice_accepted": True, "nonce": s.relays["sess-g"].start_nonce}))
+        await asyncio.sleep(0.05)
+        await settle(s)
+        inp = s.relays["sess-g"].input
+        pipe.hang_up()
+        await task
+        await asyncio.sleep(0.15)
+        assert inp.ended and "sess-g" not in s.relays
+    asyncio.run(go())
+
+
+def test_a_rejoin_must_be_the_same_phone_session():
+    async def go():
+        s, phone = make(), Phone()
+        s.phones.add(phone.key, "Pixel")
+        hello, up, _ = phone.session(s.key.public(), "sess-x")
+        pipe = Pipe()
+        task = await run_pipe(s, "sess-x", hello, pipe)
+        await asyncio.sleep(0.05)
+        pipe.hang_up()
+        await task
+        other, _, _ = phone.session(s.key.public(), "sess-x")  # another ephemeral key
+        intruder = Pipe()
+        await (await run_pipe(s, "sess-x", other, intruder))
+        assert s.relays["sess-x"].conn == 1 and intruder.out == []
+    asyncio.run(go())
+
+
+def test_a_recorder_that_died_reads_as_failed_and_an_unsaved_end_is_not_saved():
+    async def go():
+        s, phone = make(), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent = await meeting_session(s, phone)
+        await session.open()
+        await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
+        await settle(s)
+        meeting = store.new_meeting("", "phone")
+        meeting.update(input=session.input.id, state="recording")
+        store.save(meeting)
+        proc = fake_recorder(meeting)
+        await asyncio.sleep(serve.FOLLOW_SECONDS * 2)
+        proc.kill()  # killed, without writing its end
+        await asyncio.wait_for(session.follow, 5)
+        assert {"type": "state", "state": "failed", "detail": "recorder_stopped"} in opened(down, sent)
+
+        s2, phone2 = make(), Phone()
+        s2.phones.add(phone2.key, "Pixel")
+        session, up, down, sent = await meeting_session(s2, phone2, "sess-u")
+        await session.open()
+        await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
+        await settle(s2)
+        meeting = store.new_meeting("", "phone")
+        meeting.update(input=session.input.id, state="ended")  # recorded, but Meeting assistant never saved
+        store.save(meeting)
+        await asyncio.wait_for(session.follow, 5)
+        got = opened(down, sent)
+        assert {"type": "state", "state": "ended", "detail": "not_saved"} in got
+        assert all(m["type"] != "saved" for m in got)
+    asyncio.run(go())
+
+
+def test_a_deep_home_gets_the_socket_the_runner_looks_for(monkeypatch):
+    """The runner can't import this package, so it repeats store.socket_path's rule;
+    runner/canopy_runner/tests/test_listen_pipe.py pins the same pair."""
+    monkeypatch.setenv("CANOPY_LISTEN_HOME", "/Users/someone/" + "deep/" * 20 + "listen")
+    assert store.socket_path().name == "canopy-listen-a69ff3d2bc9d.sock"
+
+
+# --- a voice note ---------------------------------------------------------------------
+
+
+class Reader:
+    """`canopy-listen _transcribe`, faked: what it was given, and what it says."""
+
+    def __init__(self, answer=None):
+        self.given: list[bytes] = []
+        self.answer = answer if answer is not None else {"text": "Remind me to call Sam."}
+        self.release = asyncio.Event()
+        self.release.set()
+
+    async def __call__(self, pcm):
+        self.given.append(pcm)
+        await self.release.wait()
+        return self.answer
+
+
+async def note_session(s, phone, sid="note-1"):
+    session, up, down, sent = await meeting_session(s, phone, sid)
+    await session.open()
+    nonce = opened(down, sent)[0]["nonce"]
+    return session, up, down, sent, nonce
+
+
+async def finished(session):
+    if session.note and session.note.task:
+        await session.note.task
+
+
+def test_a_voice_note_is_read_here_and_its_words_go_back_with_no_meeting():
+    async def go():
+        runner, reader = Runner(), Reader()
+        s, phone = serve.Serve(run=runner, name="Test Mac", transcribe=reader), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent, nonce = await note_session(s, phone)
+        assert await session.receive(up.control({"type": "start", "mode": "note", "nonce": nonce}))
+        assert session.input is None and not s.controller.busy()  # no app, no meeting, nothing queued
+        assert not (store.home() / "next-input.json").exists()
+        audio = b"\x01\x00" * SAMPLE_RATE  # a second
+        assert await session.receive(up.seal(rc.AUDIO, audio))
+        assert await session.receive(up.control({"type": "end"}))
+        await finished(session)
+        assert reader.given == [audio] and runner.calls == []
+        assert opened(down, sent[1:]) == [
+            {"type": "state", "state": "recording", "detail": "note"},
+            {"type": "state", "state": "ending", "detail": "transcribing"},
+            {"type": "note", "text": "Remind me to call Sam."},
+            {"type": "state", "state": "ended", "detail": "transcribed"},
+        ]
+    asyncio.run(go())
+
+
+def test_a_note_start_must_answer_this_sessions_ready():
+    async def go():
+        s, phone = serve.Serve(run=Runner(), name="Test Mac", transcribe=Reader()), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, _, sent, _ = await note_session(s, phone)
+        assert await session.receive(up.control({"type": "start", "mode": "note", "nonce": "b2xk"}))
+        assert await session.receive(up.control({"type": "start", "mode": "note"}))
+        assert session.note is None and len(sent) == 1
+    asyncio.run(go())
+
+
+def test_a_discarded_note_is_never_read():
+    async def go():
+        reader = Reader()
+        s, phone = serve.Serve(run=Runner(), name="Test Mac", transcribe=reader), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent, nonce = await note_session(s, phone)
+        await session.receive(up.control({"type": "start", "mode": "note", "nonce": nonce}))
+        await session.receive(up.seal(rc.AUDIO, b"\x01\x00" * SAMPLE_RATE))
+        await session.receive(up.control({"type": "discard"}))
+        await session.receive(up.control({"type": "end"}))
+        assert reader.given == [] and session.note.pcm == bytearray()
+        assert opened(down, sent[1:])[-1] == {"type": "state", "state": "ended", "detail": "discarded"}
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize("seconds,answer,detail", [
+    (0.1, None, "no_words"),  # too short to read: not even tried
+    (2, {"text": "  "}, "no_words"),
+    (2, {"error": "transcribe_failed"}, "transcribe_failed"),
+])
+def test_a_note_with_no_words_says_so(seconds, answer, detail):
+    async def go():
+        reader = Reader(answer or {"text": "never"})
+        s, phone = serve.Serve(run=Runner(), name="Test Mac", transcribe=reader), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent, nonce = await note_session(s, phone)
+        await session.receive(up.control({"type": "start", "mode": "note", "nonce": nonce}))
+        await session.receive(up.seal(rc.AUDIO, b"\x01\x00" * int(SAMPLE_RATE * seconds)))
+        await session.receive(up.control({"type": "end"}))
+        await finished(session)
+        assert len(reader.given) == (0 if answer is None else 1)
+        assert opened(down, sent[1:])[-1] == {"type": "state", "state": "failed", "detail": detail}
+    asyncio.run(go())
+
+
+def test_a_note_is_cut_at_its_limit(monkeypatch):
+    monkeypatch.setattr(serve, "NOTE_MAX_SECONDS", 1)
+    note = serve.Note()
+    note.push(b"\x01\x00" * SAMPLE_RATE * 3)
+    assert note.seconds == 1
+
+
+def test_words_read_while_the_pipe_was_down_reach_the_phone_when_it_asks_again():
+    async def go():
+        reader = Reader()
+        reader.release.clear()
+        s, phone = serve.Serve(run=Runner(), name="Test Mac", transcribe=reader), Phone()
+        s.phones.add(phone.key, "Pixel")
+        hello, up, down = phone.session(s.key.public(), "note-r")
+        first = Pipe()
+        task = await run_pipe(s, "note-r", hello, first)
+        await asyncio.sleep(0.05)
+        first.frame(up.control({"type": "start", "mode": "note", "nonce": s.relays["note-r"].start_nonce}))
+        first.frame(up.seal(rc.AUDIO, b"\x01\x00" * SAMPLE_RATE))
+        first.frame(up.control({"type": "end"}))
+        await asyncio.sleep(0.05)
+        first.hang_up()  # the runner restarted while the note was being read
+        await task
+        reader.release.set()
+        await finished(s.relays["note-r"])
+        assert all(m["type"] != "note" for m in opened(down, first.out))
+
+        second = Pipe()
+        task = await run_pipe(s, "note-r", hello, second)
+        await asyncio.sleep(0.05)
+        second.frame(up.control({"type": "resume", "have": 0}))
+        await asyncio.sleep(0.05)
+        assert {"type": "note", "text": "Remind me to call Sam."} in opened(down, second.out)
+        second.end()
+        await task
+    asyncio.run(go())
+
+
+def test_the_note_audio_is_written_privately_and_deleted_after(monkeypatch):
+    seen = {}
+
+    class Proc:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"text": "hello"}', b""
+
+    async def fake_exec(*argv, **kw):
+        path = argv[-1]
+        seen["argv"], seen["mode"] = argv[1:4], os.stat(path).st_mode & 0o777
+        seen["bytes"] = open(path, "rb").read()
+        seen["path"] = path
+        return Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(serve.transcribe_note(b"\x01\x00" * 10)) == {"text": "hello"}
+    assert seen["argv"] == ("-m", "canopy_listen", "_transcribe") and seen["mode"] == 0o600
+    assert seen["bytes"] == b"\x01\x00" * 10 and not os.path.exists(seen["path"])

@@ -5,7 +5,8 @@ The spec's "canopy-web using a token" and "Disconnecting". While the owner's swi
 (`recipients.server_recipient`). `access_token` then answers from, in order:
 
 1. this process's cache, kept 5 minutes at most, never past the token's life, keyed by the
-   access envelope's digest, so anything written since is a miss;
+   access envelope's digest, so anything written since is a miss; a token `forget` marked spent
+   (the row's expiry, read fresh) is a miss on every process, not only the one that forgot it;
 2. the access envelope, opened through `server_key.derive`, when it has a minute left;
 3. a refresh, under the one lease machines take (`tokens`), written back under the same
    compare-and-swap. A lease someone else holds is waited for, up to 30 s, without a lock.
@@ -187,7 +188,10 @@ def _cached(conn: Connection) -> Access | None:
         hit = _cache.get(conn.pk)
         if hit is None or not digest or hit[0] != digest:
             return None
-        if hit[3] - now <= MIN_LIFE_SECONDS or now - hit[4] >= CACHE_SECONDS:
+        # The row's own expiry too: `forget` on any process marks the stored token spent there,
+        # and the row is read fresh on every `access`, so every process's cache sees it.
+        spent = conn.access_expires_at is not None and conn.access_expires_at.timestamp() - now <= MIN_LIFE_SECONDS
+        if spent or hit[3] - now <= MIN_LIFE_SECONDS or now - hit[4] >= CACHE_SECONDS:
             del _cache[conn.pk]
             return None
         _cache.move_to_end(conn.pk)

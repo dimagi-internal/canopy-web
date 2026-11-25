@@ -27,6 +27,7 @@ makes `--numstat` fetch every blob lazily and did not finish in five minutes.
 from __future__ import annotations
 
 import base64
+import difflib
 import datetime as dt
 import os
 import re
@@ -43,7 +44,8 @@ from django.utils import timezone
 from apps.canopy_sessions.invalidation import mark_dirty
 from apps.github_connect import github_app
 
-from .models import Agent, SkillHistoryCommit, SkillHistorySync, SkillRevision
+from . import definition_store
+from .models import Agent, AgentDefinitionRevision, SkillHistoryCommit, SkillHistorySync, SkillRevision
 from .skill_history_parse import LOG_FORMAT, build_groups, parse_log
 
 CREDENTIAL_STATES = ("ok", "no_repo", "no_owner", "owner_not_connected", "repo_not_granted")
@@ -127,6 +129,8 @@ def credential_state(agent: Agent) -> str:
     it comes from the last attempt — except an invalid `repo_url`, which is
     knowable up front, so it is recomputed here rather than read stale off a
     row from before the URL was broken."""
+    if agent.is_stored:
+        return "ok"  # its history is its revisions, which canopy holds
     if not agent.repo_url:
         return "no_repo"
     if agent.owner_id is None:
@@ -327,7 +331,11 @@ def sync(agent: Agent, *, force: bool = False) -> SkillHistorySync:
 
     `force` skips only the "is it due?" check (stale, and not attempted within
     the last hour) — never an in-flight claim, which returns the stored row.
+
+    A stored agent's history is read from its published revisions instead (`_sync_stored`).
     """
+    if agent.is_stored:
+        return _sync_stored(agent)
     if not agent.repo_url or agent.owner_id is None:
         row, _ = SkillHistorySync.objects.get_or_create(agent=agent)
         state = "no_repo" if not agent.repo_url else "no_owner"
@@ -400,6 +408,75 @@ def _do_sync(agent: Agent, row: SkillHistorySync) -> SkillHistorySync:
         row.groups = [g.__dict__ for g in groups]
         row.checks = checks
         row.present = sorted(present)
+        row.save()
+        mark_dirty(resource_uri(agent))
+    return row
+
+
+def _published_revisions(agent: Agent) -> list[AgentDefinitionRevision]:
+    return list(AgentDefinitionRevision.objects.filter(
+        agent=agent, status__in=(AgentDefinitionRevision.PUBLISHED, AgentDefinitionRevision.SUPERSEDED),
+        published_at__isnull=False).select_related("published_by").order_by("number"))
+
+
+def _skill_text(rev: AgentDefinitionRevision | None, skill: str) -> str:
+    if rev is None:
+        return ""
+    data = definition_store.read_file(rev, f"skills/{skill}/SKILL.md")
+    return data.decode("utf-8", errors="replace") if data is not None else ""
+
+
+def _skill_dirs(rev: AgentDefinitionRevision) -> set[str]:
+    return {p.split("/")[1] for p in (rev.tree or {})
+            if p.startswith("skills/") and p.endswith("/SKILL.md") and p.count("/") == 2}
+
+
+def _line_change(before: str, after: str) -> tuple[int, int]:
+    added = deleted = 0
+    for line in difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="", n=0):
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deleted += 1
+    return added, deleted
+
+
+def _sync_stored(agent: Agent) -> SkillHistorySync:
+    """A stored agent's history: each published revision is a "commit" (its sha is the
+    revision's root sha256, its subject the revision's message), and a skill's lines are
+    counted from its SKILL.md in each. Nothing is cloned and no credential is used."""
+    revisions = _published_revisions(agent)
+    row, _ = SkillHistorySync.objects.get_or_create(agent=agent)
+    with transaction.atomic():
+        SkillHistoryCommit.objects.filter(agent=agent).delete()
+        rows: list[SkillRevision] = []
+        previous = None
+        for rev in revisions:
+            by = getattr(rev.published_by, "email", "") or "canopy"
+            obj = SkillHistoryCommit.objects.create(
+                agent=agent, sha=rev.root_sha256, committed_at=rev.published_at,
+                subject=(rev.message or f"Revision {rev.number}").splitlines()[0][:500],
+                body=f"Revision {rev.number}, published by {by}.")
+            names = _skill_dirs(rev) | (_skill_dirs(previous) if previous else set())
+            for name in sorted(names):
+                before, after = _skill_text(previous, name), _skill_text(rev, name)
+                if before != after:
+                    added, deleted = _line_change(before, after)
+                    rows.append(SkillRevision(commit=obj, skill=name, lines_after=len(after.splitlines()),
+                                              added=added, deleted=deleted))
+            previous = rev
+        SkillRevision.objects.bulk_create(rows)
+        live = agent.live_revision
+        groups, checks = build_groups({}, {r.skill for r in rows})
+        row.head_sha = live.root_sha256 if live else ""
+        row.synced_at = row.last_attempt_at = timezone.now()
+        row.synced_with = "canopy"
+        row.last_state = "ok"
+        row.last_error = ""
+        row.sync_started_at = None
+        row.groups = [g.__dict__ for g in groups]
+        row.checks = checks
+        row.present = sorted(_skill_dirs(live)) if live else []
         row.save()
         mark_dirty(resource_uri(agent))
     return row
@@ -565,6 +642,8 @@ def revision_diff(agent: Agent, sha: str, skill: str) -> dict:
         raise SyncError("ok", f"'{sha}' is not a valid commit sha")
     if not _SKILL_NAME_RE.match(skill or ""):
         raise SyncError("ok", f"'{skill}' is not a valid skill name")
+    if agent.is_stored:
+        return _stored_revision_diff(agent, sha, skill)
     owner_repo = _owner_repo(agent)  # raises SyncError("repo_not_granted", ...) if not GitHub
 
     token = github_app.access_token_for(agent.owner)
@@ -582,3 +661,22 @@ def revision_diff(agent: Agent, sha: str, skill: str) -> dict:
     if truncated:
         patch = raw[:DIFF_CAP_BYTES].decode(errors="ignore")
     return {"sha": sha, "skill": skill, "patch": patch, "truncated": truncated}
+
+
+def _stored_revision_diff(agent: Agent, sha: str, skill: str) -> dict:
+    """A stored agent's "commit" is a published revision (sha = its root sha256): the diff
+    of one skill's SKILL.md from the revision published before it."""
+    revisions = _published_revisions(agent)
+    for i, rev in enumerate(revisions):
+        if rev.root_sha256.startswith(sha.lower()):
+            before = _skill_text(revisions[i - 1] if i else None, skill)
+            after = _skill_text(rev, skill)
+            patch = "".join(difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True),
+                                                 fromfile=f"a/skills/{skill}/SKILL.md",
+                                                 tofile=f"b/skills/{skill}/SKILL.md"))
+            raw = patch.encode()
+            truncated = len(raw) > DIFF_CAP_BYTES
+            if truncated:
+                patch = raw[:DIFF_CAP_BYTES].decode(errors="ignore")
+            return {"sha": sha, "skill": skill, "patch": patch, "truncated": truncated}
+    raise SyncError("ok", f"{agent.slug} has no published revision {sha[:12]}")

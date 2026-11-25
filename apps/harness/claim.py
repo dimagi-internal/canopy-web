@@ -42,7 +42,7 @@ from .claim_reach import (  # noqa: F401  (the diagnostics live in claim_reach; 
     turn_workspace_slug,
     unclaimable_queued_turns,
 )
-from . import turn_snapshot
+from . import isolation, turn_snapshot
 from .ledger import append_events
 from .models import (
     FleetHold,
@@ -411,6 +411,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # places work, it does not make a box able. Every claim comes through here —
         # REST and the socket — so this is the only way in.
         if (why := job_refusal(runner, turn)) is not None:
+            skips[turn.pk] = why
+            continue
+        # A learning run's turn keeps nothing on the box for later turns (`isolation.is_isolated`): only a box whose
+        # code says it honours that takes one, above the pin like the checks around it.
+        if (why := isolation.refusal(runner, turn)) is not None:
             skips[turn.pk] = why
             continue
         if turn.job:

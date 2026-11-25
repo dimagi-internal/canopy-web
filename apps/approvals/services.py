@@ -100,7 +100,8 @@ def _after_create(pk: int) -> None:
     delivery.raise_alert_safely(pk)
 
 
-def decide(request_id: int, user, decision: str, *, comment: str = "", via: str = "web") -> ApprovalRequest:
+def decide(request_id: int, user, decision: str, *, comment: str = "", via: str = "web",
+           stepped_up: bool = False) -> ApprovalRequest:
     if decision not in ("approve", "decline"):
         raise ApprovalError("decision must be approve or decline", 422)
     if not getattr(user, "is_authenticated", False):
@@ -122,6 +123,9 @@ def decide(request_id: int, user, decision: str, *, comment: str = "", via: str 
             raise ApprovalError(f"This request is no longer valid: {exc}", 409) from exc
         if not k.may_approve(user, p, described):
             raise ApprovalError(f"You can't approve this: {k.label.lower()} needs {k.needs}.", 403)
+        if decision == "approve" and k.step_up and not stepped_up:
+            raise ApprovalError(f"{k.label} needs your passkey: approve it on its page in canopy, "
+                                f"{cards.page_url(req)}", 403)
         comment = (comment or "").strip()
         if decision == "decline":
             _close(req, ApprovalRequest.DECLINED, user, via=via, comment=comment, event=ApprovalEvent.DECLINED)
@@ -180,6 +184,22 @@ def cancel(request_id: int, user) -> ApprovalRequest:
         if not (filer or may_approve(req, user)):
             raise ApprovalError("only whoever filed this, or someone who could approve it, can withdraw it", 403)
         _close(req, ApprovalRequest.CANCELLED, user, via="", comment="", event=ApprovalEvent.CANCELLED)
+        pk = req.pk
+        transaction.on_commit(lambda: _after_close(pk))
+    return req
+
+
+def supersede(request_id: int, user, *, why: str) -> ApprovalRequest | None:
+    """Close a pending request whose action someone with the authority to take it took
+    directly, so nobody need decide it: cancelled, with `why` as its comment and
+    `{"superseded": True}` as its result. The caller has already been allowed the act; this
+    asks no authority of `user`. None when the request is gone or already closed."""
+    with transaction.atomic():
+        req = ApprovalRequest.objects.select_for_update(of=("self",)).filter(pk=request_id).first()
+        if req is None or not req.is_pending:
+            return None
+        _close(req, ApprovalRequest.CANCELLED, user, via="", comment=why[:1000], event=ApprovalEvent.CANCELLED,
+               result={"superseded": True})
         pk = req.pk
         transaction.on_commit(lambda: _after_close(pk))
     return req

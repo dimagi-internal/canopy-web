@@ -7,6 +7,9 @@ canopy-web keeps the usage of the sessions it already has and drops the rest. Sc
 (`GET /runners/{id}/usage-scope`: its declared projects and the agents it serves),
 so nothing else on the machine is read past its first records.
 
+Subagents count: a session's report includes the transcripts of the subagents it
+ran (`subagent_transcripts`), which Claude Code keeps in their own files.
+
 Incremental by file: `scan` takes and returns `seen` ({path: [mtime, size]}), and
 a file that did not change is not read again. A report for a session carries its
 WHOLE history (every day), so the server simply replaces what it had.
@@ -60,14 +63,31 @@ def _cwd(path: Path) -> str:
     return ""
 
 
-def session_usage(path: Path, repo: str, cwd: str) -> dict | None:
-    """One transcript's report, or None when it spent nothing."""
+def subagent_transcripts(path: Path) -> list[Path]:
+    """The transcripts of the subagents a session ran: Claude Code writes each to
+    `<session>/subagents/agent-*.jsonl` beside `<session>.jsonl`. They are the
+    session's spend — often as much again as the main thread — so a session's
+    report counts them with it (`session_usage`)."""
+    return sorted((path.parent / path.stem / "subagents").glob("*.jsonl"))
+
+
+def session_usage(path: Path, repo: str, cwd: str, extra: list[Path] | None = None) -> dict | None:
+    """One session's report — its transcript and `extra` (its subagents'), or None
+    when it spent nothing."""
     by_message: dict[str, dict] = {}
     first_at, last_at = "", ""
+    for part in [path, *(extra or [])]:
+        first_at, last_at = _read_usage(part, by_message, first_at, last_at)
+    return _report(path, repo, cwd, by_message, first_at, last_at)
+
+
+def _read_usage(path: Path, by_message: dict, first_at: str, last_at: str) -> tuple[str, str]:
+    """Fold one transcript's model calls into `by_message` (one entry per call:
+    a call's content blocks repeat its usage). Returns the widened time span."""
     try:
         f = path.open("r", encoding="utf-8", errors="replace")
     except OSError:
-        return None
+        return first_at, last_at
     with f:
         for line in f:
             try:
@@ -83,6 +103,10 @@ def session_usage(path: Path, repo: str, cwd: str) -> dict | None:
             u = record_usage(rec)
             if u:
                 by_message[u["message_id"] or f"#{len(by_message)}"] = u
+    return first_at, last_at
+
+
+def _report(path: Path, repo: str, cwd: str, by_message: dict, first_at: str, last_at: str) -> dict | None:
     if not by_message:
         return None
     days: dict[str, dict] = {}
@@ -108,17 +132,23 @@ def session_usage(path: Path, repo: str, cwd: str) -> dict | None:
 
 def scan(claude_home: Path, *, home: Path, repos: set[str],
          seen: dict | None = None) -> tuple[list[dict], dict]:
-    """Reports for every changed transcript in a known repo, and the new `seen`."""
+    """Reports for every changed session in a known repo, and the new `seen`. A
+    session is its transcript plus its subagents' (`subagent_transcripts`), and
+    changes when any of them does — its report always carries all of them, because
+    the server replaces what it held for the session."""
     seen = dict(seen or {})
     out: list[dict] = []
     if not claude_home.is_dir() or not repos:
         return out, seen
     for path in sorted(claude_home.glob("*/*.jsonl")):
+        extra = subagent_transcripts(path)
         try:
-            st = path.stat()
+            stats = [p.stat() for p in [path, *extra]]
         except OSError:
             continue
-        stamp = [st.st_mtime, st.st_size]
+        stamp = [stats[0].st_mtime, stats[0].st_size]
+        if extra:  # a plain session keeps its old stamp, so upgrading re-reads nothing
+            stamp.append([[s.st_mtime, s.st_size] for s in stats[1:]])
         key = str(path)
         if seen.get(key) == stamp:
             continue
@@ -127,7 +157,7 @@ def scan(claude_home: Path, *, home: Path, repos: set[str],
         repo = repo_for_cwd(cwd, home=home, repos=repos)
         if not repo:
             continue
-        report = session_usage(path, repo, cwd)
+        report = session_usage(path, repo, cwd, extra)
         if report:
             out.append(report)
     return out, seen

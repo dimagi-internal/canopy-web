@@ -1,5 +1,5 @@
-"""``verify_execution(request)`` / ``verify_view(request, uri=, subject=)`` for a Django
-host: canopy's ``Canopy-Execution`` (an agent's call) or ``Canopy-View`` (the person's own
+"""``verify_execution(request)`` / ``verify_view(request, uri=, subject=)`` /
+``verify_subject(request)`` for a Django host: canopy's ``Canopy-Execution`` (an agent's call) or ``Canopy-View`` (the person's own
 View) statement on this request, verified with this host's configuration, its jti table
 and a cached key resolver. See ``canopy_sdk.host.execution`` and ``canopy_sdk.host.view``."""
 from __future__ import annotations
@@ -7,11 +7,13 @@ from __future__ import annotations
 from ..host import execution as _execution
 from ..host.client_keys import ClientKeyResolver
 from ..host.execution import Execution, ExecutionRefused
+from ..host.subject import Subject, SubjectRefused
 from ..host.view import View, ViewRefused
 from . import conf
 from .stores import DjangoJtiStore
 
-__all__ = ["Execution", "ExecutionRefused", "View", "ViewRefused", "verify_execution", "verify_view"]
+__all__ = ["Execution", "ExecutionRefused", "Subject", "SubjectRefused", "View", "ViewRefused",
+           "verify_execution", "verify_subject", "verify_view"]
 
 
 def verify_execution(request, *, jkt: str | None = None, access_token: str | None = None,
@@ -38,3 +40,17 @@ def verify_view(request, *, uri: str, subject: str, jkt: str | None = None,
         request, config=conf.get_host_config(), client_keys=ClientKeyResolver(cache=cache),
         replay_store=DjangoJtiStore(), uri=uri, subject=subject, jkt=jkt, access_token=access_token,
         rpc=rpc)
+
+
+def verify_subject(request, *, rpc=None, method: str | None = None) -> Subject:
+    """The verified subject statement (``Authorization: CanopySubject``): an agent's turn with
+    ONE of this host's contacts, or ``SubjectRefused``. Authorize every call against
+    ``Subject.sub``. ``rpc`` — ``(method, params)`` of the JSON-RPC request — should always be
+    passed."""
+    from django.core.cache import cache
+
+    from ..host import subject as _subject
+
+    return _subject.verify_subject(
+        request, config=conf.get_host_config(), client_keys=ClientKeyResolver(cache=cache),
+        replay_store=DjangoJtiStore(), method=method, rpc=rpc)

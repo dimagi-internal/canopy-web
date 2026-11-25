@@ -663,6 +663,9 @@ class AnalyticsTotalsOut(StrictModel):
     messages: int
     active_users: int
     active_agents: int
+    # Agents these workspaces own, and how many were created in the range.
+    built_agents: int
+    new_agents: int
     # Repositories with work no agent ran: repo turns, people's own sessions.
     active_repositories: int
     input_tokens: int
@@ -679,6 +682,9 @@ class AnalyticsDayOut(StrictModel):
     sessions: int
     messages: int
     active_users: int
+    # Agents that ran a turn that day; agents the workspaces owned by its end.
+    active_agents: int
+    built_agents: int
     done: int
     failed: int
     lost: int

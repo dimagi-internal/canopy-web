@@ -142,7 +142,7 @@ def test_a_contacts_history_is_the_same_page_a_users_is():
     rows = r.json()["messages"]
     assert [(m["role"], m["plaintext"]) for m in rows] == [("user", "hi"), ("assistant", "hello")]
     assert set(rows[0]) == {"id", "turn_index", "role", "plaintext", "content", "author", "created_at", "app",
-                            "secret_request", "sealed"}
+                            "secret_request", "sealed", "automatic"}
     # A contact never gets the seal card: the contact route does not annotate rows.
     assert all(m["secret_request"] is None for m in rows)
 

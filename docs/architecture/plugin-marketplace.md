@@ -13,6 +13,8 @@ listed; it stays publicly installable from GitHub because it is what gives a new
 the token this catalog needs. The catalog is not at `/agents/marketplace.json` because
 `/agents/*` is the SPA's redirect.
 
+A **stored agent** (its repository hosted by canopy, not GitHub; [stored-agents.md](stored-agents.md)) is in no catalog: `services.member_agents` leaves it out, and a laptop gets it with `canopy agent use <slug>`, which clones its live revision from canopy and installs it from that directory.
+
 ## Rules
 
 1. **One catalog per person, not per workspace.** Membership decides what is *listed*

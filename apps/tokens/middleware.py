@@ -35,6 +35,7 @@ from collections.abc import Callable
 from django.http import HttpRequest, HttpResponse
 
 from apps.tokens import kinds
+from apps.tokens.models import stamp_last_used
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +110,6 @@ class BearerTokenAuthMiddleware:
         from apps.harness.models import RunnerAccessToken
 
         if raw.startswith(RunnerAccessToken.PREFIX):
-            from django.utils import timezone
-
             from apps.api.errors import problem_response
             from apps.harness import runner_auth
 
@@ -122,7 +121,7 @@ class BearerTokenAuthMiddleware:
                                        private=rtok.runner.private,
                                        computer=rtok.runner.kind == rtok.runner.COMPUTER):
                 return problem_response(403, detail="a runner token opens the runner protocol only")
-            RunnerAccessToken.objects.filter(pk=rtok.pk).update(last_used_at=timezone.now())
+            stamp_last_used(RunnerAccessToken, rtok)
             request.user = found.user
             request.runner_token = rtok
             request.auth_method = found.auth_method
@@ -202,6 +201,8 @@ class BearerTokenAuthMiddleware:
             request.bound_agent_id = ctok.bound_agent_id
             # The host grant redeemed on this token's arrival: its page's grant.
             request.host_grant_id = ctok.host_grant_id
+            # The relay channel the site signed for this arrival, "" for a widget.
+            request.relay_channel = ctok.channel or ""
             request.auth_method = found.auth_method
             request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True
@@ -412,7 +413,9 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
       asker and voids exactly when `resolve` says it does;
     * only on a route the MCP server serves as a tool (`caller_token_routes`)
       — what MCP leaves out (minting a PAT, the person's own memory switches and
-      grants, the runner protocol) is refused, never quietly reachable over REST;
+      grants, the runner protocol) is refused, never quietly reachable over REST.
+      The one addition is reading the secrets shared with the token's OWN chat
+      (`caller_tokens.reads_its_chat_secrets`), which the chat key beside it decides;
     * for an AGENT's turn (`grant.read_only`), only to READ (GET) and drive the asker's
       own open page: the asker granted no act-as-you permission, so a write is refused,
       as MCP refuses it. A repo chat's token is the person's own tool and keeps writes;
@@ -426,7 +429,8 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
             "this caller token does not reach REST: it has expired, its conversation no "
             "longer has a verified asker, or its turn is confined (use MCP)"))
     routes = caller_token_routes
-    if routes is None or not routes(request.method, request.path_info):
+    if not caller_tokens.reads_its_chat_secrets(grant, request) and (
+            routes is None or not routes(request.method, request.path_info)):
         return problem_response(403, detail=(
             "a caller token reaches only the routes canopy's MCP server serves as tools, "
             "and this is not one"))

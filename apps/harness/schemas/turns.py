@@ -304,6 +304,11 @@ class ClaimPageSiteOut(Schema):
     # (`own_login:` in its interface). The runner leaves them out of this turn's
     # environment: on a page the agent reaches the site only as the person who sent.
     withheld: list[str] = []
+    # The agent's owner asked for turns on this site's pages to start lean
+    # (`page_lean:`): the runner loads canopy's plugin only, and opens the turn with the
+    # page's own context (`GET /turns/{id}/page-brief`). A runner that does not know the
+    # field runs the turn as before.
+    lean: bool = False
 
 
 class InvocationOut(Schema):
@@ -314,6 +319,19 @@ class InvocationOut(Schema):
     args: str = ""
     # Every line after the command's, as written.
     rest: str = ""
+
+
+class ClaimDefinitionOut(Schema):
+    """Where the turn's agent definition lives (`harness.stored_agents`)."""
+
+    # "stored": a git repository canopy-web hosts, which the runner clones and syncs
+    # (`canopy agent prepare` / `canopy agent sync`); its turns get no GitHub identity.
+    # "repo": the agent's GitHub repository.
+    source: str
+    # The live revision's number, and the sha256 of its manifest; null/"" before one
+    # is published.
+    revision: int | None = None
+    root_sha256: str = ""
 
 
 class ClaimedTurnOut(TurnOut):
@@ -354,6 +372,13 @@ class ClaimedTurnOut(TurnOut):
     # serves: the site, and the agent's own credentials for it that the runner must
     # leave out of the turn (`published_profiles.page_turn`). Null for every other turn.
     page_site: ClaimPageSiteOut | None = None
+    # A learning run's turn (`harness.isolation`): it keeps nothing on the box for later turns, so the runner turns
+    # Claude Code's auto memory off for it. Only a runner that reports `isolated` is handed one.
+    isolated: bool = False
+    # For a turn whose agent is a STORED agent: its definition's live revision. The
+    # runner materializes and syncs it rather than cloning and pulling a GitHub
+    # repo. Null for a repo agent and for a turn with no agent.
+    definition: ClaimDefinitionOut | None = None
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
@@ -385,6 +410,18 @@ class ClaimedTurnOut(TurnOut):
         if session is None or not sensitivity.any_sensitive(session, obj):
             return {}
         return session_sync.turn_end_held(session)
+
+    @staticmethod
+    def resolve_isolated(obj) -> bool:
+        from ..isolation import is_isolated  # noqa: PLC0415 — as the resolvers around it
+
+        return is_isolated(obj)
+
+    @staticmethod
+    def resolve_definition(obj) -> dict | None:
+        from ..stored_agents import definition_of  # noqa: PLC0415 — as the resolvers around it
+
+        return definition_of(obj.acting_agent)
 
     @staticmethod
     def resolve_page_site(obj) -> dict | None:
@@ -421,6 +458,38 @@ class TurnEventsOut(Schema):
 
 class TurnEventCountOut(Schema):
     count: int
+
+
+class PageBriefOut(Schema):
+    """A lean page turn's opening context (`harness.page_brief`)."""
+
+    # The block the runner puts at the top of the turn's prompt; "" when there is none.
+    text: str = ""
+    site: str = ""
+    # How many of the site's tools it lists.
+    tools: int = 0
+    # Why the site's tools could not be listed for the person ("" when they were).
+    refused: str = ""
+    # The page's permission waits for the person's passkey and the panel is asking them:
+    # no text yet; ask again with `?poll=true` until this is false.
+    waiting: bool = False
+    # Seconds the turn may still wait for them.
+    wait_left: float = 0.0
+
+
+class LiveTextIn(Schema):
+    """The reply an agent is writing right now, for the people watching its chat."""
+
+    # Which reply of the turn (0 for the first; the next after a tool call is 1, ...).
+    message: int = Field(ge=0, le=10_000)
+    # Everything it has written of that reply so far — whole, never a fragment, so a
+    # watcher that missed one still shows all of it.
+    text: str = Field(max_length=200_000)
+
+
+class LiveTextOut(Schema):
+    # False when nobody hears it (a sensitive conversation's words never stream).
+    sent: bool
 
 
 class TurnStartIn(Schema):

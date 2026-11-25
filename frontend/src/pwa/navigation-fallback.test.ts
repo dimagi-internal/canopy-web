@@ -191,6 +191,14 @@ describe('the matcher workbox inlines into the SW', () => {
     }
   })
 
+  describe('the browser extension panel is a server route, not an SPA route', () => {
+    // Its `frame-ancestors` (the allowed extension origins) and its X-Frame-Options
+    // exemption come from Django (apps/embedding/extension.py); a cached shell would carry neither.
+    for (const p of ['/ext/panel/', '/ext/panel', '/canopy/ext/panel/']) {
+      it(`is left to the network: ${p}`, () => expect(shouldServeShell(p)).toBe(false))
+    }
+  })
+
   it('only claims navigations — a fetch/XHR for the same path is left alone', () => {
     // Everything the app fetches at runtime (the API above all) must bypass the
     // SW. The route is the only runtimeCaching entry, so `request.mode` is the

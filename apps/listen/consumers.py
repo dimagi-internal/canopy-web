@@ -6,8 +6,8 @@ other role as it is: it never reads, stores or logs one, not even its size per f
 text: `{"type":"peer","role","connected"}` and `{"type":"ended","reason"}`.
 
 Who: the session's owner — the phone by its session cookie, the laptop by the runner's
-own key (held to sessions on that runner) or the owner's token. One socket per role
-(a second is closed 4009, as soon as it has been accepted, so the client can read why).
+own key (held to sessions on that runner) or the owner's token. One socket per role: a
+newer one takes the role over, and the older one is closed 4009 (`services.claim_role`).
 Over 64 KiB, or over 60 messages in a second, closes that socket 4008.
 
 A frame sent while the other role is away is held in this socket's memory for at most
@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import time
 import uuid
 from collections import deque
@@ -30,6 +32,9 @@ from apps.realtime.channels_auth import still_signed_in
 
 from . import services
 from .models import ROLES, ListenSession
+
+logger = logging.getLogger(__name__)
+_REASON = re.compile(r"[a-z0-9_]{1,40}")
 
 MAX_FRAME = 64 * 1024
 MAX_PER_SECOND = 60
@@ -77,20 +82,20 @@ class ListenConsumer(AsyncWebsocketConsumer):
             await self.close(code=NOT_YOURS)
             return
         await self.accept()
-        if outcome == "taken":
-            await self.close(code=ROLE_TAKEN)
-            return
         if outcome == "ended":
             self._ended = True
             await self._send_note({"type": "ended", "reason": detail or "ended"})
             await self.close()
             return
+        peer_present, replaced = detail
+        if replaced:
+            await self.channel_layer.send(replaced, {"type": "listen.replaced"})
         self._sid, self._role, self._peer = sid, role, services.other(role)
         self._held: deque[tuple[float, bytes]] = deque()
         self._sent = 0
         self._window, self._count = time.monotonic(), 0
         self._groups = groups
-        self._holding, self._peer_present = True, bool(detail)
+        self._holding, self._peer_present = True, bool(peer_present)
         await self._send_note({"type": "peer", "role": self._peer, "connected": self._peer_present})
         await self.channel_layer.group_send(services.role_group(sid, self._peer), {
             "type": "listen.peer", "role": role, "connected": True})
@@ -104,14 +109,17 @@ class ListenConsumer(AsyncWebsocketConsumer):
         for group in self._groups:
             await self.channel_layer.group_discard(group, self.channel_name)
         sent, self._sent = self._sent, 0
-        await database_sync_to_async(services.release_role)(self._sid, self._role, self.channel_name, sent=sent)
-        if not self._ended:
+        held = await database_sync_to_async(services.release_role)(self._sid, self._role, self.channel_name, sent=sent)
+        if held and not self._ended:  # a socket that was taken over leaves its successor be
             await self.channel_layer.group_send(services.role_group(self._sid, self._peer), {
                 "type": "listen.peer", "role": self._role, "connected": False})
 
     async def receive(self, text_data=None, bytes_data=None):
-        if not self._holding or self._ended or bytes_data is None:
-            return  # a client's text is not part of the protocol; nothing reads it
+        if not self._holding or self._ended:
+            return
+        if bytes_data is None:
+            self._bye(text_data)
+            return
         if len(bytes_data) > MAX_FRAME or self._over_rate():
             await self.close(code=TOO_MUCH)
             return
@@ -134,12 +142,29 @@ class ListenConsumer(AsyncWebsocketConsumer):
                 _at, frame = self._held.popleft()
                 await self._relay(frame)
 
+    async def listen_replaced(self, message):
+        """A newer socket took this role over."""
+        await self.close(code=ROLE_TAKEN)
+
     async def listen_ended(self, message):
         self._ended = True
         await self._send_note({"type": "ended", "reason": message.get("reason") or "ended"})
         await self.close()
 
     # -- helpers -----------------------------------------------------------------
+    def _bye(self, text) -> None:
+        """The laptop's pipe says why it is leaving (`{"type":"bye","reason":code}`): logged,
+        a short code only, so a failure on someone's laptop can be told from a network drop.
+        Any other text from a client means nothing."""
+        if self._role != "laptop" or not isinstance(text, str) or len(text) > 200:
+            return
+        try:
+            note = json.loads(text)
+        except ValueError:
+            return
+        reason = note.get("reason") if isinstance(note, dict) and note.get("type") == "bye" else None
+        if isinstance(reason, str) and _REASON.fullmatch(reason):
+            logger.info("listen %s: laptop left (%s)", self._sid, reason)
     async def _relay(self, frame: bytes) -> None:
         self._sent += len(frame)
         await self.channel_layer.group_send(services.role_group(self._sid, self._peer),

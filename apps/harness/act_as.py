@@ -127,6 +127,8 @@ EXCLUDED_PATTERNS: dict[str, str] = {
     r"^/api/slack-config/[^/]+/config-token$": "a Slack configuration token",
     r"^/api/workspaces/[^/]+/vaults(/|$)": "workspace vaults: their values, members and keys",
     r"^/api/workspaces/[^/]+/host-sites(/|$)": "host sites and the keys they sign visitors with",
+    r"^/api/brain/(learning-reads|learners|targets|flags|why|state)(/|$)|^/api/brain/outputs/[^/]+/status$":
+        "managing canopy learning: a person as themselves or an admin agent in its own turn (apps/brain/actor.py)",
 }
 _PATTERNS = tuple((re.compile(p), why) for p, why in EXCLUDED_PATTERNS.items())
 

@@ -20,6 +20,10 @@ PROPS
     canopy.refresh()                     re-read every declared source (props.data updates)
     canopy.navigate(path)                open a canopy page: "/tasks/CON-12", "/projects/<handle>"
                                          (relative to the workspace) or "/w/<ws>/..."
+    canopy.open(url) -> Promise          an https address in a new tab, from a click (no confirm step)
+    canopy.clipboard.write(text) -> Promise   copy text, from a click
+    canopy.download(name, mime, data) -> Promise<{name}>  save a file (text, ArrayBuffer, Uint8Array
+                                         or Blob, up to 25 MB), from a click
     canopy.runAgentTask({agent, name, input, output_schema, instructions?, timeout_s?, routing?,
                          onStatus?}) -> Promise<result>
                                          give an agent a task the view DECLARES (AGENT TASKS below)
@@ -27,10 +31,14 @@ PROPS
                                          it fails, is cancelled, times out or the viewer may not
                                          give that agent tasks
     canopy.connection.request({provider, method, path, query?, body?, as?, agent?}) -> Promise<{status, body}>
-                                         a Salesforce call the view declares (see SALESFORCE CALLS)
+                                         a Salesforce or Google Drive call the view declares (see
+                                         SALESFORCE CALLS, GOOGLE DRIVE CALLS)
     canopy.connection.begin() -> Promise<{expires_at, hard_limit_at, writes}>
                                          open this click's window before any write (see SALESFORCE CALLS)
     canopy.agentTask(id) -> Promise<task>  re-read a task this view started (status, error, ...)
+    canopy.tasks.act(key, action) -> Promise<task>
+                                         on a PROJECT view: mark one of its project's tasks "done", or
+                                         "reopen" it, as the viewer, from a click (TASK ACTIONS below)
     canopy.googleAccess.start({agent, account?, services?: ["gmail"], minutes?: 60, purpose?})
                                          -> Promise<{ok, account, until}>  the VIEWER lends an agent
                                          the view declares tasks for their own Google account for
@@ -111,6 +119,29 @@ AGENT TASKS (the one thing a view may make happen; docs/architecture/agent-tasks
       } catch (e) { setStatus(e.message) }
     }
 
+TASK ACTIONS (a project view changing its own project's tasks, without opening each task page)
+- Declare the moves the code may make on the view: "task_actions": ["done", "reopen"] (either or
+  both; nothing else). Only a view on a project may declare them, and only its workspace's editors
+  may write such a view. canopy refuses any canopy.tasks.act whose action is not declared.
+- canopy.tasks.act(key, action) marks the task `key` ("CON-12") done, or reopens a done or declined
+  one (back to todo), and resolves with the task as it now is ({key, title, status, ...}, the shape
+  of a `tasks` read). It runs AS THE VIEWER: the task must be in the view's project, and the viewer
+  must be able to change it on its own page (an editor of the workspace, or its assignee) — anyone
+  else gets the refusal as a rejected promise. Show its message. It never starts an agent's turn,
+  and the task's history names the viewer.
+- It must start from a click on this screen, as a Salesforce write does: call it straight from an
+  onClick handler. Otherwise it rejects with a sentence and nothing is sent. A view that has not
+  been saved yet cannot call it.
+- Example, a list where each row is marked done in place:
+    <Table rows={tasks} columns={[
+      { key: "title", label: "Proposed email" },
+      { key: "status", label: "", render: (t) => t.status === "done"
+          ? <Button size="sm" onClick={() => canopy.tasks.act(t.key, "reopen").then(canopy.refresh)
+              .catch((e) => setError(e.message))}>Reopen</Button>
+          : <Button size="sm" tone="primary" onClick={() => canopy.tasks.act(t.key, "done").then(canopy.refresh)
+              .catch((e) => setError(e.message))}>Done</Button> },
+    ]} />
+
 GLOBALS (no imports — the code is not a module)
 - React, and its hooks as bare names: useState, useEffect, useMemo, useCallback, useRef.
 - The kit, styled in canopy's look:
@@ -161,7 +192,8 @@ SALESFORCE CALLS
   onClick handler, never on load or on a timer. The page checks for the click itself and rejects
   "This needs a click." otherwise. The click only counts for about 5 seconds, so the write must be
   the first thing the handler does: a write that comes after several seconds of awaits in the same
-  handler is refused. One click opens up to 10 minutes and 500 writes within what the screen declared;
+  handler is refused. One click opens up to 10 minutes and 500 writes within what the screen declared (a screen whose
+  only writes are Drive label changes gets an hour, 20000 writes, 15 minutes idle; begin() says which);
   later writes in that window need no new click. The window closes 120 seconds after the last write
   (reads don't count), so keep writing or click again. To read and dedup before the first write, call
   canopy.connection.begin() first thing in the onClick instead: it opens the window and resolves
@@ -181,13 +213,57 @@ SALESFORCE CALLS
       path: "sobjects/Lead/" + lead.Id, body: {Status: "Contacted"}})
         .then(() => canopy.refresh()).catch((e) => setError(e.message))}>Mark contacted</Button>
 
+GOOGLE DRIVE CALLS
+- The same canopy.connection.request and begin(), with provider "google", on the VIEWER's own Google
+  account only (as "viewer"; "shared" is refused). Paths are relative to
+  https://www.googleapis.com/drive/v3/, and these are all there are:
+    reads:  GET files (list; query q, pageSize, pageToken, fields, orderBy, spaces, corpora, driveId,
+            supportsAllDrives, includeItemsFromAllDrives, includeLabels), GET files/<id>,
+            GET files/<id>/listLabels (query maxResults, pageToken, fields)
+    writes: POST files/<id>/modifyLabels, body {labelModifications: [...]} (a click, as any write)
+  Any other query name (alt, uploadType, ...) is refused. Declare them with * for the id:
+  "connections": [{"provider": "google", "as": "viewer",
+    "reads": [{"method": "GET", "path": "files"}, {"method": "GET", "path": "files/*"},
+              {"method": "GET", "path": "files/*/listLabels"}],
+    "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
+- Gmail, Calendar, Sheets and Docs, reads only, on the same account: the path's first segment names
+  the API and the rest is under its root.
+    gmail/profile, gmail/messages (q, maxResults, pageToken, labelIds, includeSpamTrash, fields),
+    gmail/messages/<id>, gmail/threads/<id> (format, metadataHeaders, fields) — the viewer's mailbox
+    calendar/calendars/primary, calendar/calendars/primary/events (q, timeMin, timeMax, singleEvents,
+    orderBy, maxResults, pageToken, timeZone, showDeleted, updatedMin, iCalUID, fields)
+    sheets/<id> (fields), sheets/<id>/values:batchGet (ranges — repeat it as a list —, majorDimension,
+    valueRenderOption, dateTimeRenderOption, fields)
+    docs/<id> (fields, suggestionsViewMode)
+  Declare each as a read with * for the id (gmail/messages/*, sheets/*/values:batchGet).
+- Writes (each a click, as any): POST gmail/drafts (body {message: {raw, threadId?}}; a draft or a
+  reply, never a send), POST sheets/<id>/values:batchUpdate (query valueInputOption...), POST
+  sheets/<id>/values/<A1 range>:append (valueInputOption, insertDataOption), POST
+  sheets/<id>:batchUpdate, POST docs/<id>:batchUpdate, POST files (a new file's metadata). Declare a
+  custom method with *:verb: sheets/*/values/*:append, docs/*:batchUpdate, sheets/*:batchUpdate.
+  The workspace's Google app must ask for each API's scope (Read mail, Write drafts, Read calendars,
+  Read files in Drive, Read and change spreadsheets, Read and change documents, Create files in Drive).
+- It never uses a stored Google connection: only an hour of access the viewer grants for their own
+  screens. Without one (or once it ends) the call rejects with code "not_connected" (or
+  "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url) in
+  its click; the page goes to Google in the same tab, with no extra prompt, and comes back to this
+  page, where the viewer tries again. Nothing renews it. The
+  workspace's Google app must ask for "See and change file details and labels in Drive" (an admin,
+  in Settings → Connections).
+- Example, a folder's children: canopy.connection.request({provider: "google", method: "GET", path:
+  "files", query: {q: "'" + folderId + "' in parents and trashed = false", fields:
+  "nextPageToken, files(id, name, mimeType, labelInfo)", includeLabels: labelId, supportsAllDrives:
+  "true", includeItemsFromAllDrives: "true", pageSize: "1000"}}).
+
 RULES (the frame enforces them; breaking one fails, it is not "best effort")
 - No network: fetch, XHR, WebSocket and remote images are blocked by the frame's CSP.
-  Everything comes through props.data, canopy.read, canopy.runAgentTask or canopy.connection.request.
-- No writes, except starting an agent task the view declares and the Salesforce writes it declares
-  (and only from a click): the catalog is read-only, canopy.runAgentTask is refused for any {agent,
-  name} not in the view's agent_tasks, and canopy.connection.request for any call not in its
-  connections.
+  Everything comes through props.data, canopy.read, canopy.runAgentTask, canopy.connection.request
+  or canopy.tasks.act.
+- No writes, except starting an agent task the view declares, the Salesforce or Drive writes it declares
+  (only from a click) and the task moves it declares (only from a click): the catalog is read-only,
+  canopy.runAgentTask is refused for any {agent, name} not in the view's agent_tasks,
+  canopy.connection.request for any call not in its connections, and canopy.tasks.act for any
+  action not in its task_actions.
 - No storage, cookies or access to the page around the frame.
 - What a view shows, its viewers may see — and so may its author. Read only what the view needs.
 

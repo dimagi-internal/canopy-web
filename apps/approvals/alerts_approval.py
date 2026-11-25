@@ -2,7 +2,8 @@
 
 The request is the record; this makes it routable like any alarm — by the scopes its kind gave it
 (`workspace:<slug>`, `agent:<slug>`) — so it appears on the workspace and agent screens for the
-people who could approve it, with the kind's Approve / Decline as server buttons. A viewer who
+people who could approve it, with the kind's Approve / Decline as server buttons (for a kind whose
+approval needs a passkey, a link to the request's page in Approve's place). A viewer who
 could not approve it has no actions, and so does not see it. It resolves when the request is
 decided, withdrawn or expires.
 """
@@ -12,7 +13,7 @@ from datetime import timedelta
 
 from apps.attention.alerts import Action, Raise
 
-from . import cards, services
+from . import cards, kinds, services
 from .models import ApprovalRequest
 
 KIND = "approval_request"
@@ -51,6 +52,10 @@ def actions(alert, user) -> list[Action]:
     req = _request(alert)
     if req is None or not services.may_approve(req, user):
         return []
+    if kinds.needs_step_up(req.kind):
+        # An alert's button carries no passkey: approving is the page's, and Decline needs none.
+        return [Action("open", cards.STEP_UP_APPROVE, False, href=cards.url(req)),
+                Action("decline", "Decline", True)]
     return [Action("approve", "Approve", True), Action("decline", "Decline", True),
             Action("open", "Open the whole request", False, href=cards.url(req))]
 

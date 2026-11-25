@@ -286,7 +286,8 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 # And `client_id`, the send's own nonce: the sender's page matches
                 # the line it drew when the button was pressed to this echo by it.
                 metadata=_meta(turn_index=data.get("turn_index"), author=data.get("author"),
-                               record=data.get("record"), client_id=data.get("client_id") or None),
+                               record=data.get("record"), client_id=data.get("client_id") or None,
+                               automatic=data.get("automatic") or None),
             )
         ]
 
@@ -543,6 +544,13 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     # it rides CUSTOM; dropped here, the request would reach the chat only on a
     # reload, on both surfaces that ride ag-ui (the chat page and the panel).
     if event == "session.join_requests":
+        return [_custom(event, data)]
+
+    # The reply the agent is writing, whole so far (`chat.live_text`). Not AG-UI's text
+    # message stream: that is append-only deltas under one id, and this is a snapshot a
+    # watcher can join late and that the stored reply replaces. So it rides CUSTOM; dropped
+    # here, the panel would show a reply only once it is finished.
+    if event == "chat.live_text":
         return [_custom(event, data)]
 
     # Multiplayer and placement: canopy's, not AG-UI's. One user and one agent

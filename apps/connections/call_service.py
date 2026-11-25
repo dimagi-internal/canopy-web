@@ -3,13 +3,18 @@
 A dynamic view or app page never holds a token. It asks here, on the signed-in person's session,
 and this does the checks in order, each before anything more is read: a session, the surface and
 whether the person may open it, the allowlist (`calls`), what that surface declared
-(`declarations`), whose connection, a write's operation, the rate limit. Only then is a token read
+(`declarations`), whose connection, a write's operation. Only then is a token read
 (`server_tokens`) and the provider called, with no transaction held, no redirect followed, the
 answer capped, and a limit on how many wait at once and how long each may take.
 
 The route is a plain `def`: Django runs it on a worker thread, as it does every route that calls a
-provider, so the wait for Salesforce blocks that thread and not the event loop. That is why
+provider, so the wait for the provider blocks that thread and not the event loop. That is why
 `_in_flight` exists, and why the read has a wall-clock limit.
+
+A composite call (`calls.expand`) is taken apart before anything is read: each call inside it is
+checked against the declaration as if made alone, each write inside it spends one place on the lease
+(all of them before it is sent, or none), and each write inside it is its own Event, as it would be
+alone. It is still one request to the provider, so one place in flight.
 
 Every refusal is a `services.ConnectionError` whose message is a sentence for the screen
 (`problems.problem_for_call`). A token appears in none of them, in no log and no Event: an answer
@@ -20,6 +25,7 @@ line. Neither says what was asked or answered, only where.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from collections import Counter
@@ -44,11 +50,13 @@ from apps.common.rate_limit import over
 from apps.common.views_debug import is_machine
 from apps.workspaces.links import base_url
 
-from . import calls, declarations, providers, server_key, server_tokens, services
+from . import calls, declarations, providers, server_key, server_tokens, services, temporary
 from .models import Connection, ConnectionOperation, ConnectionSurfaceShare
 
-CALLS_PER_MINUTE = 300
 RATE_WINDOW_SECONDS = 60
+# No count of calls over time: how many a person makes is the provider's to limit, and its own
+# refusal (a 429) goes back to the screen as the provider's answer. Only the threads they hold are
+# bounded here (`MAX_IN_FLIGHT_*`), and clicks that open a write (`OPERATIONS_PER_MINUTE`).
 CONNECT_SECONDS, READ_SECONDS = 5, 30
 #: The whole call, however the bytes arrive: `READ_SECONDS` only bounds one wait for them.
 TOTAL_SECONDS = 35
@@ -63,6 +71,14 @@ OPERATION_SECONDS = 120
 #: ...and this long after its opening, however it is written to.
 OPERATION_HARD_LIMIT_SECONDS = 600
 OPERATION_MAX_WRITES = 500
+#: A screen whose only writes are Drive label changes on the viewer's own Google account gets a click as
+#: long as the hour of Google access the viewer granted for their own screens (`temporary=1&for_screens=1`):
+#: one click can clear a whole folder. Label changes are all such a screen can make, and only to files the
+#: viewer may already relabel; the hour still ends it, and nothing renews it.
+DRIVE_LABEL_WRITES = frozenset({("POST", "files/*/modifyLabels")})
+DRIVE_LABEL_OPERATION_SECONDS = 900
+DRIVE_LABEL_OPERATION_HARD_LIMIT_SECONDS = 3600
+DRIVE_LABEL_OPERATION_MAX_WRITES = 20000
 OPERATIONS_PER_MINUTE = 60
 _CHUNK_BYTES = 64 * 1024
 _REDACTED = b"[redacted]"
@@ -77,12 +93,78 @@ def _title(provider: str) -> str:
     return getattr(providers.CLASSES.get(provider), "title", provider)
 
 
+#: The one provider header a screen may ask for: save past the org's duplicate rules ("Create anyway"),
+#: on a single record's create or update only (`_duplicates_header`).
+DUPLICATE_RULE_HEADER = ("Sforce-Duplicate-Rule-Header", "allowSave=true")
+_DUPLICATES_ON = frozenset({("POST", "sobjects/{type}"), ("POST", "sobjects/{type}/{id}"),
+                            ("PATCH", "sobjects/{type}/{id}")})
+
+#: Salesforce's own count of the org's API use (`api-usage=18/15000`), passed to the page as `limits`.
+LIMIT_INFO_HEADER = "Sforce-Limit-Info"
+_LIMIT_INFO = re.compile(r"[A-Za-z0-9_\-=/,; ]{1,200}")
+#: The longest wait a provider's `Retry-After` is passed on as (seconds).
+MAX_RETRY_AFTER = 3600
+#: A provider status that says it is limiting calls or busy: it did not do what was asked.
+_LIMITED_STATUSES = frozenset({429, 503})
+
+
+@dataclass(frozen=True)
+class _Window:
+    """How far one click goes: ends `idle` seconds after its last write, `hard` after the click, at
+    `max_writes` writes."""
+    idle: int
+    hard: int
+    max_writes: int
+
+
+_CLICK = _Window(OPERATION_SECONDS, OPERATION_HARD_LIMIT_SECONDS, OPERATION_MAX_WRITES)
+_DRIVE_LABELS_CLICK = _Window(DRIVE_LABEL_OPERATION_SECONDS, DRIVE_LABEL_OPERATION_HARD_LIMIT_SECONDS,
+                              DRIVE_LABEL_OPERATION_MAX_WRITES)
+
+
+def _window(surface: declarations.Surface) -> _Window:
+    """The long click only when EVERY write the screen declares is a Drive label change on the viewer's
+    own Google account; anything else on the screen keeps the ordinary click."""
+    lines = surface.write_lines()
+    if lines and all(line.get("provider") == "google" and line.get("as") == "viewer"
+                     and (line.get("method"), line.get("path")) in DRIVE_LABEL_WRITES for line in lines):
+        return _DRIVE_LABELS_CLICK
+    return _CLICK
+
+
 @dataclass
 class _Sent:
     """What an audit line can say about a call: whether anything left, and what came back."""
     sent: bool = False
     status: int | None = None
     outcome: str = "answered"
+    #: `LIMIT_INFO_HEADER` as it came, when it is plain; and the provider's `Retry-After`, in seconds.
+    limits: str | None = None
+    retry_after: int | None = None
+    #: The answer's JSON, for a composite call's per-part audit.
+    answer: object = None
+
+
+@dataclass(frozen=True)
+class _Planned:
+    """A call as checked: what is sent (`matched`, `query`, `body`) and, for a composite call, its parts.
+    A composite call's `matched` carries the kind its parts make it: a write when any part is one."""
+    matched: calls.Match
+    query: dict
+    body: object
+    composite: calls.Composite | None = None
+    #: Headers sent beside the token: only ever `DUPLICATE_RULE_HEADER`, when asked for and allowed.
+    headers: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def parts(self) -> tuple[calls.Match, ...]:
+        return self.composite.parts if self.composite else (self.matched,)
+
+    @property
+    def writes(self) -> int:
+        if self.composite:
+            return self.composite.writes
+        return 1 if self.matched.rule.kind == "write" else 0
 
 
 def call(request, provider: str, payload) -> dict:
@@ -94,33 +176,89 @@ def call(request, provider: str, payload) -> dict:
         raise services.ConnectionError("request_too_large", "That is too much to send in one call.")
     user = request.user
     surface = declarations.resolve_surface(request, payload.surface.model_dump())
-    matched, query = _allowed(provider, payload)
-    if not surface.allows(provider, payload.as_, payload.agent, matched, payload.method):
-        raise services.ConnectionError("not_declared", f"This screen didn't declare that {_title(provider)} call, "
-                                                       "so it can't make it.")
+    plan = _allowed(provider, payload)
+    _check_declared(surface, provider, payload, plan)
+    matched, query = plan.matched, plan.query
     try:
+        if _on_temporary(user, provider, surface):
+            return _call_on_temporary(user, provider, surface, matched, query, payload)
         conn = (_shared_connection(user, provider, surface, payload.agent) if payload.as_ == "shared"
                 else _viewer_connection(user, provider, surface))
-        if matched.rule.kind == "write":
-            _check_operation(user, conn, surface, matched, payload.operation_id)
-        if over(f"connections:calls:{user.pk}:{provider}", CALLS_PER_MINUTE, RATE_WINDOW_SECONDS):
-            raise services.ConnectionError("rate_limited", f"Too many {_title(provider)} calls in the last minute; "
-                                                           "wait a moment and try again.")
+        if plan.writes:
+            _check_operation(user, conn, surface, matched, payload.operation_id, plan.writes)
         sent = _Sent()
         with _in_flight(user.pk):
             try:
-                return _exchange(conn, provider, matched, query, payload.body, sent)
+                return _exchange(conn, provider, matched, query, plan.body, sent, plan.headers)
             finally:
                 if sent.sent:
                     _mark_used(conn)
-                    _audit(conn, user, surface, matched, payload.operation_id, payload.as_, sent)
+                    _audit(conn, user, surface, plan, payload.operation_id, payload.as_, sent)
     except services.ConnectionError as exc:
         said = _said_to_this_caller(exc, provider, payload.as_, payload.agent)
         # Connecting their own account wouldn't bring an agent's back.
         if payload.as_ == "viewer" and (said.code == "not_connected" or getattr(said, "connect_again", False)):
             start = reverse("connections_start", args=[provider, surface.workspace])
+            if provider in calls.TEMPORARY_ONLY and not _server_calls(provider):  # an hour, nothing stored
+                start += "?temporary=1&for_screens=1"
             said.members = {"connect_url": f"{base_url()}{start}"}
         raise said from None
+
+
+def _server_calls(provider: str) -> bool:
+    """Whether canopy-web may call this provider with a person's stored connection (its `server_calls`)."""
+    return bool(getattr(providers.CLASSES.get(provider), "server_calls", False))
+
+
+def _on_temporary(user, provider: str, surface: declarations.Surface) -> bool:
+    """Whether a screen's call runs on the viewer's hour of access for screens (`temporary.for_screens`).
+
+    A `calls.TEMPORARY_ONLY` provider whose `server_calls` is off (Google today): always, never a stored
+    connection. The day its `server_calls` is turned on (one flag on the provider class), the same call
+    runs on the viewer's hour while they have one, and otherwise on their stored connection with
+    "canopy-web can use this" on (`_viewer_connection`, `server_tokens`), as Salesforce's does; the rules,
+    declarations, leases and audit are the same either way, so nothing else changes."""
+    if provider not in calls.TEMPORARY_ONLY:
+        return False
+    if not _server_calls(provider):
+        return True
+    return temporary.for_screens(user, provider, surface.workspace) is not None
+
+
+def _call_on_temporary(user, provider: str, surface: declarations.Surface, matched: calls.Match, query: dict,
+                       payload) -> dict:
+    """A call for a `calls.TEMPORARY_ONLY` provider: on the viewer's own short-lived access for screens in
+    the surface's workspace (`temporary.for_screens`), never a stored connection, so no refresh token is
+    ever behind it. None, or one the provider no longer takes, is `not_connected` / `session_ended` with a
+    `connect_url` that grants a new one. The same order of checks, limits and audit as any other call."""
+    title = _title(provider)
+    row = temporary.for_screens(user, provider, surface.workspace)
+    if row is None:
+        raise services.NotConnected(f"This page needs your {title} for the next hour. Allow it, then try again.")
+    # An hour allowed before the app's admin ticked another permission: the provider would refuse what
+    # needs it, so ask again now rather than spend a write on a call bound to be refused.
+    if providers.for_app(row.app).missing_scopes(tuple(row.scopes.split())):
+        again = services.ConnectionError("scope_added", f"This page now needs more of your {title} than you "
+                                                        "allowed. Allow it again, then try again.")
+        again.connect_again = True
+        raise again
+    if matched.rule.kind == "write":
+        _spend_write(user, payload.operation_id, surface)
+    sent = _Sent()
+    subject = replace(temporary._subject(row), workspace=row.app.workspace)
+    with _in_flight(user.pk):
+        try:
+            got = server_tokens.Access(temporary.token_of(row), "", "")
+            status, raw = _ask(provider, matched, query, payload.body, got, _monotonic() + TOTAL_SECONDS, sent)
+            if status == 401:  # refused, so it did not land; this token can't be renewed
+                ended = services.ConnectionError("session_ended", f"Your hour of {title} for this page has ended. "
+                                                                  "Allow it again, then try again.")
+                ended.connect_again = True
+                raise ended
+            return _answer(status, raw, provider, matched, sent)
+        finally:
+            if sent.sent:
+                _audit_subject(subject, provider, user, surface, matched, payload.operation_id, "viewer", sent)
 
 
 def open_operation(request, surface_ref: dict) -> dict:
@@ -134,11 +272,13 @@ def open_operation(request, surface_ref: dict) -> dict:
         raise services.ConnectionError("rate_limited", "Too many clicks in the last minute; wait a moment and try "
                                                        "again.")
     now = timezone.now()
+    window = _window(surface)
     row = ConnectionOperation.objects.create(
         user=request.user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
-        expires_at=now + timedelta(seconds=OPERATION_SECONDS),
-        hard_limit_at=now + timedelta(seconds=OPERATION_HARD_LIMIT_SECONDS))
-    return {"operation_id": row.pk, "expires_at": row.expires_at, "hard_limit_at": row.hard_limit_at, "writes": writes}
+        expires_at=now + timedelta(seconds=window.idle),
+        hard_limit_at=now + timedelta(seconds=window.hard))
+    return {"operation_id": row.pk, "expires_at": row.expires_at, "hard_limit_at": row.hard_limit_at, "writes": writes,
+            "max_writes": window.max_writes, "idle_seconds": window.idle, "hard_limit_seconds": window.hard}
 
 
 @contextmanager
@@ -206,17 +346,51 @@ def _require_session(request) -> None:
                                                            "a token can't.")
 
 
-def _allowed(provider: str, payload) -> tuple[calls.Match, dict]:
+def _allowed(provider: str, payload) -> _Planned:
+    if payload.as_ == "shared" and provider in calls.VIEWER_ONLY:
+        raise services.ConnectionError("not_allowed", f"A screen can only use your own {_title(provider)} account.")
     try:
         matched = calls.match(provider, payload.method, payload.path)
-        query = calls.check_query(payload.query)
+        query = calls.check_query(payload.query, provider, matched.path)
+        if payload.body is not None and matched.rule.method in ("GET", "DELETE"):
+            raise calls.NotAllowed(f"A {matched.rule.method} call can't carry a body.")
+        headers = _duplicates_header(provider, matched, getattr(payload, "allow_duplicates", False))
+        if not calls.is_composite(matched):
+            return _Planned(matched, query, payload.body, headers=headers)
+        composite = calls.expand(provider, matched, query, payload.body)
     except calls.NotSupported as exc:
         raise services.ConnectionError("provider_not_supported", str(exc)) from None
     except calls.NotAllowed as exc:
         raise services.ConnectionError("not_allowed", str(exc)) from None
-    if payload.body is not None and matched.rule.method in ("GET", "DELETE"):
-        raise services.ConnectionError("not_allowed", f"A {matched.rule.method} call can't carry a body.")
-    return matched, query
+    kind = "write" if composite.writes else "read"
+    return _Planned(replace(matched, rule=replace(matched.rule, kind=kind)), composite.query, composite.body,
+                    composite)
+
+
+def _duplicates_header(provider: str, matched: calls.Match, asked: bool) -> tuple[tuple[str, str], ...]:
+    """`allow_duplicates` as the one header it stands for, or a refusal: only Salesforce, and only one
+    record's create or update (`_DUPLICATES_ON`). The header is canopy's own constant; nothing the page
+    sends becomes a header."""
+    if not asked:
+        return ()
+    if provider != "salesforce" or (matched.rule.method, matched.rule.pattern) not in _DUPLICATES_ON:
+        raise calls.NotAllowed("Saving past duplicate rules works only when creating or updating one Salesforce "
+                               "record (POST or PATCH sobjects/<type>).")
+    return (DUPLICATE_RULE_HEADER,)
+
+
+def _check_declared(surface: declarations.Surface, provider: str, payload, plan: _Planned) -> None:
+    """Every call, and every call inside a composite one, is one the screen declared."""
+    for i, part in enumerate(plan.parts):
+        if surface.allows(provider, payload.as_, payload.agent, part, part.rule.method):
+            continue
+        if plan.composite is None:
+            raise services.ConnectionError("not_declared", f"This screen didn't declare that {_title(provider)} "
+                                                           "call, so it can't make it.")
+        what = "Call" if plan.composite.kind == "batch" else "Record"
+        raise services.ConnectionError("not_declared", f"{what} {i + 1} is {part.rule.method} {part.path[:80]}, "
+                                                       "which this screen didn't declare, so it can't make any of "
+                                                       "them.")
 
 
 def _viewer_connection(user, provider: str, surface: declarations.Surface) -> Connection:
@@ -312,27 +486,32 @@ def _said_to_this_caller(exc: services.ConnectionError, provider: str, as_: str,
 
 
 def _check_operation(user, conn: Connection, surface: declarations.Surface, matched: calls.Match,
-                     operation_id: str | None) -> None:
-    """A write spends one place on this person's lease for this screen at this revision."""
-    _spend_write(user, operation_id, surface)
+                     operation_id: str | None, writes: int = 1) -> None:
+    """A write spends one place on this person's lease for this screen at this revision; a composite
+    call one for each write inside it."""
+    _spend_write(user, operation_id, surface, writes)
 
 
-def _spend_write(user, operation_id: str | None, surface: declarations.Surface) -> None:
-    """One conditional update, so two callers can't both take the last place, and it slides the lease
-    in the same breath, never past its hard limit. A place is spent before the call and not given back
-    if the call then fails: the count is an upper limit on what was sent."""
+def _spend_write(user, operation_id: str | None, surface: declarations.Surface, writes: int = 1) -> None:
+    """One conditional update, so two callers can't both take the last places, and it slides the lease
+    in the same breath, never past its hard limit. All `writes` places are spent or none: a composite
+    call that would go past the lease's limit is refused whole, before it is sent. A place is spent
+    before the call and not given back if the call then fails: the count is an upper limit on what
+    was sent."""
     pk = _operation_pk(operation_id)
     now = timezone.now()
     lease = ConnectionOperation.objects.none() if pk is None else ConnectionOperation.objects.filter(
         pk=pk, user=user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
         expires_at__gt=now)
-    slid = Value(now + timedelta(seconds=OPERATION_SECONDS), output_field=DateTimeField())
-    if lease.filter(writes_used__lt=OPERATION_MAX_WRITES).update(writes_used=F("writes_used") + 1,
-                                                                 expires_at=Least(F("hard_limit_at"), slid)):
+    window = _window(surface)
+    slid = Value(now + timedelta(seconds=window.idle), output_field=DateTimeField())
+    if lease.filter(writes_used__lte=window.max_writes - writes).update(
+            writes_used=F("writes_used") + writes, expires_at=Least(F("hard_limit_at"), slid)):
         return
     if lease.exists():
-        raise services.ConnectionError("needs_operation", f"One click can make at most {OPERATION_MAX_WRITES} "
-                                                          "changes; click again to make more.")
+        many = "changes" if writes == 1 else f"changes, and this call would make {writes}"
+        raise services.ConnectionError("needs_operation", f"One click can make at most {window.max_writes} "
+                                                          f"{many}; click again to make more.")
     raise services.ConnectionError("needs_operation", "Making a change from this screen needs a click on it first.")
 
 
@@ -351,17 +530,18 @@ def _token(conn: Connection) -> server_tokens.Access:
                                                     "moment.") from None
 
 
-def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict, body, sent: _Sent) -> dict:
+def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict, body, sent: _Sent,
+              extra: tuple[tuple[str, str], ...] = ()) -> dict:
     """Ask, and on a 401 once more: with whatever newer token is stored, or after a forced refresh if
     this minute's is unspent (`server_tokens.forget`). A 401 means the provider refused the call, so
     it did not land, whatever the method. Nothing else is ever asked twice."""
     deadline = _monotonic() + TOTAL_SECONDS
     got = _token(conn)
-    status, raw = _ask(provider, matched, query, body, got, deadline, sent)
+    status, raw = _ask(provider, matched, query, body, got, deadline, sent, extra)
     if status == 401:
         if server_tokens.forget(conn, got.digest):
             got = _token(conn)
-            status, raw = _ask(provider, matched, query, body, got, deadline, sent)
+            status, raw = _ask(provider, matched, query, body, got, deadline, sent, extra)
         if status == 401:
             what = f"{_title(provider)} ended this connection's session."
             ended = services.ConnectionError("session_ended", what)
@@ -371,7 +551,7 @@ def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict
 
 
 def _ask(provider: str, matched: calls.Match, query: dict, body, got: server_tokens.Access, deadline: float,
-         sent: _Sent) -> tuple[int, bytes]:
+         sent: _Sent, extra: tuple[tuple[str, str], ...] = ()) -> tuple[int, bytes]:
     """One request: `(status, what came back, without the token)`."""
     try:
         url = calls.build_url(provider, got.instance_url, matched.path, query, method=matched.rule.method)
@@ -382,12 +562,14 @@ def _ask(provider: str, matched: calls.Match, query: dict, body, got: server_tok
     too_large, no_answer = False, False
     status, raw = 0, b""
     # Identity: a decoder can sit on bytes across many socket reads, and the deadline is checked per read.
-    headers = {"Authorization": f"Bearer {got.token}", "Accept": "application/json", "Accept-Encoding": "identity"}
+    headers = {**dict(extra), "Authorization": f"Bearer {got.token}", "Accept": "application/json",
+               "Accept-Encoding": "identity"}
     try:
         resp = requests.request(matched.rule.method, url, allow_redirects=False, stream=True,
                                 timeout=(CONNECT_SECONDS, READ_SECONDS), headers=headers, **kwargs)
         try:
             status = sent.status = resp.status_code
+            _note_headers(provider, resp, sent)
             raw, too_large, no_answer = _read(resp, deadline)
         finally:
             resp.close()
@@ -403,6 +585,17 @@ def _ask(provider: str, matched: calls.Match, query: dict, body, got: server_tok
         sent.outcome = "redirected"
         raise services.ConnectionError("provider_unavailable", f"{_title(provider)} could not be reached; try again.")
     return status, _without(raw, got.token)
+
+
+def _note_headers(provider: str, resp, sent: _Sent) -> None:
+    """What the page may see of the provider's headers: Salesforce's own count of the org's API use,
+    and how long a provider that is limiting calls asks to be left. Nothing else is passed on."""
+    headers = getattr(resp, "headers", None) or {}
+    limits = headers.get(LIMIT_INFO_HEADER) if provider == "salesforce" else None
+    sent.limits = limits if isinstance(limits, str) and _LIMIT_INFO.fullmatch(limits) else None
+    wait = headers.get("Retry-After")
+    sent.retry_after = (min(int(wait), MAX_RETRY_AFTER)
+                        if isinstance(wait, str) and wait.isascii() and wait.isdecimal() else None)
 
 
 def _read(resp, deadline: float) -> tuple[bytes, bool, bool]:
@@ -464,32 +657,99 @@ def _without(raw: bytes, token: str) -> bytes:
 
 
 def _answer(status: int, raw: bytes, provider: str, matched: calls.Match, sent: _Sent) -> dict:
-    """What goes back. JSON orjson can't write (a number over 64 bits, nesting too deep) is refused
-    here, where a sentence can still be said: the renderer's slow fallback is for stored data, not a
-    provider's answer."""
+    """What goes back, with Salesforce's `limits` when it sent them. JSON orjson can't write (a number
+    over 64 bits, nesting too deep) is refused here, where a sentence can still be said: the renderer's
+    slow fallback is for stored data, not a provider's answer. A provider limiting calls is refused as
+    `provider_rate_limited` (`_limited`)."""
+    extra = {"limits": sent.limits} if sent.limits else {}
     if not raw:
-        return {"status": status, "body": None}
+        _limited(status, None, provider, sent)
+        return {"status": status, "body": None, **extra}
     try:
-        out = {"status": status, "body": json.loads(raw)}
+        out = {"status": status, "body": json.loads(raw), **extra}
         orjson_bytes(out)
     except (RecursionError, orjson.JSONEncodeError):
         sent.outcome = "unreadable"
         raise _unreadable(provider, matched) from None
     except ValueError:
-        return {"status": status, "body": None, "text": raw.decode("utf-8", "replace")[:MAX_TEXT_CHARS]}
+        _limited(status, None, provider, sent)
+        return {"status": status, "body": None, "text": raw.decode("utf-8", "replace")[:MAX_TEXT_CHARS], **extra}
+    _limited(status, out["body"], provider, sent)
+    sent.answer = out["body"]
     return out
 
 
-def _audit(conn: Connection, user, surface: declarations.Surface, matched: calls.Match, operation_id: str | None,
+def _limited(status: int, body, provider: str, sent: _Sent) -> None:
+    """`provider_rate_limited` when Salesforce says it is limiting calls or too busy to take one: a
+    429 or 503, or its `REQUEST_LIMIT_EXCEEDED` (the org's daily or concurrent API limit, a 403). It
+    did not do what was asked. `retry_after` is the provider's own wait when it gave one. A
+    composite call's part refused this way is in the answer, not here: the rest of it ran."""
+    if provider != "salesforce":
+        return
+    exceeded = isinstance(body, list) and any(isinstance(e, dict) and e.get("errorCode") == "REQUEST_LIMIT_EXCEEDED"
+                                              for e in body)
+    if status not in _LIMITED_STATUSES and not exceeded:
+        return
+    sent.outcome = "rate_limited"
+    limited = services.ConnectionError(
+        "provider_rate_limited", "Salesforce is limiting calls from this org right now"
+                                 + (" (its API limit is used up)" if exceeded else "") + "; try again later.")
+    limited.members = {k: v for k, v in (("retry_after", sent.retry_after), ("limits", sent.limits)) if v}
+    raise limited
+
+
+def _audit(conn: Connection, user, surface: declarations.Surface, plan: _Planned, operation_id: str | None,
            as_: str, sent: _Sent) -> None:
     """A write as an Event in the connection's workspace, a person's connection too: `Subject.of` has
     no workspace for one, and who changed what from which screen is the workspace's history. `by` is
-    who was looking and `connection` whose account it was, which differ on a shared one."""
-    kind = "connection_call" if matched.rule.kind == "write" else "connection_read"
+    who was looking and `connection` whose account it was, which differ on a shared one.
+
+    A composite call's writes are an Event each, the same Event each would be if made alone (its
+    method and path, and its own status where Salesforce gave one), plus where it sat in the call: a
+    workspace's history reads the same however a page grouped its changes. Its reads are one log
+    line for the call, saying how many it held."""
     subject = replace(services.Subject.of(conn), workspace=conn.app.workspace)
+    if plan.composite is None:
+        extra = {"allow_duplicates": True} if plan.headers else {}
+        _audit_subject(subject, conn.provider, user, surface, plan.matched, operation_id, as_, sent, **extra)
+        return
+    total = len(plan.parts)
+    results = _part_results(plan.composite, sent)
+    for i, part in enumerate(plan.parts):
+        if part.rule.kind != "write":
+            continue
+        own = dict(results[i]) if results else {}
+        each = replace(sent, status=own.pop("status", sent.status))
+        _audit_subject(subject, conn.provider, user, surface, part, operation_id, as_, each,
+                       composite=plan.composite.kind, part=i + 1, parts=total, **own)
+    if plan.composite.writes < total:
+        _audit_subject(subject, conn.provider, user, surface, replace(plan.matched, rule=replace(
+            plan.matched.rule, kind="read")), operation_id, as_, sent, composite=plan.composite.kind,
+            parts=total, reads=total - plan.composite.writes)
+
+
+def _part_results(composite: calls.Composite, sent: _Sent) -> list[dict] | None:
+    """What Salesforce's answer says of each part, when it says it of every one: a batch call's own
+    `status` (`results[i].statusCode`), a collection record's `ok` (its `success`). None otherwise:
+    then each part's Event carries the call's status alone."""
+    body, n = sent.answer, len(composite.parts)
+    if composite.kind == "batch":
+        results = body.get("results") if isinstance(body, dict) else None
+        if not (isinstance(results, list) and len(results) == n):
+            return None
+        return [{"status": r["statusCode"]} if isinstance(r, dict) and isinstance(r.get("statusCode"), int) else {}
+                for r in results]
+    if not (isinstance(body, list) and len(body) == n):
+        return None
+    return [{"ok": r["success"]} if isinstance(r, dict) and isinstance(r.get("success"), bool) else {} for r in body]
+
+
+def _audit_subject(subject: services.Subject, provider: str, user, surface: declarations.Surface,
+                   matched: calls.Match, operation_id: str | None, as_: str, sent: _Sent, **composite) -> None:
+    kind = "connection_call" if matched.rule.kind == "write" else "connection_read"
     method, path = matched.rule.method, matched.path
     services.record(subject, kind, by=user, surface=f"{surface.kind}:{surface.ref}", revision=surface.revision,
                     operation_id=operation_id, method=method, path=path, status=sent.status, outcome=sent.outcome,
-                    **{"as": as_},
-                    summary=f"{method} {path} on {conn.provider} from {surface.kind} {surface.ref}: "
+                    **{"as": as_}, **composite,
+                    summary=f"{method} {path} on {provider} from {surface.kind} {surface.ref}: "
                             f"{sent.status or sent.outcome}")

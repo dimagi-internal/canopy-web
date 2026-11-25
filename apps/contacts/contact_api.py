@@ -16,13 +16,15 @@ from __future__ import annotations
 
 import logging
 
+from canopy_sdk import attested_context as wire
 from canopy_sdk import contract
+from django.core.cache import cache
 from django.http import HttpRequest
 from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
-from apps.agents.published_profiles import page_sites
+from apps.agents.published_profiles import contact_scoped, page_sites, surface_of
 from apps.api.route_gates import gate
 from apps.canopy_sessions.conversation_keys import CannotHold
 from apps.canopy_sessions.models import Session
@@ -36,12 +38,15 @@ from apps.canopy_sessions.schemas import (
     PageStateOut,
 )
 from apps.canopy_sessions.services import note_request_grant
+from apps.harness.runner_requirements import SENSITIVE_DATA
 from apps.embedding import assertions
 from apps.embedding import defaults as agent_defaults
 from apps.embedding.audit import client_ip
 from apps.embedding.audit import record as audit
 from apps.embedding.rate_limit import (
+    ContactSendRateLimitError,
     ContactTokenRateLimitError,
+    check_contact_send,
     check_contact_token_client,
     check_contact_token_issuer,
 )
@@ -150,7 +155,7 @@ _STATUS = {
     "no_jti": 400, "unknown_issuer": 401, "bad_signature": 401, "no_key": 401,
     "wrong_audience": 401, "expired": 401, "too_long": 400, "replayed": 401,
     "rate_limited": 429, "ambiguous_issuer": 409, "workspace_mismatch": 409,
-    "bad_workspace": 400,
+    "bad_workspace": 400, "bad_channel": 400,
 }
 
 
@@ -196,7 +201,9 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raise HttpError(_STATUS.get(exc.code, 401), f"{exc.code}: {exc.message}")
 
     try:
-        check_contact_token_issuer(claimed.name)
+        # The site's own budget when a superuser set one (a relay site mints one token
+        # per person per half hour), else the deployment's.
+        check_contact_token_issuer(claimed.name, getattr(claimed, "contact_token_issuer_limit", None))
     except ContactTokenRateLimitError as exc:
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=claimed, ok=False,
               reason="rate_limited", detail="per-issuer")
@@ -241,6 +248,17 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raise HttpError(400, f"agent_mismatch: the assertion is bound to {bound_slug!r}; "
                              f"send agent_slug={bound_slug!r}")
 
+    # A RELAY arrival (`contract.CHANNEL_CLAIM`): the site carries this person's
+    # conversation server-to-server over a channel of its own, from the VERIFIED
+    # assertion. Refused, not ignored, when malformed: ignoring it would serve a
+    # relay as a widget and record the wrong channel on every turn.
+    try:
+        relay_channel = contract.parse_channel_claim(claims.get(contract.CHANNEL_CLAIM))
+    except ValueError as exc:
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="bad_channel", detail=str(exc)[:200])
+        raise HttpError(400, f"bad_channel: {exc}")
+
     try:
         workspace = _tenant_for(app, payload.agent_slug)
     except HttpError:
@@ -281,7 +299,12 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     if contact is None:
         raise HttpError(400, "the assertion does not identify a visitor")
 
-    user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
+    # A relay arrival is always served as the CONTACT: the person is on the host's
+    # channel, not at a canopy browser, and a delegated USER token would hand the host
+    # their whole conversation history and the `/api/contact/` routes a relay drives
+    # would refuse it.
+    user = None if relay_channel else \
+        contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
     grant = _redeem_host_grant(request, app, payload.id_jag, claims=claims,
                                contact=contact, user=user, runner_requirements=runner_reqs,
                                agent=bound_agent)
@@ -308,10 +331,12 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl,
                                     runner_requirements=runner_reqs,
                                     verified_email=_trusted_email(app, claims),
-                                    bound_agent=bound_agent, host_grant=grant)
+                                    bound_agent=bound_agent, host_grant=grant,
+                                    channel=relay_channel)
     audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app,
           detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}"
-                 f"{f' agent={bound_slug}' if bound_slug else ''}")
+                 f"{f' agent={bound_slug}' if bound_slug else ''}"
+                 f"{f' relay={relay_channel}' if relay_channel else ''}")
     return ContactTokenOut(
         token=raw,
         expires_at=token.expires_at.isoformat(),
@@ -415,7 +440,7 @@ def contact_me(request: HttpRequest) -> ContactMeOut:
         Agent.objects.filter(embedding_apps__app=app, workspace_id=contact.workspace_id)
         .order_by("slug")
         .distinct()
-    ), "pk"))
+    ), "pk"), request)
     chosen = agent_defaults.resolve([a.pk for a in rows], app=app,
                                     bound_agent_id=getattr(request, "bound_agent_id", None))
     return ContactMeOut(
@@ -470,8 +495,16 @@ class ContactSendIn(Schema):
     #: The routing SOURCE, as a user's send may declare it — so a host's work for a
     #: contact (ace-web's runs: `ace_web`) routes like the same host's work for a
     #: user. Only sources a caller may name; `email` and `slack` are channels
-    #: canopy attests itself.
+    #: canopy attests itself. A relay token (one minted with `canopy_channel`) may
+    #: also name `site_message`, which is its default.
     origin: str = ""
+    #: What the host knows about this moment, ATTESTED: a compact JWS signed with the
+    #: site's own key (`typ: canopy-context+jwt`; `canopy_sdk.attested_context`), about
+    #: this conversation (`session`) and this person (`sub`, the id the site signed into
+    #: their arrival). The agent reads it on this turn only, beside the words and
+    #: labelled as the host's. Another person's or conversation's is refused 422
+    #: `context_mismatch`; one that does not verify, 422 `bad_context`.
+    context: str | None = None
 
 
 def _tenant_for(app, agent_slug: str):
@@ -492,13 +525,26 @@ def _tenant_for(app, agent_slug: str):
     return app.workspace
 
 
-def _for_contacts(app, agents) -> list:
+def _for_contacts(app, agents, request=None) -> list:
     """The agents of `agents` a contact may talk to on `app`'s pages: never one that
-    serves the site on pages (`published_profiles.page_sites`). On a page such an agent reaches
-    the site only as the person, under an act-as-you permission confirmed with a
-    passkey, and with its own login there withheld — a contact has no passkey, so it
-    could do nothing there. A site offering only such agents shows a contact no panel."""
-    return [a for a in agents if app.name not in page_sites(a)]
+    serves the site on pages (`published_profiles.page_sites`) — on a page such an agent
+    reaches the site only as the person, under an act-as-you permission confirmed with a
+    passkey, and with its own login there withheld; a contact has no passkey, so it could
+    do nothing there — UNLESS its owner marked its entry for the site `contact_scoped`
+    (`published_profiles.contact_scoped`). Then a contact's turn reaches the site's tools
+    bound to that one contact, the site authorizing every call against them
+    (`host_gateway.resolve`'s subject mode). A site offering only agents of the first kind
+    shows a contact no panel.
+
+    An agent whose entry serves a SURFACE of the site (`surface_of`) holds only conversations
+    that are not sensitive (`apps/host_grants/surfaces.py`), so an arrival the site signed as
+    requiring sensitive-data runners (its pages') is never offered it: the panel on a staff
+    page lists none of the site's worker agents. (Starting one is refused with the reason,
+    `start_session`'s `surface_mismatch`, so that path passes no request.)"""
+    sensitive = SENSITIVE_DATA in (getattr(request, "runner_requirements", None) or ())
+    return [a for a in agents
+            if (app.name not in page_sites(a) or contact_scoped(a, app.name))
+            and not (sensitive and surface_of(a, app.name))]
 
 
 def _bound(request: HttpRequest, rows, field: str = "agent_id"):
@@ -581,6 +627,22 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
         raise HttpError(422, str(exc))
     # Server-owned, from the token: which site, and its runner requirements.
     session_services.stamp_host_metadata(metadata, request)
+    # The part of the site the agent's entry serves: a contact holds a conversation only on a
+    # surface the site declares not sensitive, or on the site itself as before.
+    from apps.host_grants import surfaces  # noqa: PLC0415 — as `_redeem_host_grant`'s: loads with a call
+
+    try:
+        surface = surfaces.for_contact(app, agent)
+    except surfaces.SurfaceRefused as exc:
+        raise HttpError(422, f"{exc.code}: {exc.message}") from None
+    if surface is not None:
+        if sensitivity.is_sensitive(Session(metadata=metadata)):
+            # The surface holds no sensitive data, and this arrival requires sensitive-data
+            # runners: refused, never dropped, as a requirement the site signed is never dropped.
+            raise HttpError(422, f"surface_mismatch: {app.name}'s {surface.name!r} surface holds no "
+                                 "sensitive data, and this arrival requires it; sign its visitors' "
+                                 "assertions with no sensitive_data runner requirement")
+        metadata[surfaces.SESSION_KEY] = surface.name
     # A sensitive site's conversation is sealed to its people's vault keys, and a
     # contact has none: refused before the conversation exists.
     if sensitivity.is_sensitive(Session(metadata=metadata)):
@@ -596,6 +658,9 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     )
     audit(event=EmbedAuditLog.MINT, request=request, app=app,
           detail=f"contact={contact.identity} started session {session.id} with {agent.slug}")
+    from apps.harness import prepare  # noqa: PLC0415 — harness loads with a call
+
+    prepare.ring(session)
     return _session_out(session)
 
 
@@ -665,13 +730,19 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         raise HttpError(422, "message text is required")
     from apps.harness.schemas import chat_send_origin
 
+    relay = bool(getattr(request, "relay_channel", ""))
+    try:
+        origin = chat_send_origin(payload.origin, relay=relay)
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from None
+    if relay and not origin:
+        origin = contract.RELAY_ORIGIN  # `Turn.ORIGIN_SITE_MESSAGE`
+    attested = _attested_context(request, session, payload.context) if payload.context else None
+    _spend_send(request)
+
     # The page this was sent from: the agent reaches its site through that page's grant.
     note_request_grant(session, request)
 
-    try:
-        origin = chat_send_origin(payload.origin)
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from None
     # `user` is the anonymous request user. `enqueue_turn` ignores an
     # unauthenticated one, so the turn simply carries no `enqueued_by` — which
     # is correct: nobody with an account sent this. A routing rule that wants
@@ -683,8 +754,61 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         # A contact's own token is their chat surface (the widget).
         chat_surface=True,
         initiator=who.for_request(request, via=who.channel(request, "contact")),
+        origin_ref={HOST_CONTEXT_KEY: attested} if attested else None,
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
+
+
+#: Where a send's attested context is kept on its turn (`Turn.origin_ref`), and what
+#: the envelope's `host_context` block is built from (`caller_context._host_context`).
+HOST_CONTEXT_KEY = "host_context"
+
+
+def _attested_context(request: HttpRequest, session, token: str) -> dict:
+    """The site's signed context for this send, verified: `{site, format, body}`.
+
+    Checked against the SITE's own keys (`assertions.keys_for_app`, the keys its
+    arrival assertion verified with), and bound to this conversation and this
+    person: a site cannot put words in another person's turn, or carry a context
+    from one conversation into another. Its `jti` is spent once, failing closed.
+    A sensitive conversation keeps no plaintext the person did not seal, so a
+    context there is refused rather than stored open."""
+    app = request.delegated_app
+    if sensitivity.is_sensitive(session):
+        raise HttpError(422, "bad_context: a sensitive conversation takes no host context")
+    try:
+        keys = assertions.keys_for_app(app, token)
+    except assertions.AssertionError_ as exc:
+        raise HttpError(422, f"bad_context: {exc.code}: {exc.message}") from None
+
+    def spend(claims: dict) -> None:
+        ttl = max(1, int(claims["exp"]) - int(claims["iat"]) + contract.LEEWAY_SECONDS)
+        # Fails CLOSED: a cache that cannot record the jti reads as a replay.
+        if not cache.add(f"host-context:jti:{app.pk}:{claims['jti']}", 1, timeout=ttl):
+            raise wire.ContextError("replayed", "this context has already been used")
+
+    try:
+        claims = wire.verify_context(token, keys, site=app.name, sub=session.contact.external_id,
+                                     session=str(session.pk), spend_jti=spend,
+                                     algorithms=assertions.ALLOWED_ALGORITHMS)
+    except wire.ContextError as exc:
+        if exc.code == "mismatch":
+            raise HttpError(422, f"context_mismatch: {exc.message}") from None
+        raise HttpError(422, f"bad_context: {exc.code}: {exc.message}") from None
+    return {"site": app.name, "format": claims["format"], "body": claims["body"]}
+
+
+def _spend_send(request: HttpRequest) -> None:
+    """Count this send against the contact's budget (`rate_limit.check_contact_send`):
+    429 `rate_limited` over it. After the request is known to be well-formed, so a
+    malformed one costs nothing, and before anything is written."""
+    try:
+        check_contact_send(request.contact.pk)
+    except ContactSendRateLimitError as exc:
+        # Logged, not audited: a host looping on one person would otherwise write
+        # an audit row per refused send.
+        log.info("contact %s over its send budget: %s", request.contact.pk, exc)
+        raise HttpError(429, f"rate_limited: {exc}") from None
 
 
 @contact_router.get("/sessions/{session_id}/messages", response=MessagePageOut,
@@ -997,6 +1121,7 @@ def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id
     session = _session_or_404(request, session_id)
     text = payload.text
     ref = _app_run(mcp_apps_views.check_message, session, _app_viewer(request), tool_call_id, text)
+    _spend_send(request)
     note_request_grant(session, request)
     message, turn = send_paths.send_from(
         "contact_app_view", session=session, text=text, user=request.user,

@@ -5,7 +5,7 @@
  */
 import { ApiError } from '@/api/problem'
 import type { ListenHello, ListenKind, ListenRunner } from '@/api/listen'
-import type { MicCapture } from './audio'
+import type { MicCapture, OnPause } from './audio'
 import type { PairInvite } from './pairLink'
 import { isExpired } from './pairLink'
 import { PhoneRelay, type Control, type LostReason, type SocketFactory } from './relay'
@@ -39,18 +39,42 @@ export interface ListenDeps {
   socket: SocketFactory
   wsUrl(path: string): string
   label: string
-  startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void): Promise<MicCapture>
+  startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void, onPause?: OnPause): Promise<MicCapture>
   /** A call in another tab plus the microphone; absent where the browser can't share a tab. */
-  startTab?: (onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void) => Promise<MicCapture>
+  startTab?: (onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void, onPause?: OnPause) => Promise<MicCapture>
   /** Timers, injectable for tests. */
   setTimeout(fn: () => void, ms: number): unknown
   clearTimeout(handle: unknown): void
 }
 
-/** How long the laptop has to answer before the phone gives up. */
+/**
+ * How long the laptop has to answer. A laptop that is awake and online connects within a
+ * few seconds, so after SLOW_LAPTOP_MS the page says it hasn't yet, and keeps waiting.
+ * It gives up at LAPTOP_TIMEOUT_MS: the runner reopens a control socket that went quiet
+ * within about 75 s and then polls for waiting sessions, so a laptop that just woke up can
+ * still make it. Once connected, READY_TIMEOUT_MS covers Canopy Listen starting up.
+ */
+export const SLOW_LAPTOP_MS = 15_000
+export const LAPTOP_TIMEOUT_MS = 100_000
 export const READY_TIMEOUT_MS = 45_000
 export const PAIR_TIMEOUT_MS = 60_000
 export const SAVE_TIMEOUT_MS = 90_000
+
+const LAPTOP_FAILURES: Record<string, (name: string) => string> = {
+  recorder_stopped: (n) => `The recorder on ${n} stopped unexpectedly. What it heard so far is saved there.`,
+  busy: (n) => `${n} is already recording a meeting. End it there first.`,
+  notice_not_accepted: () => 'The recording notice has to be acknowledged first.',
+  app_did_not_start: (n) => `Voice assistant didn't start on ${n}. Check it's installed there.`,
+  did_not_start: (n) => `${n} started Voice assistant, but it never began recording. Try again.`,
+  update_page: (n) => `Reload this page: Canopy Listen on ${n} needs its newest version.`,
+}
+
+/** A laptop's `failed` detail in words: its codes, or its own sentence. */
+export function laptopFailure(detail: string, name: string): string {
+  if (!detail) return `${name} stopped the recording.`
+  const known = LAPTOP_FAILURES[detail]
+  return known ? known(name) : detail
+}
 
 /** A REST refusal in words for this page. */
 export function openRefusal(e: unknown, laptopName: string): string {
@@ -90,6 +114,11 @@ function safeUrl(value: unknown): string | undefined {
   } catch {
     return undefined
   }
+}
+
+/** What to say when a laptop never connected to a session at all. */
+export function notAnswering(name: string): string {
+  return `${name} isn't answering. Make sure it's awake, online and running Canopy, then try again.`
 }
 
 // -- pairing -------------------------------------------------------------------------
@@ -162,6 +191,7 @@ export const PAIR_CODE_TIMEOUT_MS = 150_000
 const CODE_REFUSALS: Record<string, (name: string) => string> = {
   busy: (name) => `${name} is already showing a pairing code. Answer that one first, then try again.`,
   declined: (name) => `Pairing was declined on ${name}, or nobody answered there in time.`,
+  wait: (name) => `A pairing was just declined on ${name}. Wait half a minute, then try again.`,
 }
 
 /**
@@ -174,6 +204,7 @@ export async function pairByCode(
   runner: { id: string; name: string },
   deps: ListenDeps,
   onStep: (step: PairStep, code?: string) => void,
+  onSlow?: () => void,
 ): Promise<Pairing> {
   onStep('connecting')
   const phone = await deps.store.phoneKey()
@@ -197,16 +228,21 @@ export async function pairByCode(
       let opener: Opener | null = null
       let queue = Promise.resolve()
       const ws = deps.socket(deps.wsUrl(`ws/listen/${sid}/?role=phone`))
+      let laptopHere = false
       const finish = (fn: () => void) => {
         if (finished) return
         finished = true
         deps.clearTimeout(timer)
+        deps.clearTimeout(slow)
+        deps.clearTimeout(absent)
         ws.onclose = null
         ws.close(1000)
         fn()
       }
       const fail = (message: string) => finish(() => reject(new Error(message)))
       const timer = deps.setTimeout(() => fail(`${runner.name} didn't answer in time. Try again.`), PAIR_CODE_TIMEOUT_MS)
+      const slow = deps.setTimeout(() => !laptopHere && !laptopKey && onSlow?.(), SLOW_LAPTOP_MS)
+      const absent = deps.setTimeout(() => !laptopHere && !laptopKey && fail(notAnswering(runner.name)), LAPTOP_TIMEOUT_MS)
 
       const onFrame = async (bytes: Uint8Array) => {
         if (bytes[0] === HANDSHAKE) {
@@ -216,6 +252,7 @@ export async function pairByCode(
             fail((CODE_REFUSALS[why] ?? ((n: string) => `${n} refused this pairing.`))(runner.name))
             return
           }
+          laptopHere = true
           if (m?.type !== 'hello' || laptopKey) return
           const laptopNonce = typeof m.nonce === 'string' ? unb64u(m.nonce) : new Uint8Array()
           if (typeof m.laptop_key !== 'string' || laptopNonce.length !== NONCE_BYTES) {
@@ -252,6 +289,7 @@ export async function pairByCode(
         if (typeof data === 'string') {
           try {
             const note = JSON.parse(data) as Control
+            if (note?.type === 'peer' && note.role === 'laptop' && note.connected === true) laptopHere = true
             if (note?.type === 'ended') fail('The pairing session ended before it finished.')
           } catch {
             // not a notice
@@ -289,7 +327,11 @@ export interface Segment {
 /** Where a meeting's sound comes from: this device's microphone, or a call in another tab. */
 export type AudioSource = 'mic' | 'tab'
 
-export type MeetingStatus = 'connecting' | 'waiting' | 'recording' | 'ending' | 'saved' | 'discarded' | 'failed'
+/**
+ * `saved`: the laptop said Voice assistant saved it. `unsaved`: it ended, but no save was
+ * confirmed (`note` says why); the recording is still on the laptop.
+ */
+export type MeetingStatus = 'connecting' | 'waiting' | 'recording' | 'ending' | 'saved' | 'unsaved' | 'discarded' | 'failed'
 
 export interface MeetingView {
   status: MeetingStatus
@@ -305,6 +347,16 @@ export interface MeetingView {
   error?: string
   reconnecting: boolean
   laptopConnected: boolean
+  /** The laptop hasn't connected after SLOW_LAPTOP_MS: still waiting, but say so. */
+  laptopSlow: boolean
+  /** The browser paused the microphone (screen locked, a call…): nothing is recorded until resumed. */
+  micPaused: boolean
+  /** Seconds of audio held on this phone, waiting for the connection or the laptop. */
+  backlog: number
+  /** Why an `unsaved` end wasn't confirmed as saved. */
+  note?: string
+  /** The laptop no longer knows this phone: the way on is to pair again. */
+  unpaired?: boolean
   /** ms epoch the recording started on this phone. */
   startedAt?: number
   level: number
@@ -318,6 +370,10 @@ export class Meeting {
   private mic: MicCapture | null = null
   private sid = ''
   private timer: unknown = null
+  private slowTimer: unknown = null
+  /** Segments received in all: what to tell the laptop we have when asking it to resync. */
+  private segmentCount = 0
+  private source: AudioSource = 'mic'
   private listeners = new Set<(view: MeetingView) => void>()
   private finished = false
 
@@ -329,7 +385,7 @@ export class Meeting {
     this.deps = deps
     this.view = {
       status: 'connecting', laptopName: pairing.laptop_name, laptopState: '', segments: [], partial: '', speakers: {},
-      reconnecting: false, laptopConnected: false, level: 0,
+      reconnecting: false, laptopConnected: false, laptopSlow: false, micPaused: false, backlog: 0, level: 0,
     }
   }
 
@@ -348,12 +404,46 @@ export class Meeting {
    * says `ready` waits (up to 10 s) in the relay.
    */
   begin(source: AudioSource = 'mic'): Promise<void> {
-    const start = source === 'tab' && this.deps.startTab ? this.deps.startTab : this.deps.startMic
-    const micStarting = start(
+    this.source = source
+    return this.open(this.startCapture()).catch(() => this.fail('Something went wrong starting the recording. Try again.'))
+  }
+
+  private startCapture(): Promise<MicCapture> {
+    const start = this.source === 'tab' && this.deps.startTab ? this.deps.startTab : this.deps.startMic
+    return start(
       (pcm) => this.relay?.sendAudio(pcm),
       (level) => this.set({ level }),
+      () => {
+        if (!this.finished) this.set({ micPaused: true, level: 0 })
+      },
     )
-    return this.open(micStarting).catch(() => this.fail('Something went wrong starting the recording. Try again.'))
+  }
+
+  /**
+   * After the browser paused the microphone: carry on with the same capture if it can,
+   * or start a new one. Call from a tap (a new capture needs one on phones); it is also
+   * tried when the page is shown again, where it works if the old capture can go on.
+   * The session, its keys and the transcript so far are kept either way.
+   */
+  async resumeMic(fromTap = true): Promise<void> {
+    if (this.finished || !this.view.micPaused || !this.mic) return
+    if (await this.mic.resume()) {
+      this.set({ micPaused: false })
+      return
+    }
+    if (!fromTap) return
+    this.stopMic()
+    try {
+      const mic = await this.startCapture()
+      if (this.finished) {
+        mic.stop()
+        return
+      }
+      this.mic = mic
+      this.set({ micPaused: false, error: undefined })
+    } catch (e) {
+      this.set({ error: e instanceof Error ? e.message : 'The microphone could not start again.' })
+    }
   }
 
   private async open(micStarting: Promise<MicCapture>): Promise<void> {
@@ -389,15 +479,34 @@ export class Meeting {
       new Opener(keys.down, this.sid),
       {
         onControl: (m) => this.control(m),
-        onPeer: (connected) => this.set({ laptopConnected: connected, reconnecting: false }),
+        onPeer: (connected) => this.peer(connected),
         onEnded: (reason) => this.serverEnded(reason),
         onLost: (why) => this.fail(lostInWords(why)),
         onReconnecting: () => this.set({ reconnecting: true }),
+        onResync: () => {
+          this.set({ reconnecting: false })
+          void this.relay?.sendControl({ type: 'resume', have: this.segmentCount })
+        },
+        onBacklog: (seconds) => {
+          if (seconds !== this.view.backlog) this.set({ backlog: seconds })
+        },
+        onRefused: (reason) => {
+          if (reason === 'unpaired') {
+            this.set({ unpaired: true })
+            this.fail(`${this.pairing.laptop_name} doesn't know this phone any more: it was unpaired there, or its key changed. Pair again.`)
+          }
+        },
       },
       this.deps.socket,
     )
     this.set({ status: 'waiting' })
-    this.arm(READY_TIMEOUT_MS, () => this.fail(`${this.pairing.laptop_name} didn't start listening. Check Canopy Listen is installed there.`))
+    this.arm(LAPTOP_TIMEOUT_MS, () =>
+      this.fail(this.view.laptopConnected
+        ? `${this.pairing.laptop_name} didn't start listening. Check Canopy Listen is installed there.`
+        : notAnswering(this.pairing.laptop_name)))
+    this.slowTimer = this.deps.setTimeout(() => {
+      if (!this.view.laptopConnected && this.view.status === 'waiting') this.set({ laptopSlow: true })
+    }, SLOW_LAPTOP_MS)
     try {
       await this.relay.connect()
     } catch {
@@ -415,7 +524,8 @@ export class Meeting {
     }
     this.set({ status: 'ending' })
     void this.relay.sendControl({ type: 'end' })
-    this.arm(SAVE_TIMEOUT_MS, () => this.close({ status: 'saved' }))
+    this.arm(SAVE_TIMEOUT_MS + this.view.backlog * 1000, () =>
+      this.close({ status: 'unsaved', note: `${this.pairing.laptop_name} didn't say whether it saved the meeting. Check Meetings in Canopy, or Canopy Listen on the laptop.` }))
   }
 
   /** Throw it away: the laptop deletes what it has. */
@@ -448,30 +558,29 @@ export class Meeting {
       case 'ready':
         this.disarm()
         if (typeof m.name === 'string' && m.name) this.set({ laptopName: m.name })
-        void this.relay?.sendControl({ type: 'start', notice_accepted: true })
-        this.set({ status: 'recording', startedAt: Date.now() })
+        // The laptop's fresh nonce goes back sealed, so an old session's frames can't start one.
+        void this.relay?.sendControl({
+          type: 'start', notice_accepted: true, ...(typeof m.nonce === 'string' ? { nonce: m.nonce } : {}),
+        })
+        this.set({ status: 'recording', startedAt: Date.now(), laptopConnected: true, laptopSlow: false })
         return
       case 'state': {
         const state = typeof m.state === 'string' ? m.state : ''
         this.set({ laptopState: state })
+        const detail = typeof m.detail === 'string' ? m.detail : ''
         if (state === 'failed') {
-          const detail = typeof m.detail === 'string' && m.detail ? m.detail : 'The laptop stopped the recording.'
-          this.fail(detail)
-        } else if (state === 'ended' && this.view.status === 'ending') {
-          this.arm(5000, () => this.close({ status: 'saved' }))
+          this.fail(laptopFailure(detail, this.pairing.laptop_name))
+        } else if (state === 'ended') {
+          this.laptopEnded(detail)
         }
         return
       }
-      case 'segment': {
-        const seg: Segment = {
-          start: Number(m.start) || 0, end: Number(m.end) || 0,
-          speaker: Number.isInteger(m.speaker) ? (m.speaker as number) : 0,
-          text: typeof m.text === 'string' ? m.text : '',
-        }
-        if (!seg.text) return
-        this.set({ segments: [...this.view.segments, seg].slice(-MAX_SEGMENTS) })
+      case 'segment':
+        this.addSegments(this.segmentCount, [m])
         return
-      }
+      case 'segments':
+        if (Array.isArray(m.items)) this.addSegments(Number.isInteger(m.from) ? (m.from as number) : this.segmentCount, m.items)
+        return
       case 'partial':
         this.set({ partial: typeof m.text === 'string' ? m.text.slice(0, 2000) : '' })
         return
@@ -493,10 +602,53 @@ export class Meeting {
     }
   }
 
+  private peer(connected: boolean): void {
+    this.set({ laptopConnected: connected, reconnecting: false, laptopSlow: connected ? false : this.view.laptopSlow })
+    // Connected but not yet ready: the laptop is starting Canopy Listen, which has its own limit.
+    if (connected && this.view.status === 'waiting') {
+      this.arm(READY_TIMEOUT_MS, () =>
+        this.fail(`${this.pairing.laptop_name} didn't start listening. Check Canopy Listen is installed there.`))
+    }
+  }
+
+  /** The laptop's recording is over: saved only if it says so. */
+  private laptopEnded(detail: string): void {
+    if (detail === 'not_saved') {
+      this.close({ status: 'unsaved', note: `The recording ended on ${this.pairing.laptop_name}, but Voice assistant didn't save notes. The transcript is in Canopy Listen there.` })
+    } else if (detail === 'discarded') {
+      this.close({ status: 'discarded' })
+    } else if (detail === 'saved') {
+      this.arm(10_000, () => this.close({ status: 'saved' })) // the `saved` message, with its link, is on its way
+    } else if (this.view.status === 'ending') {
+      // A laptop that doesn't say how it ended: the old reading, saved once ended.
+      this.arm(5000, () => this.close({ status: 'saved' }))
+    } else {
+      this.close({ status: 'unsaved', note: `${this.pairing.laptop_name} ended the recording.` })
+    }
+  }
+
+  /** Segments `items`, the first being number `from` of the meeting; any already held are skipped. */
+  private addSegments(from: number, items: unknown[]): void {
+    const skip = Math.max(0, this.segmentCount - from)
+    const fresh: Segment[] = []
+    for (const raw of items.slice(skip)) {
+      const m = (raw ?? {}) as Record<string, unknown>
+      fresh.push({
+        start: Number(m.start) || 0, end: Number(m.end) || 0,
+        speaker: Number.isInteger(m.speaker) ? (m.speaker as number) : 0,
+        text: typeof m.text === 'string' ? m.text : '',
+      })
+    }
+    if (!fresh.length) return
+    this.segmentCount = Math.max(this.segmentCount, from) + fresh.length
+    const shown = fresh.filter((seg) => seg.text)
+    if (shown.length) this.set({ segments: [...this.view.segments, ...shown].slice(-MAX_SEGMENTS) })
+  }
+
   private serverEnded(reason: string): void {
     if (this.finished) return
     if (this.view.status === 'ending') {
-      this.close({ status: 'saved' }, false)
+      this.close({ status: 'unsaved', note: `The connection closed before ${this.pairing.laptop_name} said it saved the meeting. Check Meetings in Canopy.` }, false)
       return
     }
     const words: Record<string, string> = {
@@ -518,10 +670,12 @@ export class Meeting {
     if (this.finished) return
     this.finished = true
     this.disarm()
+    if (this.slowTimer !== null) this.deps.clearTimeout(this.slowTimer)
+    this.slowTimer = null
     this.stopMic()
     this.relay?.close()
     if (endOnServer && this.sid) void this.deps.endSession(this.sid).catch(() => undefined)
-    this.set({ ...patch, reconnecting: false, level: 0 })
+    this.set({ ...patch, reconnecting: false, laptopSlow: false, micPaused: false, backlog: 0, level: 0 })
   }
 
   private stopMic(): void {

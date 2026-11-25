@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -32,7 +33,7 @@ from apps.workspaces.links import scoped_url
 from apps.workspaces.models import Workspace
 
 from . import services, trust
-from .models import LocalAppInstallation, LocalAppRun, LocalAppSubmission
+from .models import LocalAppInstallation, LocalAppMenuChoice, LocalAppRun, LocalAppSubmission
 from .schemas import (
     LocalAppAcceptIn,
     LocalAppBeatIn,
@@ -44,6 +45,9 @@ from .schemas import (
     LocalAppFinishIn,
     LocalAppInstallationOut,
     LocalAppInstallIn,
+    LocalAppMenuAgentsOut,
+    LocalAppMenuChoiceIn,
+    LocalAppMenuOut,
     LocalAppReviewOut,
     LocalAppRevokeIn,
     LocalAppRunOut,
@@ -56,6 +60,8 @@ from .schemas import (
 )
 
 router = Router(auth=session_auth, tags=["local-apps"])
+#: A menu item lists a few agents to tap, not a directory.
+MENU_MAX_AGENTS = 12
 runner_router = Router(auth=session_auth, tags=["local-apps"])
 
 
@@ -66,12 +72,18 @@ def _workspace_or_404(request: HttpRequest, slug: str) -> Workspace:
     return ws
 
 
-def _usable_agents(user) -> list[dict[str, str]]:
-    rows = list(
-        Agent.objects.filter(workspace__in=perms.slugs_with(user, perms.READ), user__isnull=False).order_by(
-            "name", "slug"
-        )
-    )
+def _usable_agents(user, only: set[tuple[str, str]] | None = None) -> list[dict[str, str]]:
+    """The agents this person may use, across their workspaces. `only` narrows it to
+    those (workspace, slug) pairs, so a short chosen list is checked without the rest."""
+    qs = Agent.objects.filter(workspace__in=perms.slugs_with(user, perms.READ), user__isnull=False)
+    if only is not None:
+        if not only:
+            return []
+        wanted = Q()
+        for workspace, slug in only:
+            wanted |= Q(workspace_id=workspace, slug=slug)
+        qs = qs.filter(wanted)
+    rows = list(qs.order_by("name", "slug"))
     standings = agent_access.Standings([user], rows)
     return [
         {"slug": a.slug, "name": a.name or a.slug, "workspace": a.workspace_id}
@@ -235,6 +247,88 @@ def list_my_local_apps(request: HttpRequest) -> list[LocalAppInstallationOut]:
         "template", "runner", "workspace", "accepted"
     )
     return [_installation_out(i, request.user) for i in rows]
+
+
+@router.get("/menu/", response=LocalAppMenuOut, summary="What your apps add to your account menu")
+@gate("self")
+def list_local_app_menu(request: HttpRequest) -> LocalAppMenuOut:
+    """Items your installed apps add to the account menu, the ones you turned on in each
+    app's settings. An item that asks for an agent comes with the agents you may use."""
+    return _menu_out(request.user)
+
+
+def _menu_out(user) -> LocalAppMenuOut:
+    """Each item with the agents it lists. A chosen list checks only those agents, which
+    is what keeps the menu quick for someone who can use many; an unchosen one lists all."""
+    choices = {(c.app, c.item): c.agents for c in LocalAppMenuChoice.objects.filter(user=user)}
+    everyone: list[dict[str, str]] | None = None
+    out = []
+    for inst, item in services.menu_items(user):
+        ref = (inst.template.key, item["key"])
+        agents: list[dict[str, str]] = []
+        if item["pick"] == "agent":
+            if ref in choices:
+                wanted = [(a["workspace"], a["slug"]) for a in choices[ref]]
+                usable = {(a["workspace"], a["slug"]): a for a in _usable_agents(user, only=set(wanted))}
+                agents = [usable[w] for w in wanted if w in usable]
+            else:
+                if everyone is None:
+                    everyone = _usable_agents(user)
+                agents = everyone
+        out.append(
+            {
+                "app": ref[0],
+                "app_name": inst.template.name,
+                "key": ref[1],
+                "label": item["label"],
+                "path": item["path"],
+                "pick": item["pick"],
+                "agents": agents,
+                "chosen": ref in choices,
+                "links": item.get("links") or [],
+            }
+        )
+    return LocalAppMenuOut(items=out)
+
+
+@router.get("/menu/agents/", response=LocalAppMenuAgentsOut, summary="Agents you may list in your account menu")
+@gate("self")
+def list_local_app_menu_agents(request: HttpRequest) -> LocalAppMenuAgentsOut:
+    """Every agent you may use, to choose which ones an account-menu item lists."""
+    return LocalAppMenuAgentsOut(agents=_usable_agents(request.user))
+
+
+@router.put("/menu/{app}/{item}/agents", response=LocalAppMenuOut, summary="Choose the agents a menu item lists")
+@gate("self", setting=True)
+def set_local_app_menu_agents(
+    request: HttpRequest, app: str, item: str, payload: LocalAppMenuChoiceIn
+) -> LocalAppMenuOut:
+    """Which agents one of your account-menu items lists, in order. An empty list goes back
+    to every agent you may use."""
+    _the_person_themself(request)
+    entry = next(
+        (i for inst, i in services.menu_items(request.user) if (inst.template.key, i["key"]) == (app, item)), None
+    )
+    if entry is None:
+        raise HttpError(404, "that item isn't in your menu")
+    if entry["pick"] != "agent":
+        raise HttpError(422, "that item doesn't list agents")
+    wanted = list(dict.fromkeys((a.workspace, a.slug) for a in payload.agents))
+    if len(wanted) > MENU_MAX_AGENTS:
+        raise HttpError(422, f"choose at most {MENU_MAX_AGENTS} agents")
+    if not wanted:
+        LocalAppMenuChoice.objects.filter(user=request.user, app=app, item=item).delete()
+        return _menu_out(request.user)
+    usable = {(a["workspace"], a["slug"]) for a in _usable_agents(request.user, only=set(wanted))}
+    if missing := [f"{ws}/{slug}" for ws, slug in wanted if (ws, slug) not in usable]:
+        raise HttpError(403, f"you can't use: {', '.join(missing)}")
+    LocalAppMenuChoice.objects.update_or_create(
+        user=request.user,
+        app=app,
+        item=item,
+        defaults={"agents": [{"workspace": ws, "slug": slug} for ws, slug in wanted]},
+    )
+    return _menu_out(request.user)
 
 
 @router.patch("/installations/{installation_id}", response=LocalAppInstallationOut, summary="Configure a local app")

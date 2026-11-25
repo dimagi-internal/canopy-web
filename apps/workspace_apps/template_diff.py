@@ -6,12 +6,16 @@ workspace's changes, so it is judged here, by comparing the two versions on
 the surfaces where a mistake exposes data or hands out power:
 
 * roles — added, removed, or held by a different workspace capability;
-* reading — a collection's `read`/`read_also`, a field's `read`, a `scope`;
+* reading — a collection's `read`/`read_also`, a field's `read`, a `scope`, a collection
+  that stops being `personal`;
 * the public — public and private-link pages, public projections, public and
   link actions (what a visitor can submit), private links;
 * acting — an action's role;
 * email — who an email goes to;
 * Salesforce — the calls an app's pages may make, and as whom (`connections`);
+* the browser — which tabs the extension's panel shows a page on, what it may
+  read there, and above all what it may change there (`browser`, the adapters' `acts`);
+* AI — the app's pages starting to send what they show to canopy's model (`ai`);
 * retention — what is anonymized or deleted, and when;
 * tasks — which project's tasks the app's pages act on, who may, and how (`tasks`,
   and the default of the setting that names the project).
@@ -21,6 +25,8 @@ workspace admin publishes the update (`services.publish`), exactly as for a
 risky change of the workspace's own. Nothing here names an app.
 """
 from __future__ import annotations
+
+from .browser import acts_of
 
 OUTSIDE = ("public", "link")
 
@@ -64,6 +70,8 @@ def changes(old: dict, new: dict) -> list[str]:
             out.append(f"changes who reads {label}: {_readers(a)} → {_readers(b)}")
         if a.get("scope") != b.get("scope"):
             scoped.append(label)
+        if a.get("personal") and not b.get("personal"):
+            out.append(f"opens {label} to everyone who reads it: each person's records were their own")
         fo, fn = a.get("fields") or {}, b.get("fields") or {}
         for f in sorted(set(fo) & set(fn)):
             if fo[f].get("read") != fn[f].get("read"):
@@ -112,6 +120,16 @@ def changes(old: dict, new: dict) -> list[str]:
     # Salesforce calls the app's pages may make: any change either way is for an admin to see.
     if (old.get("connections") or []) != (new.get("connections") or []):
         out.append(_connection_change(old.get("connections") or [], new.get("connections") or []))
+    # The browser extension: which tabs a page is offered on, and what it may read or hear there.
+    if (old.get("browser") or []) != (new.get("browser") or []):
+        out.append("changes which browser tabs the app's pages open beside, or what they may read from them")
+        added = sorted(_browser_acts(new) - _browser_acts(old))
+        if added:
+            out.append("lets the app's pages change what is on the browser tab, not only read it (from a click): "
+                       + ", ".join(f"{a} {c}" for a, c in added))
+    # canopy's model: what the pages show leaves canopy for it (dropping it widens nothing).
+    if new.get("ai") and not old.get("ai"):
+        out.append("lets the app's pages send what they show to canopy's AI model")
     # Retention.
     if (old.get("retention") or []) != (new.get("retention") or []):
         out.append("changes what candidate data is anonymized or deleted, and when")
@@ -122,6 +140,10 @@ def changes(old: dict, new: dict) -> list[str]:
     if _bound_default(old) != _bound_default(new) and tn:
         out.append("changes which project's tasks the app's pages act on")
     return out
+
+
+def _browser_acts(m: dict) -> set[tuple]:
+    return {(e.get("adapter"), c) for e in m.get("browser") or [] for c in acts_of(e.get("adapter"), e.get("capabilities"))}
 
 
 def _bound_default(m: dict):

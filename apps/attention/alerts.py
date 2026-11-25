@@ -61,6 +61,7 @@ SOURCES: list[str] = [
     "apps.canopy_sessions.alerts_handoff",
     "apps.agents.alerts_agent_token",
     "apps.agents.alerts_skill_catalog",
+    "apps.brain.alerts_removal",
     "apps.approvals.alerts_approval",
 ]
 

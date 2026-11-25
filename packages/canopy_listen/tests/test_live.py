@@ -110,14 +110,26 @@ def test_voices_are_told_apart_and_short_audio_never_invents_a_person():
 
 def test_segments_carry_meeting_time_and_speaker():
     voices = {0: np.array([1.0, 0.0]), 1: np.array([0.0, 1.0])}
-    t = make([(0.0, 2.0, "from alice"), (2.2, 4.5, "from bob")])
+    t = make([(0.0, 2.0, "from alice"), (2.2, 5.0, "from bob"), (5.2, 6.4, "and me")])
     t.embed = lambda clip: voices[0] if t.base < 1 else voices[1]
     t.feed(audio(3.5))
     first = t.step()
-    t.feed(audio(3.0))
+    t.feed(audio(3.5))
     second = t.step()
     assert [(s.text, s.speaker) for s in first + second] == [("from alice", 0), ("from bob", 1)]
     assert second[0].start == 2.2
+
+
+def test_a_short_sentence_in_a_new_voice_joins_the_closest_person():
+    """A second or two of a phone microphone is too little voice to start a new person."""
+    voices = {0: np.array([1.0, 0.0]), 1: np.array([0.0, 1.0])}
+    t = make([(0.0, 3.0, "from alice"), (3.2, 5.0, "short")])
+    t.embed = lambda clip: voices[0] if t.base < 1 else voices[1]
+    t.feed(audio(4.0))
+    first = t.step()
+    t.feed(audio(2.5))
+    second = t.step()
+    assert [(s.text, s.speaker) for s in first + second] == [("from alice", 0), ("short", 0)]
 
 
 # --- by pause: for models that return text with no timings ---------------------------
@@ -178,3 +190,13 @@ def test_a_diarization_timeline_names_each_segment_by_who_spoke_most_of_it():
     assert t.step()[0].speaker == 1
     t.feed(np.concatenate([audio(2.0), silence(0.7)]))
     assert t.step()[0].speaker == 0
+
+
+def test_sound_with_no_words_is_let_go_rather_than_read_again_forever():
+    calls = []
+    t = LiveTranscriber(lambda b: calls.append(len(b) / SAMPLE_RATE) or [], max_window=24.0)
+    for _ in range(40):  # 40 s of loud noise the recogniser finds no words in
+        t.feed(audio(1.0))
+        t.step()
+    assert len(t.buffer) / SAMPLE_RATE <= 24.0
+    assert max(calls) <= 24.5  # never more than one window per read

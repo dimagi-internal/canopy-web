@@ -126,15 +126,20 @@ export function Picker({
   label,
   children,
   disabled,
+  open,
+  onOpenChange,
 }: {
   trigger: ReactNode
   label: string
   children: ReactNode
   disabled?: boolean
+  /** Controlled, for a menu something else opens too (a long-press on the row's status). */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }): JSX.Element {
   if (disabled) return <span className="inline-flex items-center">{trigger}</span>
   return (
-    <DropdownMenu>
+    <DropdownMenu {...(open === undefined ? {} : { open, onOpenChange: (next: boolean) => onOpenChange?.(next) })}>
       <DropdownMenuTrigger
         aria-label={label}
         className="inline-flex items-center rounded px-0.5 hover:bg-muted"
@@ -159,15 +164,25 @@ export function StatusPicker({
   names,
   disabled,
   children,
+  open,
+  onOpenChange,
 }: {
   status: TaskStatus
   onChange: (s: TaskStatus) => void
   names?: Record<string, string> | null
   disabled?: boolean
   children?: ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }): JSX.Element {
   return (
-    <Picker label={`Status: ${statusName(status, names)}`} disabled={disabled} trigger={children ?? <StatusIcon status={status} />}>
+    <Picker
+      label={`Status: ${statusName(status, names)}`}
+      disabled={disabled}
+      trigger={children ?? <StatusIcon status={status} />}
+      open={open}
+      onOpenChange={onOpenChange}
+    >
       <DropdownMenuLabel>Status</DropdownMenuLabel>
       {STATUS_ORDER.map((s) => (
         <DropdownMenuItem key={s} onClick={() => s !== status && onChange(s)}>

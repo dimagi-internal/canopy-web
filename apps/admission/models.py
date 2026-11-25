@@ -38,7 +38,7 @@ class AdmissionRule(models.Model):
     ORIGIN_CHOICES = [
         ("api", "API"), ("ace_web", "ace-web"), ("canopy_web_chat", "canopy-web chat"),
         ("canopy_scheduler", "canopy scheduler"), ("email", "Email"), ("slack", "Slack"),
-        ("local", "Local"),
+        ("local", "Local"), ("site_message", "Host site message"),
     ]
 
     MEMBER, CONTACT, AGENT, SYSTEM = "member", "contact", "agent", "system"
@@ -97,6 +97,20 @@ class AdmissionRule(models.Model):
     #: down before it is rejected. A laptop asleep overnight is normal; a day is not.
     wait_hours = models.PositiveIntegerField(default=24)
 
+    #: What the rule counts, beside its conditions. Blank: nothing, it filters on
+    #: conditions alone. `agent_daily_turns`: the agent has started `max_turns`
+    #: turns in the last 24 hours (`evaluate.daily_turns`), so a turn past that cap is
+    #: rejected — a bound on what one agent may spend, e.g. answering a relay site's
+    #: people. Reject only; no rule of this kind exists unless someone adds one.
+    AGENT_DAILY_TURNS = "agent_daily_turns"
+    KIND_CHOICES = [
+        ("", "Conditions only"),
+        (AGENT_DAILY_TURNS, "Agent daily turns: the agent already started this many turns in 24 hours"),
+    ]
+    kind = models.CharField(max_length=24, choices=KIND_CHOICES, blank=True, default="")
+    #: For `agent_daily_turns`: how many turns in 24 hours the agent may start.
+    max_turns = models.PositiveIntegerField(null=True, blank=True)
+
     action = models.CharField(max_length=8, choices=ACTION_CHOICES, default=REJECT)
     reason = models.TextField(help_text="Why matching turns are rejected; shown to the owner.")
     notify_sender = models.BooleanField(default=False)
@@ -141,7 +155,7 @@ class AdmissionRule(models.Model):
 
     @property
     def specificity(self) -> int:
-        return sum(bool(getattr(self, f)) for f in self.CONDITIONS) + bool(self.agent_id)
+        return sum(bool(getattr(self, f)) for f in self.CONDITIONS) + bool(self.agent_id) + bool(self.kind)
 
     def clean(self) -> None:
         if self.agent_id and self.workspace_id and self.agent.workspace_id != self.workspace_id:
@@ -166,6 +180,17 @@ class AdmissionRule(models.Model):
             raise ValidationError(
                 "an allow rule cannot be about runners being paused or offline; to keep "
                 "such turns queued, disable or narrow the reject rule instead")
+        if self.kind == self.AGENT_DAILY_TURNS:
+            if not self.max_turns:
+                raise ValidationError({"max_turns": "a daily turn cap needs a number of turns"})
+            if self.action != self.REJECT:
+                raise ValidationError("a daily turn cap only rejects the turns past it")
+            if self.is_refusal or self.reach:
+                raise ValidationError(
+                    "a daily turn cap is about turns that would run; a refusal or a turn no "
+                    "runner will take does not")
+        elif self.max_turns is not None:
+            raise ValidationError({"max_turns": "only an agent daily turns rule has a number of turns"})
         if not self.specificity:
             # A rule with no conditions rejects (or exempts) every turn in the
             # workspace. Disabling the agent is the honest way to do that.

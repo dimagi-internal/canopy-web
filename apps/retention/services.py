@@ -16,7 +16,9 @@ the short version:
 
 A SENSITIVE conversation (it requires sensitive-data runners — `apps.harness.sensitivity`)
 is purged after `CANOPY_SENSITIVE_KEEP_DAYS` (30) whatever the rules and
-`CANOPY_RETENTION_ENFORCE` say; a shorter rule still wins (`_sweep_sensitive`).
+`CANOPY_RETENTION_ENFORCE` say; a shorter rule still wins (`_sweep_sensitive`). A host
+site's contacts' conversations are purged after the site's own `site.retention_days` the
+same way (`_sweep_site_contacts`).
 """
 from __future__ import annotations
 
@@ -86,14 +88,15 @@ def _cutoff(rule: RetentionRule | None, now: dt.datetime) -> dt.datetime | None:
 def sweep(*, apply: bool, now: dt.datetime | None = None, trigger: str = "command",
           limits: dict[str, int | None] | None = None,
           sensitive_only: bool = False) -> RetentionSweep:
-    """One pass over every kind (or, `sensitive_only`, over sensitive
-    conversations alone). Returns the recorded `RetentionSweep`."""
+    """One pass over every kind (or, `sensitive_only`, over sensitive conversations and
+    host sites' own retention alone, which no workspace switch turns off). Returns the recorded `RetentionSweep`."""
     now = now or timezone.now()
     limits = {**BATCH_LIMITS, **(limits or {})}
     record = RetentionSweep.objects.create(applied=apply, trigger=trigger)
     tally = Tally()
     try:
         _sweep_sensitive(tally, apply=apply, now=now, limit=limits["chats"])
+        _sweep_site_contacts(tally, apply=apply, now=now, limit=limits["chats"])
         if not sensitive_only:
             _run(tally, apply=apply, now=now, limits=limits)
     except Exception as exc:  # noqa: BLE001 - recorded, then re-raised
@@ -204,6 +207,11 @@ def _scrub_turns(turn_ids: list, now: dt.datetime) -> None:
             Turn.objects.filter(pk__in=ids).update(
                 prompt="", result_note="", report_summary="", content_purged_at=now,
             )
+            # What a host site attested on the message (`contact_api.HOST_CONTEXT_KEY`) is
+            # content like the prompt it rode with.
+            for turn in Turn.objects.filter(pk__in=ids, origin_ref__has_key="host_context").only("origin_ref"):
+                ref = {k: v for k, v in (turn.origin_ref or {}).items() if k != "host_context"}
+                Turn.objects.filter(pk=turn.pk).update(origin_ref=ref)
             TurnEvent.objects.filter(turn_id__in=ids).delete()
             TurnTranscript.objects.filter(turn_id__in=ids).delete()
             CallerToken.objects.filter(turn_id__in=ids).delete()
@@ -297,6 +305,47 @@ def _sweep_sensitive(tally, *, now, apply, limit) -> None:
     tally.add(rule, "turns_scrubbed", len(picked))
     if apply and picked:
         _scrub_turns(picked, now)
+
+
+def site_rule(app, keep_days: int) -> RetentionRule:
+    """The rule a host site's contacts' conversations are held to: its own
+    `site.retention_days` (`site_needs.retention_days_for`) — never a row, so no admin can
+    edit it. Tallied as rule #-<site id>."""
+    return RetentionRule(pk=-app.pk, kind=RetentionRule.CHAT, workspace_id=app.workspace_id,
+                         principal=RetentionRule.CONTACT, keep_days=keep_days)
+
+
+def _sweep_site_contacts(tally, *, now, apply, limit) -> None:
+    """The conversations of a host site's contacts past the days the site itself asks for
+    (`site.json`'s `site.retention_days`): the site is the system of record for its people
+    (docs/architecture/host-systems-of-record.md), so its word holds whatever
+    `CANOPY_RETENTION_ENFORCE` says, as a sensitive conversation's does. A workspace rule
+    that is SHORTER still applies through `_sweep_chats` when enforcement is on, so the
+    shorter of the two wins. A site whose document cannot be read asks for nothing."""
+    from apps.canopy_sessions.models import Session  # noqa: PLC0415 — as the other sweeps: models load with a call
+    from apps.host_grants import site_needs  # noqa: PLC0415 — host_grants reads models: loads with a call
+    from apps.tokens.models import AppCredential  # noqa: PLC0415 — as above
+
+    app_ids = (Session.objects.filter(contact__app__isnull=False)
+               .values_list("contact__app_id", flat=True).distinct())
+    touched = 0
+    for app in AppCredential.objects.filter(pk__in=list(app_ids)).order_by("pk"):
+        try:
+            days = site_needs.retention_days_for(app)
+        except Exception:  # noqa: BLE001 — one site's unreadable document must not stop the others
+            logger.warning("retention: could not read site.retention_days for %s", app.pk, exc_info=True)
+            continue
+        if not days:
+            continue
+        rule = site_rule(app, days)
+        cutoff = _cutoff(rule, now)
+        rows = (Session.objects.filter(pk__in=_chat_candidates(cutoff), contact__app=app)
+                .order_by("created_at").values_list("pk", flat=True))
+        for pk in rows:
+            if _purge_chat(pk, rule, cutoff, tally, now=now, apply=apply):
+                touched += 1
+                if limit is not None and touched >= limit:
+                    return
 
 
 def _chat_candidates(horizon) -> set:

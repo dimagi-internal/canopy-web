@@ -376,3 +376,54 @@ def test_sweep_is_bounded(w):
     with mock.patch.object(keeper, "OPERATIONS_PER_TICK", 2):
         assert keeper.sweep()["operations_expired"] == 2
     assert ConnectionOperation.objects.count() == 1
+
+
+# ---- a screen that only changes Drive labels: one click for the hour ---------------------------
+
+DRIVE_LABELS = {"provider": "google", "as": "viewer", "reads": [{"method": "GET", "path": "files"}],
+                "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}
+
+
+def _surface(declared, ref="1"):
+    return declarations.Surface(kind="view", ref=ref, workspace="w", revision=1, declared=declared)
+
+
+def test_a_drive_labels_screen_gets_the_hour_and_20000_writes(w):
+    view = _view(w, title="Labels", connections=(DRIVE_LABELS,))
+    before = timezone.now()
+    r = open_op(w, surface_of(view))
+    assert r.status_code == 200, r.content
+    out = r.json()
+    assert (out["max_writes"], out["idle_seconds"], out["hard_limit_seconds"]) == (20000, 900, 3600)
+    row = ConnectionOperation.objects.get(pk=out["operation_id"])
+    assert timedelta(seconds=899) < row.expires_at - before <= timedelta(seconds=901)
+    assert timedelta(seconds=3599) < row.hard_limit_at - before <= timedelta(seconds=3601)
+
+
+def test_any_other_write_on_the_screen_keeps_the_ordinary_click():
+    assert call_service._window(_surface([DRIVE_LABELS])) is call_service._DRIVE_LABELS_CLICK
+    assert call_service._window(_surface([DRIVE_LABELS, DECL])) is call_service._CLICK
+    assert call_service._window(_surface([DECL])) is call_service._CLICK
+    shared = {**DRIVE_LABELS, "as": "shared", "agent": "ada"}
+    assert call_service._window(_surface([shared])) is call_service._CLICK
+
+
+def test_the_ordinary_click_still_says_500(w):
+    out = open_op(w).json()
+    assert (out["max_writes"], out["idle_seconds"], out["hard_limit_seconds"]) == (500, 120, 600)
+
+
+def test_a_drive_labels_lease_spends_past_500_and_slides_900_seconds(w):
+    view = _view(w, title="Labels", connections=(DRIVE_LABELS,))
+    operation = op_id(w, surface_of(view))
+    ConnectionOperation.objects.filter(pk=operation).update(writes_used=600)
+    surface = declarations.Surface(kind="view", ref=str(view.pk), workspace="w", revision=1, declared=[DRIVE_LABELS])
+    before = timezone.now()
+    call_service._spend_write(w.person, operation, surface)
+    row = ConnectionOperation.objects.get(pk=operation)
+    assert row.writes_used == 601
+    assert timedelta(seconds=899) < row.expires_at - before <= timedelta(seconds=901)
+    ConnectionOperation.objects.filter(pk=operation).update(writes_used=20000)
+    with pytest.raises(Exception) as e:
+        call_service._spend_write(w.person, operation, surface)
+    assert "20000" in str(e.value)

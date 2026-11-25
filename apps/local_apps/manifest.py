@@ -33,8 +33,13 @@ TOP_LEVEL = {
     "checks",
     "canopy",
     "presentation",
+    "menu",
 }
 MAX_MINUTES = 480
+#: A menu item opens one of canopy-web's own pages, never another site.
+MENU_PATH = re.compile(r"^/[a-z0-9][a-z0-9/_-]{0,80}$")
+#: What a menu item asks for before it opens its page: nothing, or one of your agents.
+MENU_PICKS = ("", "agent")
 #: A step or state name, as an app's events and statuses carry it.
 STATE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 
@@ -142,6 +147,71 @@ def _presentation(raw) -> dict:
     }
 
 
+def _menu(raw, settings: dict) -> list[dict]:
+    """Items the app adds to its person's account menu. Each opens a canopy-web page,
+    after asking for one of their agents if `pick` says so, and shows only while the
+    on/off setting `shown_when` is on: the person turns it on from the app's settings.
+    Not part of the trust surface: an item links to canopy-web's own pages, which say
+    what they do."""
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list) or len(raw) > 5:
+        _fail("menu", "must be a list of at most 5")
+    out: list[dict] = []
+    for i, item in enumerate(raw):
+        where = f"menu[{i}]"
+        if not isinstance(item, dict) or set(item) - {"key", "label", "path", "pick", "shown_when", "links"}:
+            _fail(where, "must be {key, label, path, pick, shown_when, links}")
+        key = item.get("key")
+        if not isinstance(key, str) or not KEY.match(key) or any(o["key"] == key for o in out):
+            _fail(f"{where}.key", "must be a unique key: lowercase letters, numbers and hyphens")
+        path = item.get("path")
+        if not isinstance(path, str) or not MENU_PATH.match(path) or "//" in path or ".." in path:
+            _fail(f"{where}.path", "must be a path on Canopy, such as /listen/voice")
+        pick = item.get("pick", "")
+        if pick not in MENU_PICKS:
+            _fail(f"{where}.pick", "must be empty or 'agent'")
+        shown_when = item.get("shown_when", "")
+        if shown_when and (settings.get(shown_when) or {}).get("type") != "bool":
+            _fail(f"{where}.shown_when", "must name one of the app's on/off settings")
+        label = item.get("label")
+        if not isinstance(label, str) or not label.strip() or len(label) > 40:
+            _fail(f"{where}.label", "must be non-empty text of at most 40 characters")
+        label = label.strip()
+        links = _menu_links(where, item.get("links"), pick)
+        out.append(
+            {"key": key, "label": label, "path": path, "pick": pick, "shown_when": shown_when or "", "links": links}
+        )
+    return out
+
+
+def _menu_path(where: str, path) -> str:
+    if not isinstance(path, str) or not MENU_PATH.match(path) or "//" in path or ".." in path:
+        _fail(where, "must be a path on Canopy, such as /listen/voice")
+    return path
+
+
+def _menu_links(where: str, raw, pick: str) -> list[dict]:
+    """Other pages listed beside an item's agents, such as Meeting beside them under Voice
+    assistant: each opens its own path, with no agent."""
+    if raw in (None, ""):
+        return []
+    if pick != "agent":
+        _fail(f"{where}.links", "only an item that lists agents can list links beside them")
+    if not isinstance(raw, list) or len(raw) > 3:
+        _fail(f"{where}.links", "must be a list of at most 3")
+    out: list[dict] = []
+    for j, link in enumerate(raw):
+        at = f"{where}.links[{j}]"
+        if not isinstance(link, dict) or set(link) - {"label", "path"}:
+            _fail(at, "must be {label, path}")
+        label = link.get("label")
+        if not isinstance(label, str) or not label.strip() or len(label) > 40:
+            _fail(f"{at}.label", "must be non-empty text of at most 40 characters")
+        out.append({"label": label.strip(), "path": _menu_path(f"{at}.path", link.get("path"))})
+    return out
+
+
 def validate(raw: dict) -> dict:
     """The normalized manifest, or ValueError naming what is wrong."""
     if not isinstance(raw, dict):
@@ -200,4 +270,5 @@ def validate(raw: dict) -> dict:
         "checks": _checks(raw.get("checks")),
         "canopy": canopy,
         "presentation": _presentation(raw.get("presentation")),
+        "menu": _menu(raw.get("menu"), settings),
     }

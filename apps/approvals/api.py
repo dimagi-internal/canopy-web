@@ -15,6 +15,7 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import refusals
 from apps.api.route_gates import gate
+from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 
 from . import authority, cards, kinds, services
@@ -51,7 +52,8 @@ def list_approval_kinds(request: HttpRequest) -> list[dict]:
 @gate("member")
 def list_approvals(request: HttpRequest, status: str = "pending", scope: str = "") -> list[dict]:
     """Requests in your workspaces that YOU could approve. `status=all` also lists decided ones you
-    could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`)."""
+    could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`). A card with `step_up`
+    is approved only on its page (`page_url`), with a passkey."""
     qs = (ApprovalRequest.objects.filter(workspace_id__in=visible_agent_workspaces(request))
           .select_related("workspace", "requested_by_agent", "requested_by_user", "decided_by")
           .order_by("-created_at")[:400])
@@ -109,16 +111,26 @@ def get_approval(request: HttpRequest, approval_id: int) -> dict:
 
 @router.post("/{approval_id}/decide", response=ApprovalCardOut, summary="Approve or decline a request")
 # the route takes any member; the kind's own authority check (members.manage, agent owner, …) decides
-@gate("member", setting=True, viewer_write="The route accepts any member of the workspace, but "
+@gate("member", setting=True, step_up=True, viewer_write="The route accepts any member of the workspace, but "
       "services.decide refuses anyone who does not hold the authority the request's kind needs "
       "(e.g. members.manage for adding a member), so a viewer is refused there")
 def decide_approval(request: HttpRequest, approval_id: int, payload: ApprovalDecideIn) -> dict:
     """Approve (runs the kind's handler as you, once) or decline (nothing happens). A request is
     decided once: a second decision is a 409 naming who got there first. 403 when you do not hold
-    the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason."""
-    _visible(request, approval_id)
+    the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason.
+    A request whose card says `step_up` is approved only from its page (`page_url`) in a browser, with
+    the approver's passkey (a browser without a fresh one gets 403 `step_up_required`; a token is always
+    refused): send the person that link. Declining needs no passkey."""
+    seen = _visible(request, approval_id)
+    # A kind that stands in for a route that needs a passkey asks for one here, before it runs; the
+    # web client answers the 403 with its passkey dialog and retries (`frontend/src/auth/stepUp.ts`).
+    stepped_up = False
+    if payload.decision == "approve" and seen.is_pending and kinds.needs_step_up(seen.kind):
+        stepup.require_recent_step_up(request)
+        stepped_up = True
     try:
-        req = services.decide(approval_id, request.user, payload.decision, comment=payload.comment, via="web")
+        req = services.decide(approval_id, request.user, payload.decision, comment=payload.comment, via="web",
+                              stepped_up=stepped_up)
     except services.ApprovalError as exc:
         _raise(exc)
     return cards.build(_visible(request, req.pk), viewer=request.user)

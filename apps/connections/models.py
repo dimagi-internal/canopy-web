@@ -52,7 +52,7 @@ class ConnectionApp(models.Model):
     options = models.JSONField(default=dict, blank=True)
     # Extra scopes chosen from the provider's `scope_choices`, space-separated, on
     # top of the ones the provider always asks for.
-    scopes = models.CharField(max_length=1000, blank=True, default="")
+    scopes = models.CharField(max_length=2000, blank=True, default="")
     configured_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
     )
@@ -144,7 +144,8 @@ class Connection(models.Model):
     instance_url = models.URLField(blank=True, default="")
     # What the provider GRANTED (its `scope`), space-separated; what was asked for
     # when it did not say.
-    scopes = models.CharField(max_length=500, blank=True, default="")
+    # Every scope a provider offers at once must fit (tests/test_connections_google.py).
+    scopes = models.CharField(max_length=2000, blank=True, default="")
     state = models.CharField(max_length=10, choices=STATES, default=UNSHARED)
 
     sealed = models.TextField(blank=True, default="")
@@ -286,7 +287,8 @@ class ConnectionOperation(models.Model):
 
     canopy-web can't tell a click from a script; the page around the screen decides that before it
     asks for one. What a row does is limit how far a write can go: this person, this screen, this
-    revision, until `expires_at`, at most `call_service.OPERATION_MAX_WRITES` writes. It slides:
+    revision, until `expires_at`, at most `call_service.OPERATION_MAX_WRITES` writes (more, for longer, on a
+    screen that only changes Drive labels: `call_service._window`). It slides:
     each write moves `expires_at` to `call_service.OPERATION_SECONDS` from then, never past
     `hard_limit_at`, so a long run of writes isn't cut off midway and one click still has an end.
     Expired rows are deleted by `keeper.sweep`."""
@@ -334,7 +336,8 @@ class ConnectionSurfaceShare(models.Model):
 
 
 class TemporaryAccess(models.Model):
-    """A person's short-lived access token, lent to one agent for turns that person starts.
+    """A person's short-lived access token, lent to one agent for turns that person starts, or, with
+    no agent, kept for that person's own calls from screens in the app's workspace (`temporary.for_screens`).
 
     The other way to lend an account, for a clean-up rather than a standing connection: no refresh
     token is ever asked for, so nothing can renew it, and it dies with the token (about an hour at
@@ -349,7 +352,8 @@ class TemporaryAccess(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     app = models.ForeignKey(ConnectionApp, on_delete=models.CASCADE, related_name="temporary_accesses")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
-    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="+")
+    # None: for the person's own screen calls, never handed to any turn.
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="+", null=True, blank=True)
     provider = models.CharField(max_length=40)
     account_id = models.CharField(max_length=255)
     account_label = models.CharField(max_length=255, blank=True, default="")
@@ -363,7 +367,10 @@ class TemporaryAccess(models.Model):
             # One per person, agent and provider: a new sign-in replaces it, so which token a
             # turn gets is never a guess.
             models.UniqueConstraint(fields=["user", "agent", "provider"], name="one_temporary_access_per_lend"),
+            # One for a person's screens per workspace app: which token a screen call uses is never a guess.
+            models.UniqueConstraint(fields=["user", "app"], condition=models.Q(agent__isnull=True),
+                                    name="one_temporary_access_for_screens"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.provider} {self.account_label} for {self.agent_id} until {self.expires_at}"
+        return f"{self.provider} {self.account_label} for {self.agent_id or 'screens'} until {self.expires_at}"

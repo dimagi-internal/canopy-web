@@ -35,7 +35,15 @@ from pathlib import Path
 
 import requests
 
+from apps.contacts.hcp.sensitive import _context_turn
+from apps.harness import initiator as who
+from apps.harness import turn_asker
+from apps.harness.models import Turn
+from apps.workspaces import permissions as perms
+from apps.workspaces import services as wsvc
+
 from .credentials import delegations
+from .models import Agent, AgentAdmin
 
 GITHUB_API = delegations.GITHUB_API
 HTTP_TIMEOUT = delegations.HTTP_TIMEOUT
@@ -78,6 +86,97 @@ class RepoState:
     suggested_slug: str = ""
     head_sha: str = ""
     base_tree: str = ""
+
+
+#: Slugs the SPA needs for itself: `/w/:ws/agents/new` is the create page, and
+#: `scaffold` / `stored` are create routes under `/api/agents/`.
+RESERVED_SLUGS = frozenset({"new", "scaffold", "stored"})
+
+
+#: How sure canopy must be of a person before an agent's register makes THEM the owner:
+#: signed in, or on their own token / private runner — never a weaker claim.
+OWNER_ASSURANCES = ("session", "pat", "private-runner-key")
+
+
+class NoOwnerError(ScaffoldError):
+    """An agent's login creates an agent no person can be made the owner of."""
+
+
+def creating_owner(request, home):
+    """Who owns an agent this request creates. A person creates for themselves. An AGENT's
+    own login creates for a person, never for itself (an agent owning an agent leaves no
+    one accountable for it):
+
+    1. the person who asked for the turn it works in, when canopy-web can tell which turn
+       that is and they may create agents in `home` (`_turn_asker`);
+    2. else the agent's own owner, when they may create agents in `home`;
+    3. else NoOwnerError (403): no one to own it.
+
+    The turn comes from the login itself where it can — the login canopy-web issued for a
+    turn, or for a laptop session (`turn_asker.check`) — and else from the parent turn the
+    request names (`X-Canopy-Parent-Turn`, which the canopy CLI and the canopy MCP server's
+    headers helper send), checked, not taken on trust: live, this agent's own, and asked by a
+    person canopy verified. A stored token alone (an agent's PAT) carries no turn."""
+    caller = request.user
+    agent = _agent_of_login(caller)
+    if agent is None:
+        return caller
+    person = _turn_asker(request, caller, agent)
+    if person is not None and _may_create(person, home):
+        return person
+    owner = agent.owner
+    if owner is not None and _agent_of_login(owner) is None and _may_create(owner, home):
+        return owner
+    raise NoOwnerError(
+        f"{agent.slug} is an agent: what it creates is owned by a person — the one who asked for "
+        f"its turn, or else its owner — and neither may create agents in '{home.slug}'. Create it "
+        f"from a turn a member who may create agents there asked for, or have a person create it.",
+        status=403)
+
+
+def creating_agent(request):
+    """The agent whose own login (or its turn's login) makes this request, or None: a person,
+    a turn's caller token and an agent acting AS a person all sign in as a person."""
+    user = getattr(request, "user", None)
+    return _agent_of_login(user) if getattr(user, "is_authenticated", False) else None
+
+
+def creator_administers(created, creator) -> None:
+    """The agent that created `created` administers it, beside the person who owns it: an
+    `AgentAdmin` grant to its login, kept when the agent's ownership is transferred (the
+    grant names no owner). Nothing for a creator with no login, or for `created` itself."""
+    login = getattr(creator, "user", None)
+    if login is None or creator.pk == created.pk or created.owner_id == login.pk:
+        return
+    AgentAdmin.objects.get_or_create(agent=created, user=login, defaults={"granted_by": login})
+
+
+def _agent_of_login(user):
+    """The agent `user` is the own login of (`initiator._agent_login_of`), or None."""
+    slug = who._agent_login_of(user) if user is not None else None
+    return Agent.objects.filter(slug=slug).select_related("owner").first() if slug else None
+
+
+def _may_create(person, home) -> bool:
+    return bool(getattr(person, "is_active", False)) and perms.role_allows(
+        wsvc.member_role(person, home), perms.AGENT_WORK)
+
+
+def _turn_asker(request, caller, agent):
+    """The person who asked for the live turn `caller` (`agent`'s login) works in, or None."""
+    try:
+        ob = turn_asker.check(caller, getattr(request, "auth_credential", None), session_login_live=True)
+    except turn_asker.Refused:
+        ob = None
+    if ob is not None and ob.agent.pk == agent.pk:
+        return ob.user
+    turn = _context_turn()
+    if (turn is None or turn.agent_id != agent.pk
+            or turn.status not in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
+            or turn.initiator_kind != who.USER or turn.initiator_user_id is None
+            or turn.initiator_assurance not in OWNER_ASSURANCES):
+        return None
+    return turn.initiator_user
 
 
 def expected_paths(slug: str) -> set[str]:

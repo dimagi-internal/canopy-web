@@ -581,3 +581,50 @@ def test_agent_roster_counts_what_the_agent_is_doing(c):
     assert (row["active_projects"], row["open_tasks"], row["waiting_tasks"]) == (1, 2, 1)
     assert (row["turns_7d"], row["failed_7d"], row["last_turn_status"]) == (1, 1, "failed")
     assert client.get("/api/w/elsewhere/agent-roster/").status_code == 404
+
+
+def _other_workspace_project():
+    owner = User.objects.create_user("bee", "bee@dimagi.com", "pw")
+    ws_b = Workspace.objects.create(slug="other-org", display_name="Other", created_by=owner)
+    WorkspaceMembership.objects.create(user=owner, workspace=ws_b, role=WorkspaceMembership.OWNER)
+    project = AgentProject.objects.create(workspace=ws_b, name="Roadmap", handle="roadmap")
+    task = AgentTask.objects.create(workspace=ws_b, title="B's task", project=project)
+    return ws_b, project, task
+
+
+def test_a_task_cannot_be_filed_into_a_workspace_the_person_cannot_work_in(c):
+    """An editor of `connect` naming `other-org/roadmap` (or a task there as the
+    parent) must not land a task on another tenant's board."""
+    client, _agent, _u = c
+    ws_b, project, b_task = _other_workspace_project()
+
+    r = client.post("/api/tasks/", {"title": "planted", "workspace": "connect", "project": "other-org/roadmap"},
+                    content_type="application/json")
+    assert r.status_code == 422, r.content
+    r = client.post("/api/tasks/", {"title": "planted", "workspace": "connect", "parent": b_task.key},
+                    content_type="application/json")
+    assert r.status_code in (404, 422), r.content
+    assert not AgentTask.objects.filter(title="planted").exclude(workspace_id="connect").exists()
+    assert list(project.tasks.values_list("title", flat=True)) == ["B's task"]
+
+
+def test_a_task_cannot_be_moved_into_a_workspace_the_person_cannot_work_in(c):
+    client, _agent, _u = c
+    _other_workspace_project()
+    r = client.post("/api/tasks/", {"title": "mine", "workspace": "connect"}, content_type="application/json")
+    key = r.json()["key"]
+    r = client.patch(f"/api/tasks/{key}/", {"project": "other-org/roadmap"}, content_type="application/json")
+    assert r.status_code in (404, 422), r.content
+    assert AgentTask.objects.get(key=key).workspace_id == "connect"
+
+
+def test_an_agents_route_cannot_file_a_subtask_under_another_workspaces_task(c):
+    """The same parent key through the agent's own route (`POST /api/agents/<slug>/tasks/`):
+    the subtask follows its parent's workspace, so a B key must be as unknown here too."""
+    client, agent, _u = c
+    _ws_b, project, b_task = _other_workspace_project()
+    r = client.post(f"/api/agents/{agent.slug}/tasks/", [{"title": "planted", "parent": b_task.key}],
+                    content_type="application/json")
+    assert r.status_code in (404, 422), r.content
+    assert not AgentTask.objects.filter(title="planted").exists()
+    assert list(project.tasks.values_list("title", flat=True)) == ["B's task"]

@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/problem'
 import type { ListenHello } from '@/api/listen'
-import { Meeting, pairByCode, pairPhone, type ListenDeps } from './controller'
+import { LAPTOP_TIMEOUT_MS, Meeting, pairByCode, pairPhone, SLOW_LAPTOP_MS, type ListenDeps } from './controller'
 import type { PairInvite } from './pairLink'
 import {
   AUDIO,
@@ -30,7 +30,14 @@ function deps(overrides: Partial<ListenDeps> = {}) {
   const sockets = socketFactory()
   const hellos: ListenHello[] = []
   const ended: string[] = []
-  const mic: { chunk: (pcm: Uint8Array) => void; stopped: boolean } = { chunk: () => undefined, stopped: false }
+  const mic = {
+    chunk: ((() => undefined) as (pcm: Uint8Array) => void),
+    pause: () => undefined as void,
+    stopped: false,
+    starts: 0,
+    /** What the capture's own resume() answers. */
+    canResume: false,
+  }
   const d: ListenDeps = {
     openSession: vi.fn(async (_runner, _kind, hello) => {
       hellos.push(hello)
@@ -44,9 +51,12 @@ function deps(overrides: Partial<ListenDeps> = {}) {
     socket: sockets.make,
     wsUrl: (path) => `wss://canopy.test/${path}`,
     label: 'iPhone',
-    startMic: async (onChunk) => {
+    startMic: async (onChunk, _onLevel, onPause) => {
       mic.chunk = onChunk
-      return { stop: () => void (mic.stopped = true) }
+      mic.pause = () => onPause?.()
+      mic.starts += 1
+      mic.stopped = false
+      return { stop: () => void (mic.stopped = true), resume: async () => mic.canResume }
     },
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
@@ -180,6 +190,45 @@ describe('pairByCode', () => {
   })
 })
 
+describe('pairByCode, laptop absent', () => {
+  it('says it is slow at 15 s and gives up with a clear reason if the laptop never connects', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      const { d, sockets, ended } = deps()
+      let slow = 0
+      const done = pairByCode({ id: 'runner-1', name: 'MBP' }, d, () => undefined, () => void (slow += 1))
+      const caught = done.catch((e: Error) => e)
+      await vi.waitFor(() => expect(sockets.sockets).toHaveLength(1))
+      sockets.sockets[0].open()
+      await vi.advanceTimersByTimeAsync(SLOW_LAPTOP_MS + 10)
+      expect(slow).toBe(1)
+      await vi.advanceTimersByTimeAsync(LAPTOP_TIMEOUT_MS)
+      expect(((await caught) as Error).message).toBe(
+        "MBP isn't answering. Make sure it's awake, online and running Canopy, then try again.")
+      await vi.waitFor(() => expect(ended).toEqual([SID]))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('no hint once the laptop has connected', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      const { d, sockets } = deps()
+      let slow = 0
+      void pairByCode({ id: 'runner-1', name: 'MBP' }, d, () => undefined, () => void (slow += 1)).catch(() => undefined)
+      await vi.waitFor(() => expect(sockets.sockets).toHaveLength(1))
+      sockets.sockets[0].open()
+      sockets.sockets[0].text({ type: 'peer', role: 'laptop', connected: true })
+      await vi.advanceTimersByTimeAsync(LAPTOP_TIMEOUT_MS + 10)
+      expect(slow).toBe(0)
+      sockets.sockets[0].drop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('Meeting', () => {
   async function started() {
     const env = deps()
@@ -289,5 +338,125 @@ describe('Meeting', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('says the laptop is slow, then that it is not answering, when it never connects', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      const { meeting, ended } = await started()
+      expect(meeting.view).toMatchObject({ status: 'waiting', laptopSlow: false })
+      await vi.advanceTimersByTimeAsync(SLOW_LAPTOP_MS + 10)
+      expect(meeting.view).toMatchObject({ status: 'waiting', laptopSlow: true })
+      await vi.advanceTimersByTimeAsync(LAPTOP_TIMEOUT_MS)
+      expect(meeting.view.status).toBe('failed')
+      expect(meeting.view.error).toBe("MBP isn't answering. Make sure it's awake, online and running Canopy, then try again.")
+      expect(ended).toEqual([SID])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a laptop that connects late clears the hint and gets its own time to start listening', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      const { meeting, ws } = await started()
+      await vi.advanceTimersByTimeAsync(SLOW_LAPTOP_MS + 10)
+      expect(meeting.view.laptopSlow).toBe(true)
+      ws.text({ type: 'peer', role: 'laptop', connected: true })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(meeting.view).toMatchObject({ laptopSlow: false, laptopConnected: true, status: 'waiting' })
+      await vi.advanceTimersByTimeAsync(LAPTOP_TIMEOUT_MS)
+      expect(meeting.view.error).toBe("MBP didn't start listening. Check Canopy Listen is installed there.")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a microphone the browser pauses says so, and a tap starts it again in the same session', async () => {
+    const { meeting, ws, mic, fromPhone, toPhone, d } = await started()
+    ws.binary(await toPhone.control({ type: 'ready', name: 'MBP' }))
+    await vi.waitFor(() => expect(meeting.view.status).toBe('recording'))
+    mic.pause()
+    expect(meeting.view.micPaused).toBe(true)
+
+    await meeting.resumeMic(false) // the page came back: the old capture can't go on, and there is no tap
+    expect(meeting.view.micPaused).toBe(true)
+    expect(mic.starts).toBe(1)
+
+    await meeting.resumeMic() // the tap
+    expect(meeting.view).toMatchObject({ micPaused: false, status: 'recording' })
+    expect(mic.starts).toBe(2)
+    expect(d.openSession).toHaveBeenCalledTimes(1)
+    mic.chunk(new Uint8Array([7]))
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(2))
+    const audio = await fromPhone.open(ws.sent[1])
+    expect([audio.kind, ...audio.body]).toEqual([AUDIO, 7])
+  })
+
+  it('a pause the old capture can recover from needs no new microphone', async () => {
+    const { meeting, ws, mic, toPhone } = await started()
+    ws.binary(await toPhone.control({ type: 'ready', name: 'MBP' }))
+    await vi.waitFor(() => expect(meeting.view.status).toBe('recording'))
+    mic.pause()
+    mic.canResume = true
+    await meeting.resumeMic(false)
+    expect(meeting.view.micPaused).toBe(false)
+    expect(mic.starts).toBe(1)
+  })
+
+  it('takes segments in batches, skips any it already has, and asks to resync after a gap', async () => {
+    const { meeting, ws, fromPhone, toPhone } = await started()
+    ws.binary(await toPhone.control({ type: 'ready', name: 'MBP' }))
+    await vi.waitFor(() => expect(meeting.view.status).toBe('recording'))
+    const seg = (n: number) => ({ start: n, end: n + 1, speaker: 0, text: `line ${n}` })
+    ws.binary(await toPhone.control({ type: 'segments', from: 0, items: [seg(0), seg(1)] }))
+    ws.binary(await toPhone.control({ type: 'segments', from: 1, items: [seg(1), seg(2)] })) // a resend overlaps
+    await vi.waitFor(() => expect(meeting.view.segments.map((s) => s.text)).toEqual(['line 0', 'line 1', 'line 2']))
+
+    ws.text({ type: 'peer', role: 'laptop', connected: false })
+    await settle()
+    expect(meeting.view.laptopConnected).toBe(false)
+    ws.text({ type: 'peer', role: 'laptop', connected: true })
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(2))
+    expect(controlMessage(await fromPhone.open(ws.sent[1]))).toEqual({ type: 'resume', have: 3 })
+  })
+
+  it('is saved only when the laptop says so', async () => {
+    const notSaved = await started()
+    notSaved.ws.binary(await notSaved.toPhone.control({ type: 'ready', name: 'MBP' }))
+    await vi.waitFor(() => expect(notSaved.meeting.view.status).toBe('recording'))
+    notSaved.meeting.end()
+    notSaved.ws.binary(await notSaved.toPhone.control({ type: 'state', state: 'ended', detail: 'not_saved' }))
+    await vi.waitFor(() => expect(notSaved.meeting.view.status).toBe('unsaved'))
+    expect(notSaved.meeting.view.note).toMatch(/didn't save notes/)
+
+    const cut = await started()
+    cut.ws.binary(await cut.toPhone.control({ type: 'ready', name: 'MBP' }))
+    await vi.waitFor(() => expect(cut.meeting.view.status).toBe('recording'))
+    cut.meeting.end()
+    cut.ws.text({ type: 'ended', reason: 'peer_gone' })
+    await vi.waitFor(() => expect(cut.meeting.view.status).toBe('unsaved'))
+
+    const died = await started()
+    died.ws.binary(await died.toPhone.control({ type: 'ready', name: 'MBP' }))
+    died.ws.binary(await died.toPhone.control({ type: 'state', state: 'failed', detail: 'recorder_stopped' }))
+    await vi.waitFor(() => expect(died.meeting.view.status).toBe('failed'))
+    expect(died.meeting.view.error).toBe('The recorder on MBP stopped unexpectedly. What it heard so far is saved there.')
+  })
+
+  it("carries the laptop's nonce back in start", async () => {
+    const { meeting, ws, fromPhone, toPhone } = await started()
+    ws.binary(await toPhone.control({ type: 'ready', name: 'MBP', nonce: 'fresh-nonce' }))
+    await vi.waitFor(() => expect(meeting.view.status).toBe('recording'))
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1))
+    expect(controlMessage(await fromPhone.open(ws.sent[0]))).toEqual({ type: 'start', notice_accepted: true, nonce: 'fresh-nonce' })
+  })
+
+  it('a laptop that no longer knows this phone says so, and offers to pair again', async () => {
+    const { meeting, ws } = await started()
+    ws.binary(handshakeFrame({ type: 'refused', reason: 'unpaired' }))
+    await vi.waitFor(() => expect(meeting.view.status).toBe('failed'))
+    expect(meeting.view.unpaired).toBe(true)
+    expect(meeting.view.error).toMatch(/doesn't know this phone any more/)
   })
 })

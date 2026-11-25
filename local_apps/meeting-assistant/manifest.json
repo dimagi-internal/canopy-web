@@ -1,9 +1,9 @@
 {
   "key": "meeting-assistant",
-  "name": "Meeting assistant",
-  "description": "Live feedback from an agent during a meeting.",
-  "version": "0.5.0",
-  "changelog": "Records and transcribes on your Mac with open models (canopy-listen: Parakeet v3 for words, TitaNet for voices), so Start starts the recording and End meeting saves it. Superwhisper still works: set Recorder to superwhisper.",
+  "name": "Voice assistant",
+  "description": "Talk to your agents from your phone, and get an agent's feedback during a meeting. This Mac turns what's said into words.",
+  "version": "0.7.0",
+  "changelog": "Renamed from Meeting assistant. The account menu item is now Voice assistant: pick an agent to send a voice note, or Meeting to record a meeting from your phone.",
   "entry": [
     "{python}",
     "app.py"
@@ -51,8 +51,29 @@
       "type": "bool",
       "label": "Open the chat in my browser when people start talking",
       "default": true
+    },
+    "voice_session": {
+      "type": "bool",
+      "label": "Show Voice assistant in my account menu",
+      "help": "From your phone: record a voice note to any of your agents, or record a meeting. This Mac turns it into words (no audio leaves it). You check a note's words before they're sent as a new chat.",
+      "default": false
     }
   },
+  "menu": [
+    {
+      "key": "voice-session",
+      "label": "Voice assistant",
+      "path": "/listen/voice",
+      "pick": "agent",
+      "shown_when": "voice_session",
+      "links": [
+        {
+          "label": "Meeting",
+          "path": "/listen"
+        }
+      ]
+    }
+  ],
   "checks": [
     {
       "label": "A recorder is set up",

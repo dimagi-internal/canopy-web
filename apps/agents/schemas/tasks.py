@@ -27,7 +27,10 @@ class AgentTaskLink(StrictModel):
     #: says what, its url opens it. The project page leads "Where it stands"
     #: with these, so a live product never reads as "nothing built" because
     #: none of its ideas is marked shipped.
-    kind: Literal["", "decision", "live"] = ""
+    #: `primary`: on a PROJECT, its main screen — a page of its own workspace
+    #: (`/w/<workspace>/…`, e.g. an app page or a view), shown as the project's main
+    #: button. At most one, and only on a project.
+    kind: Literal["", "decision", "live", "primary"] = ""
     #: On a decision: who it waits on, by name. Blank falls back to the task's
     #: waiting-on person, then the project's owner.
     waiting_on: str = Field(default="", max_length=120)
@@ -419,7 +422,8 @@ class AgentProjectOut(StrictModel):
     #: Its lead agent may publish its own drafted updates (off: a person
     #: publishes them). A workspace admin turns it on (`.../update-settings`).
     lead_agent_may_publish: bool = False
-    #: Tasks done / in scope (canceled ones out), by category.
+    #: Tasks done / in scope (canceled ones out), by category. Recurring templates are never
+    #: counted here or in `task_count` / `open_task_count`: they never complete.
     done_task_count: int = 0
     drive_folder_id: str
     drive_folder_url: str
@@ -443,9 +447,9 @@ class Recurrence(StrictModel):
     """A recurring task's rhythm. The task is then a TEMPLATE: it stays in backlog, and each
     period's work is an instance of it (`POST /api/tasks/{key}/spawn`, or the tick when `auto`)."""
 
-    #: `day`, `week` (from Monday), `2weeks` (alternate Mondays), `month` (from the 1st), or
+    #: `day`, `weekdays` (Monday to Friday), `week` (from Monday), `2weeks` (alternate Mondays), `month` (from the 1st), or
     #: `as_needed` (spawned by hand only, one instance per date).
-    every: Literal["day", "week", "2weeks", "month", "as_needed"]
+    every: Literal["day", "weekdays", "week", "2weeks", "month", "as_needed"]
     #: The day an instance is due in its week (week and 2weeks only; Monday when omitted).
     weekday: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None
     #: Spawn each period's instance automatically when the period begins, in the workspace's
@@ -622,6 +626,8 @@ class AgentTaskOut(StrictModel):
     recurrence: Recurrence | None = None
     #: The template this task is one period's instance of.
     template_key: str | None = None
+    #: That template's title.
+    template_title: str | None = None
     #: A template's newest done instance's completion time; null when none is done, or not a template.
     last_done: dt.datetime | None = None
     created_at: dt.datetime
@@ -1354,6 +1360,9 @@ class ProjectServicePatch(StrictModel):
 
 
 class ProjectProgressOut(StrictModel):
+    """Scope against done, counted over the project's work: canceled tasks and recurring
+    templates (which never complete) are out of scope."""
+
     total: int = 0
     done: int = 0
     started: int = 0

@@ -88,3 +88,40 @@ def test_dispatched_from_your_chat_grants_no_access(w):
                                    title="child", parent_session=w["mine"])
     assert not access.is_own_session(w["jj"], child)
     assert not Session.objects.filter(access.sessions_of_q([w["jj"].pk]), pk=child.pk).exists()
+
+
+def _scheduled_session(w, title, *, by, origin=None):
+    """A session an agent's turn drove, the turn fired by `by`'s schedule (or by `origin`)."""
+    from apps.harness import initiator as who
+    from apps.harness.models import Turn
+
+    hal = User.objects.get_or_create(username="halbot", defaults={"email": "hal@dimagi-ai.com"})[0]
+    agent = Agent.objects.get(slug="hal")
+    s = Session.objects.create(workspace=agent.workspace, created_by=hal, agent=agent, title=title)
+    SessionParticipant.objects.create(session=s, user=w["jj"], role=SessionParticipant.EDITOR)
+    init = who.system(via="schedule", accountable=by)
+    Turn.objects.create(agent=agent, origin=origin or Turn.ORIGIN_CANOPY_SCHEDULER, prompt="/hal:turn",
+                        idempotency_key=f"t:{title}", status=Turn.DONE,
+                        canopy_session=s, initiator_kind=init.kind, initiator_via=init.via,
+                        initiator_user=by)
+    return s
+
+
+def test_a_session_your_schedule_fired_is_yours(w):
+    bo = User.objects.get(username="bo")
+    mine = _scheduled_session(w, "my-schedule", by=w["jj"])
+    theirs = _scheduled_session(w, "bos-schedule", by=bo)
+    not_scheduled = _scheduled_session(w, "api-turn", by=w["jj"], origin="api")
+    hal = User.objects.get(username="halbot")
+    dispatched = Session.objects.create(workspace=mine.workspace, created_by=hal, agent=mine.agent,
+                                        title="dispatched", parent_session=mine)
+    SessionParticipant.objects.create(session=dispatched, user=w["jj"], role=SessionParticipant.EDITOR)
+    c = Client()
+    c.force_login(w["jj"])
+    listed = {s["title"]: s["started_by_you"] for s in c.get("/api/canopy-sessions/?state=all").json()}
+    assert listed["my-schedule"] and listed["dispatched"]
+    assert not listed["bos-schedule"] and not listed["api-turn"]
+    # Still a display rule: a schedule's session grants nothing.
+    assert not Session.objects.filter(access.sessions_of_q([w["jj"].pk]), pk=mine.pk).exists()
+    assert access.started_by_you_among(w["jj"], [mine, theirs, not_scheduled, dispatched]) == {
+        mine.pk, dispatched.pk}

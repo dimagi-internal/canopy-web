@@ -14,11 +14,13 @@ vi.mock('@/api/agentCreation', async (orig) => ({
   registerAgent: vi.fn(),
 }))
 vi.mock('@/api/agents', () => ({ setAgentGitHub: vi.fn() }))
+vi.mock('@/api/agentDefinitions', () => ({ createStoredAgent: vi.fn() }))
 let role: string | null = 'editor'
 vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => role }))
 
 import { checkScaffoldRepo, registerAgent, scaffoldAgent } from '@/api/agentCreation'
 import { setAgentGitHub } from '@/api/agents'
+import { createStoredAgent } from '@/api/agentDefinitions'
 import { NewAgentPage, suggestSlug } from './NewAgentPage'
 
 const check = checkScaffoldRepo as unknown as ReturnType<typeof vi.fn>
@@ -160,5 +162,27 @@ describe('NewAgentPage', () => {
     mount()
     await waitFor(() => expect(screen.getByText(/needs the editor role/)).toBeTruthy())
     expect(screen.queryByRole('button', { name: 'Create agent' })).toBeNull()
+  })
+})
+
+
+describe('a stored agent', () => {
+  it('needs no repository or token, and creates through the stored route', async () => {
+    const createStored = createStoredAgent as unknown as ReturnType<typeof vi.fn>
+    createStored.mockResolvedValue({ slug: 'scout-bot', name: 'Scout Bot', workspace: 'scouts', source: 'stored',
+      revision: 1, root_sha256: 'a'.repeat(64) })
+    mount()
+    fireEvent.click(screen.getByLabelText(/Stored agent/))
+    expect(screen.queryByPlaceholderText('github_pat_…')).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText('Scout'), { target: { value: 'Scout Bot' } })
+    fireEvent.change(screen.getByPlaceholderText('Find good first issues for new contributors.'), {
+      target: { value: 'Find good first issues.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }))
+    await waitFor(() => expect(screen.getByTestId('landed').textContent).toBe('?created=stored'))
+    expect(createStored).toHaveBeenCalledWith({ workspace: 'scouts', slug: 'scout-bot', name: 'Scout Bot',
+      mandate: 'Find good first issues.', stakeholders: '' })
+    expect(scaffold).not.toHaveBeenCalled()
+    expect(check).not.toHaveBeenCalled()
   })
 })

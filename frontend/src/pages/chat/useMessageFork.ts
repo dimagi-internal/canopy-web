@@ -32,6 +32,17 @@ function inTranscript(m: Pick<Message, 'status' | 'id'>): boolean {
   return m.status !== 'pending' && !String(m.id ?? '').startsWith('local:')
 }
 
+/** Whether a right-click / long-press belongs to the browser, not our menu.
+ *  A link or image keeps its own menu (Open in Chrome, Copy link address). A
+ *  long-press on a phone always does: Android fires `contextmenu` BEFORE it
+ *  starts a text selection, so taking it left only "Copy the whole message";
+ *  the bubble's copy button and the hover bar's Fork still cover touch. */
+export function keepsNativeMenu(e: Pick<ReactMouseEvent, 'target' | 'nativeEvent'>): boolean {
+  if (e.target instanceof Element && e.target.closest('a[href], img')) return true
+  const native = e.nativeEvent as Partial<PointerEvent> | undefined
+  return native?.pointerType === 'touch' || native?.pointerType === 'pen'
+}
+
 /** A message's actions, from its hover bar or its right-click menu: Copy, and
  *  "Fork from here" where the runner can cut one. `sessionPath` is where the
  *  fork opens (/ide keeps it in /ide); the default is its chat page. */
@@ -56,6 +67,7 @@ export function useMessageFork(
   const onMessageContextMenu = (e: ReactMouseEvent) => {
     // Selected text keeps the browser's own menu (its Copy is the one wanted).
     if (window.getSelection?.()?.toString()) return
+    if (keepsNativeMenu(e)) return
     const turnIndex = turnIndexAt(e.target)
     const row = turnIndex == null ? undefined : messages.find((m) => m.turn_index === turnIndex)
     if (turnIndex == null || !row || !inTranscript(row)) return

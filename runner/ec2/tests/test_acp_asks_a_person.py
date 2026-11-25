@@ -66,6 +66,8 @@ def box(cloud_runner, monkeypatch):
     server = FakeServer()
     monkeypatch.setattr(cloud_runner, "_api", server.api)
     monkeypatch.setattr(cloud_runner, "MENU_ANSWER_POLL_SECONDS", 0.02)
+    # A server without `/sync`: the ask polls `/menu-answers` (the sync case is below).
+    monkeypatch.setitem(cloud_runner._SYNC, "supported", False)
     with cloud_runner._TURNS_LOCK:
         cloud_runner._IN_FLIGHT[TID] = None
     yield cloud_runner, server
@@ -253,3 +255,53 @@ def _wait(predicate, timeout=2.0):
             return
         time.sleep(0.01)
     raise AssertionError("condition not met within timeout")
+
+
+class SyncServer(FakeServer):
+    """The same routes plus `/sync`: an answer moves the version."""
+
+    def __init__(self):
+        super().__init__()
+        self.version = 1
+        self.syncs = []          # (If-None-Match sent, status answered)
+
+    def api(self, method, path, body=None, headers=None, **kw):
+        if path.endswith("/sync"):
+            etag = f'"v{self.version}"'
+            sent = (headers or {}).get("If-None-Match")
+            if sent == etag:
+                self.syncs.append((sent, 304))
+                return 304, None
+            self.syncs.append((sent, 200))
+            return 200, {"version": self.version, "answers": list(self.answers)}
+        if path.endswith("/menu-answers"):
+            raise AssertionError("a box on /sync never polls /menu-answers")
+        return super().api(method, path, body, **kw)
+
+    def tap(self, **kw):
+        super().tap(**kw)
+        self.version += 1
+
+
+def test_on_sync_a_waiting_ask_checks_the_version_and_gets_the_tap(cloud_runner, monkeypatch):
+    server = SyncServer()
+    monkeypatch.setattr(cloud_runner, "_api", server.api)
+    monkeypatch.setattr(cloud_runner, "MENU_ANSWER_SYNC_CHECK_SECONDS", 0.02)
+    cloud_runner._reset_sync()
+    with cloud_runner._TURNS_LOCK:
+        cloud_runner._IN_FLIGHT[TID] = None
+    try:
+        assert cloud_runner.fetch_sync(RID, whole=True) is not None  # the box's first read
+        t, out = _ask_in_background(cloud_runner, "elicitation/create", ASK)
+        assert server.posted.wait(2)
+        threading.Event().wait(0.1)
+        assert server.syncs[1:] and all(s == ('"v1"', 304) for s in server.syncs[1:]), server.syncs
+        server.tap(option=1)  # the frame was lost: the ask's own check finds it
+        t.join(2)
+        assert out["result"] == {"action": "accept", "content": {"question_0": "Aubergine"}}
+        assert server.results == [("a1", "answered")]
+    finally:
+        with cloud_runner._TURNS_LOCK:
+            cloud_runner._IN_FLIGHT.pop(TID, None)
+        cloud_runner._clear_stop(TID)
+        cloud_runner._reset_sync()

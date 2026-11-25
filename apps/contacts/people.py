@@ -192,6 +192,17 @@ def fact_dict(fact: PersonFact) -> dict:
     }
 
 
+#: `record_fact`'s "not given": a new version keeps the superseded one's value.
+_SAME = object()
+
+
+def _written_by_the_person(person: Person, actor, by_user, by_agent) -> bool:
+    """Is this write the subject's own (HCP v2 3.6 `authenticated`)? Their own canopy login, not
+    an agent's and not another member's. The same rule migration 0031 applied to older rows."""
+    return (actor is not None and actor.is_person and by_agent is None and by_user is not None
+            and bool(person.user_id) and getattr(by_user, "pk", None) == person.user_id)
+
+
 @transaction.atomic
 def record_fact(*, person: Person, workspace, kind: str, statement: str,
                 basis: str = PersonFact.DECLARED, by_user=None, by_agent=None,
@@ -204,7 +215,10 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
                 provenance_site: dict | None = None,
                 captured_by: str = "", reason: str = "", actor=None,
                 status: str = PersonFact.ACTIVE, audit_event: str | None = None,
-                audit_detail: str = "", check_conflicts: bool = True) -> PersonFact:
+                audit_detail: str = "", check_conflicts: bool = True,
+                permitted_purposes=_SAME, restricted_purposes=_SAME,
+                extra_categories=_SAME, basis_detail=_SAME,
+                v2_conflicts: bool = False) -> PersonFact:
     """Append a fact — one VERSION of an HCP entry.
 
     Without `supersedes` it starts a new entry (version 1). With it, the new row
@@ -217,6 +231,15 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
     statement, a project from another workspace, a category canopy does not
     hold, a confidence that does not match the basis, or a superseded fact
     that is not this person's in this workspace.
+
+    A new version keeps what the old one carried unless the caller says otherwise:
+    its other categories, its basis, what its writer permitted and the person's
+    narrowing of that. A revision never drops a category (which a standing rule
+    may deny on) or a narrowing the person set.
+
+    `v2_conflicts`: the write came through the v2 binding, so a conflict is decided
+    by standing (an agent's "the person said it" has none until confirmed). Every
+    other caller keeps v1's rule: a declared entry outranks an inference.
     """
     from . import hcp
 
@@ -249,7 +272,7 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
         raise FactError("confidence is high, medium or low")
     if basis != PersonFact.INFERRED:
         confidence = ""
-    entry_id, version = uuid.uuid4(), 1
+    entry_id, version, old = uuid.uuid4(), 1, None
     if supersedes is not None:
         old = PersonFact.objects.select_for_update().filter(pk=supersedes.pk).first()
         if old is None or old.person_id != person.pk or old.workspace_id != ws_id:
@@ -257,6 +280,16 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
         if not old.is_live:
             raise FactError("that fact is no longer live")
         entry_id, version = old.entry_id, old.version + 1
+
+    def kept(given, field, empty):
+        if given is not _SAME:
+            return given
+        return getattr(old, field) if old is not None else empty          # as the row stands now
+
+    permitted_purposes = kept(permitted_purposes, "permitted_purposes", None)
+    restricted_purposes = kept(restricted_purposes, "restricted_purposes", None)
+    extra_categories = [c for c in (kept(extra_categories, "extra_categories", None) or []) if c != category]
+    basis_detail = dict(kept(basis_detail, "basis_detail", None) or {})
     if actor is None:
         actor = (hcp.agent_actor(by_agent) if by_agent is not None
                  else hcp.user_actor(by_user) if getattr(by_user, "is_authenticated", False)
@@ -284,12 +317,21 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
         relationship=(relationship or "")[:80], metadata=dict(metadata or {}),
         user_verified=bool(user_verified), captured_by=(captured_by or actor.id)[:200],
         reason=(reason or "")[:300],
+        permitted_purposes=permitted_purposes, restricted_purposes=restricted_purposes,
+        extra_categories=extra_categories, basis_detail=basis_detail,
+        # 3.6: authenticated only when the person made the write themself (their own login,
+        # as migration 0031 decided for older rows); an agent's claim that the person said it
+        # is not (3.7), and neither is another member's. Never taken from a request.
+        assurance=(PersonFact.AUTHENTICATED if _written_by_the_person(person, actor, by_user, by_agent)
+                   else PersonFact.UNVERIFIED),
     )
     event = audit_event or ("preference.updated" if supersedes is not None else "preference.created")
     hcp.audit(person, event, actor=actor, entry=fact, turn=source_turn,
               detail=audit_detail or (f"version {version}" + (f"; {reason}" if reason else "")))
     if check_conflicts:
-        hcp.detect_conflicts(fact, actor=actor)
+        if supersedes is not None:
+            hcp.reevaluate(fact, actor=actor)               # a revision may end a conflict (15.3)
+        hcp.detect_conflicts(fact, actor=actor, v2=v2_conflicts)
     from . import embeddings
 
     if embeddings.enabled():
@@ -472,7 +514,7 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
             slugs = sorted(hcp.reach_of(read_grant),
                            key=lambda s: (s != workspace_slug, s is None, s or ""))
             facts, _, _ = hcp.search(person, workspace_slugs=slugs, query=turn.prompt or "",
-                                     categories=hcp.categories_for(read_grant, "read"),
+                                     categories=hcp.rules.permitted(read_grant, hcp.categories_for(read_grant, "read")),
                                      purpose=ENVELOPE_PURPOSE, max_entries=ENVELOPE_FACTS,
                                      grant=read_grant, actor=hcp.agent_actor(agent), turn=turn,
                                      project_id=project.pk if project is not None else None)
@@ -504,14 +546,17 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
                    "restrictions": list(grant.restrictions or []),
                    "reach": hcp.reach_label(hcp.grant_sources(grant))}
                   if grant is not None else None),
+        # v2 6.4: what the person said agents may do with what they were told; the envelope is
+        # a disclosure, so it carries them (never the agent's to ignore, never a permission).
+        "directives": hcp.rules.delivered(read_grant, facts) if read_grant is not None else [],
         "recall": ({"tool": "hcp_searchPreferences", "turn": str(turn.pk),
-                    "categories": hcp.categories_for(read_grant, "read"),
+                    "categories": hcp.rules.permitted(read_grant, hcp.categories_for(read_grant, "read")),
                     "hint": "Only the entries relevant to the message are above. To recall "
                             "more about this person, call hcp_searchPreferences with a query, "
                             "the categories, a purpose and turn=<this turn id>."}
                    if can_read else None),
         "record": ({"tool": "hcp_addPreference", "turn": str(turn.pk),
-                    "categories": hcp.categories_for(write_grant, "write")}
+                    "categories": hcp.rules.permitted(write_grant, hcp.categories_for(write_grant, "write"))}
                    if can_write else None),
         # v1.1, additive: the projects (of this workspace's agents) they take
         # part in, most recently active first, at most 5. Not archived ones.

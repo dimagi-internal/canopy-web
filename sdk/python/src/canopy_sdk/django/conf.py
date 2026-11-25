@@ -9,6 +9,11 @@
         "APP_NAME": "connect-labs",                       # your host-site name
         "WORKSPACE": "connect",     # the canopy workspace (tenant) the site is registered in
         "AGENT_SLUG": "ace",        # the default agent; also names the tenant when WORKSPACE is unset
+        # A relay host's reply push (canopy_sdk.host.replies): the URL canopy POSTs replies
+        # to, which verify_reply requires as `aud`. site.json declares it (site.reply_url),
+        # and canopy adopts it when its origin is one of the site's registered origins.
+        "REPLY_URL": "https://labs.connect.dimagi.com/canopy/replies/",
+        "REPLY_MODE": "final",      # site.reply_mode: "final" (one post a turn) or "stream"
         # The grant. All four present turns it on; any missing turns it off.
         "CLIENT_ID": "https://labs.connect.dimagi.com/canopy/oauth/client.json",
         "ISSUER": "https://labs.connect.dimagi.com",
@@ -62,6 +67,18 @@
         # site.resource_id_lengths: the exact length of a scheme's result ids, so canopy
         # keeps a link under it only as <scheme>:// plus that many url-safe characters.
         "RESOURCE_ID_LENGTHS": {},  # e.g. {"labs-result": 24}
+        # This site is the system of record for the people it brings to canopy: the URI
+        # scheme of its own record of a person (site.person_scheme). A contact's record_uri
+        # (canopy_sdk.host.contacts.update_contacts) must be under it.
+        "PERSON_SCHEME": "",        # e.g. "labs-worker"
+        # site.retention_days: how long canopy keeps your contacts' conversations (the
+        # shorter of this and the workspace's own rule wins). None: canopy's rules alone.
+        "RETENTION_DAYS": None,     # e.g. 90
+        # site.json's surfaces: the parts of this site that serve different people, each saying
+        # whether its conversations hold sensitive data and where a contact's subject-bound tool
+        # calls go (canopy_sdk.site). A mapping, or SITE_NEEDS may return "surfaces".
+        "SURFACES": {},             # e.g. {"workers": {"sensitive": False, "mcp_resource": "https://…/mcp/workers/",
+                                    #                   "person_scheme": "labs-worker"}}
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
@@ -163,6 +180,7 @@ def get_host_config() -> HostConfig:
         probe=_probe_or_none(cfg),
         runner_requirements=tuple(cfg.get("RUNNER_REQUIREMENTS") or ()),
         workspace=str(cfg.get("WORKSPACE") or ""),
+        reply_url=str(cfg.get("REPLY_URL") or ""),
     )
 
 
@@ -291,6 +309,29 @@ def resource_id_lengths() -> dict:
     """``RESOURCE_ID_LENGTHS`` as declared (``{scheme: length}``); checked by
     ``canopy_host.E011`` at startup and again when ``site.json`` is built."""
     value = raw().get("RESOURCE_ID_LENGTHS") or {}
+    return dict(value) if isinstance(value, Mapping) else value
+
+
+def person_scheme() -> str:
+    """``PERSON_SCHEME`` as set: the URI scheme of this site's records of its people,
+    declared in ``site.json`` as ``site.person_scheme`` (checked by ``canopy_host.E012``)."""
+    return str(raw().get("PERSON_SCHEME") or "").strip()
+
+
+def retention_days():
+    """``RETENTION_DAYS`` as set (None when unset), declared as ``site.retention_days``."""
+    value = raw().get("RETENTION_DAYS")
+    return None if value in (None, "") else value
+
+
+def reply_mode() -> str:
+    """``REPLY_MODE`` as set ("" when unset), declared as ``site.reply_mode``."""
+    return str(raw().get("REPLY_MODE") or "").strip()
+
+
+def surfaces() -> dict:
+    """``SURFACES`` as set (``{}`` when unset), declared as ``site.json``'s ``surfaces``."""
+    value = raw().get("SURFACES") or {}
     return dict(value) if isinstance(value, Mapping) else value
 
 

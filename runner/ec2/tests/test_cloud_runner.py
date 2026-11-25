@@ -1751,11 +1751,28 @@ def test_sync_session_views_can_skip_backfills(cloud_runner, monkeypatch):
         return 200, {"backfills": []}
 
     _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._SYNC["supported"] = False  # a server without /sync: the drains
     cloud_runner._sync_session_views("r", with_backfills=False)
     assert not any(p.endswith("/backfills") for p in paths)
     paths.clear()
     cloud_runner._sync_session_views("r")
     assert any(p.endswith("/backfills") for p in paths)
+
+
+def test_session_views_read_streams_and_backfills_from_sync(cloud_runner, monkeypatch):
+    # With /sync in use, its answer is the stream list and carries the backfills:
+    # the views make neither GET.
+    core = _FakeCore()
+    paths = []
+
+    def api(method, path, body=None):
+        paths.append(path)
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._SYNC.update(supported=True, version=3, answer={"version": 3, "streams": []})
+    cloud_runner._sync_session_views("r")
+    assert not any(p.endswith(("/backfills", "/handoffs", "/streams")) for p in paths)
 
 
 def test_session_views_survive_a_missing_transcript_core(cloud_runner, monkeypatch):
@@ -1832,7 +1849,7 @@ def test_an_adapter_already_on_path_is_left_alone(cloud_runner, monkeypatch):
     assert runs == [], "reinstalled an adapter that was already installed"
     assert not any("fall back" in m for m in logs), (
         f"claimed a fallback that did not happen: {logs}")
-    assert any("already on PATH" in m for m in logs), logs
+    assert any("already present" in m for m in logs), logs
 
 
 def test_the_install_targets_a_prefix_the_service_user_can_write(cloud_runner, monkeypatch):
@@ -1842,7 +1859,7 @@ def test_the_install_targets_a_prefix_the_service_user_can_write(cloud_runner, m
     cmd = runs[0]
     assert "--prefix" in cmd, f"bare global install cannot work as this user: {cmd}"
     assert cmd[cmd.index("--prefix") + 1].endswith("/.local"), cmd
-    assert cmd[-1] == cloud_runner.ACP_ADAPTER_PACKAGE, cmd
+    assert cmd[-1].startswith(cloud_runner.ACP_ADAPTER_PACKAGE + "@"), f"unpinned install: {cmd}"
 
 
 def test_nothing_is_installed_when_the_executor_is_not_acp(cloud_runner, monkeypatch):

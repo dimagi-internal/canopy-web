@@ -12,9 +12,8 @@ from canopy_runner import failure_log
 from canopy_runner import hooks
 from canopy_runner import emdash
 from canopy_runner import main as main_mod
-from canopy_runner.client import ClientError
 from canopy_runner.config import Config
-from canopy_runner.main import _fire_due_schedules, run_once
+from canopy_runner.main import run_once
 
 
 @pytest.fixture(autouse=True)
@@ -87,24 +86,11 @@ def _cfg(db, tmp_path):
     )
 
 
-# --- scheduled turns: the loop wiring (the decision logic is tests/test_schedules.py) ---
+# --- the pause ---
 
 
-def test_schedule_sync_failure_never_kills_the_loop(tmp_path):
-    """The daemon runs unattended under launchd: an unhandled exception in the
-    scheduling path would take down claiming and the inbox with it."""
-    class Boom:
-        def sync_schedules(self, runner_id):
-            raise ClientError("500 from server")
-
-    cfg = Config(base_url="http://x", token="t", runner_id="r-1", emdash_db="x",
-                 state_path=str(tmp_path / "state.json"))
-    _fire_due_schedules(cfg, Boom())  # must not raise
-
-
-def test_global_pause_sentinel_blocks_schedule_firing(tmp_path, monkeypatch):
-    """Paused = no work, no tokens. Firing while paused would queue scheduled turns
-    that all execute the instant the runner resumes."""
+def test_global_pause_sentinel_blocks_claiming(tmp_path, monkeypatch):
+    """Paused = no work, no tokens: the loop keeps heartbeating and claims nothing."""
     cfg_path = tmp_path / "runner.json"
     cfg_path.write_text(json.dumps({
         "base_url": "http://x", "token": "t", "runner_id": "r-1",
@@ -121,10 +107,6 @@ def test_global_pause_sentinel_blocks_schedule_firing(tmp_path, monkeypatch):
         def heartbeat(self, *a, **k):
             calls.append("heartbeat")
             return {}
-
-        def sync_schedules(self, runner_id):
-            calls.append("sync_schedules")
-            return []
 
         def claim(self, *a, **k):
             calls.append("claim")
@@ -151,7 +133,6 @@ def test_global_pause_sentinel_blocks_schedule_firing(tmp_path, monkeypatch):
         main_mod.main()
 
     assert "heartbeat" in calls  # still alive-but-idle to the control plane
-    assert "sync_schedules" not in calls  # ...but fired nothing
     assert "claim" not in calls
     # ...and the local pause reached the control plane, so the SERVER also stops
     # routing to this box. Before, a local sentinel was invisible up there: the
@@ -160,9 +141,9 @@ def test_global_pause_sentinel_blocks_schedule_firing(tmp_path, monkeypatch):
     assert "set_paused:True" in calls
 
 
-def test_unpaused_loop_fires_schedules_every_poll(tmp_path, monkeypatch):
-    """The counterpart to the pause test: prove the firing is actually wired into
-    the poll (the pause assertion alone would pass if it were wired nowhere)."""
+def test_the_loop_never_fires_schedules(tmp_path, monkeypatch):
+    """canopy-web fires every schedule itself (apps/harness/schedule_clock.py): the
+    loop makes no schedule call, so a client without one runs a full tick."""
     cfg_path = tmp_path / "runner.json"
     cfg_path.write_text(json.dumps({
         "base_url": "http://x", "token": "t", "runner_id": "r-1",
@@ -174,14 +155,17 @@ def test_unpaused_loop_fires_schedules_every_poll(tmp_path, monkeypatch):
         def __init__(self, base_url, token):
             pass
 
+        def __getattr__(self, name):
+            if "schedule" in name:
+                pytest.fail(f"the loop called {name}")
+            raise AttributeError(name)
+
         def heartbeat(self, *a, **k):
+            calls.append("heartbeat")
             return {}
 
-        def sync_schedules(self, runner_id):
-            calls.append(runner_id)
-            return []
-
         def claim(self, *a, **k):
+            calls.append("claim")
             return None
 
     class StopLoopError(Exception):
@@ -194,23 +178,7 @@ def test_unpaused_loop_fires_schedules_every_poll(tmp_path, monkeypatch):
     with pytest.raises(StopLoopError):
         main_mod.main()
 
-    assert calls == ["r-1"]  # synced on the poll — the poll IS the tick
-
-
-def test_broken_scheduling_does_not_crash_the_tick(db, tmp_path, monkeypatch, caplog):
-    """A scheduling dependency failure — e.g. canopy_cron not installed in the
-    laptop daemon's env — must disable ONLY scheduling. Claiming and the inbox
-    keep running. The `from . import schedules` lives INSIDE _fire_due_schedules'
-    guard for exactly this reason: the import is the likeliest failure, and it
-    must not escape and take down the whole run_once cycle."""
-    import sys
-
-    monkeypatch.setitem(sys.modules, "canopy_runner.schedules", None)
-    caplog.set_level("WARNING")
-
-    _fire_due_schedules(_cfg(db, tmp_path), FakeClient(), paused=set())  # must NOT raise
-
-    assert "scheduling unavailable" in caplog.text.lower()
+    assert "heartbeat" in calls
 
 
 # --------------------------------------------------------------------------------------
@@ -240,15 +208,13 @@ class _CdpClient:
 
 def test_drain_one_runs_exactly_one_turn_without_polling(monkeypatch, tmp_path):
     """The single-turn primitive: heartbeat → claim ONE → execute, and NEVER poll the
-    inbox or fire schedules — those side effects are exactly what --once has and
+    inbox — that side effect are exactly what --once has and
     --drain-one deliberately avoids, so a single turn can't spawn work you didn't ask for."""
     monkeypatch.setattr("canopy_runner.cdp_control.cdp_healthy", lambda **k: True)
     monkeypatch.setattr("canopy_runner.cdp_control.host_id", lambda: "u@h")
     monkeypatch.setattr(main_mod, "_paused_agents", lambda c: set())
     monkeypatch.setattr(main_mod, "_maybe_check_inboxes",
                         lambda *a, **k: pytest.fail("drain_one must NOT poll the inbox"))
-    monkeypatch.setattr(main_mod, "_fire_due_schedules",
-                        lambda *a, **k: pytest.fail("drain_one must NOT fire schedules"))
     seen = {}
     monkeypatch.setattr(
         "canopy_runner.execute.execute_turn",
@@ -410,9 +376,6 @@ class _CdpLoopClient:
     def report_sessions(self, runner_id, sessions, archived=None, complete=False):
         pass
 
-    def sync_schedules(self, runner_id):
-        return []
-
     def claim(self, runner_id, paused_agents=None):
         self.claims += 1
         return self.turns.pop(0) if self.turns else None
@@ -511,16 +474,14 @@ def test_cdp_unhealthy_heartbeat_reports_not_ready(monkeypatch, tmp_path):
     assert hb["ready_note"]  # a human-readable reason accompanies it
 
 
-def test_cdp_down_still_polls_inbox_and_schedules(monkeypatch, tmp_path):
+def test_cdp_down_still_polls_inbox(monkeypatch, tmp_path):
     """Inbound work must keep ENQUEUING while CDP is down — only the claim is gated."""
     _stub_cdp(monkeypatch, healthy=False)
     ran = {}
     monkeypatch.setattr(main_mod, "_maybe_check_inboxes",
                         lambda *a, **k: ran.__setitem__("inbox", True))
-    monkeypatch.setattr(main_mod, "_fire_due_schedules",
-                        lambda *a, **k: ran.__setitem__("sched", True))
     run_once(_cdp_loop_cfg(tmp_path), _CdpLoopClient())
-    assert ran == {"inbox": True, "sched": True}
+    assert ran == {"inbox": True}
 
 
 def test_the_claim_runs_before_the_reporting_sweep(monkeypatch, tmp_path):
@@ -560,7 +521,6 @@ def test_a_failing_status_step_does_not_cost_the_claim(monkeypatch, tmp_path):
                    "canopy_runner.streams.drain_backfills"):
         monkeypatch.setattr(target, boom)
     monkeypatch.setattr(main_mod, "_maybe_check_inboxes", boom)
-    monkeypatch.setattr(main_mod, "_fire_due_schedules", boom)
     monkeypatch.setattr(sessions, "maybe_report_sessions", boom)
     monkeypatch.setattr(
         "canopy_runner.execute.execute_turn",
@@ -591,7 +551,7 @@ def test_cdp_recovery_drains_the_backlog(monkeypatch, tmp_path):
 
 def test_cdp_down_warning_is_throttled_to_one(monkeypatch, tmp_path, caplog):
     """A single throttled surface signal after sustained downtime — NOT per-tick spam.
-    The degraded heartbeat still fires every tick (machine signal); the WARNING fires once."""
+    The degraded heartbeat fires on the transition and then on its cadence; the WARNING once."""
     _stub_cdp(monkeypatch, healthy=False)
     cfg = _cdp_loop_cfg(tmp_path)
     client = _CdpLoopClient()
@@ -601,8 +561,56 @@ def test_cdp_down_warning_is_throttled_to_one(monkeypatch, tmp_path, caplog):
         run_once(cfg, client)
     warns = [r for r in caplog.records if "CDP unreachable" in r.getMessage()]
     assert len(warns) == 1  # ONE loud log despite many down ticks
-    assert len(client.heartbeats) == ticks  # ...but a degraded heartbeat every tick
+    assert len(client.heartbeats) == 1  # ...and one degraded heartbeat inside the cadence
     assert all(h["degraded"] for h in client.heartbeats)
+
+
+def test_heartbeat_follows_its_cadence_not_the_tick(monkeypatch, tmp_path):
+    """A healthy box beats once per `heartbeat_seconds`, reusing the reply between."""
+    _stub_cdp(monkeypatch, healthy=True)
+    clock = [1000.0]
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: clock[0])
+    cfg = _cdp_loop_cfg(tmp_path)
+    client = _CdpLoopClient()
+    for _ in range(5):
+        run_once(cfg, client)
+        clock[0] += 5
+    assert len(client.heartbeats) == 1
+    clock[0] += cfg.heartbeat_seconds
+    run_once(cfg, client)
+    assert len(client.heartbeats) == 2
+
+
+def test_a_change_in_what_the_heartbeat_reports_beats_at_once(monkeypatch, tmp_path):
+    """Losing emdash is reported on the tick it happens, not at the next cadence."""
+    _stub_cdp(monkeypatch, healthy=True)
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: 1000.0)
+    cfg = _cdp_loop_cfg(tmp_path)
+    client = _CdpLoopClient()
+    run_once(cfg, client)
+    _stub_cdp(monkeypatch, healthy=False)
+    run_once(cfg, client)
+    assert [h["degraded"] for h in client.heartbeats] == [False, True]
+
+
+def test_a_local_pause_survives_the_reused_reply(monkeypatch, tmp_path):
+    """A pause pushed up between beats is not undone by the older reply's `paused`."""
+    _stub_cdp(monkeypatch, healthy=True)
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: 1000.0)
+    cfg = _cdp_loop_cfg(tmp_path)
+
+    class C(_CdpLoopClient):
+        def set_paused(self, runner_id, paused, note=""):
+            return {"paused": paused}
+
+    client = C()
+    assert run_once(cfg, client) == "idle"
+    sentinel, _mirror = main_mod._pause_paths(cfg)
+    sentinel.touch()
+    assert run_once(cfg, client) == "paused"  # the edge is pushed up
+    assert run_once(cfg, client) == "paused"  # ...and the reused reply keeps it
+    assert sentinel.exists()
+    assert len(client.heartbeats) == 1
 
 
 def test_cdp_recovery_logs_once_and_rearms(monkeypatch, tmp_path, caplog):

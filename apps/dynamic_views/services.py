@@ -8,14 +8,15 @@ from django.db import transaction
 from apps.agents.models import Agent
 from apps.connections import declarations
 
-from . import catalog, declared_tasks
+from . import catalog, declared_tasks, task_actions
 from .models import DynamicView, DynamicViewRevision
 
 #: Render code larger than this is refused: a view is a screen, not an app bundle.
 MAX_CODE_BYTES = 200_000
 _DEFINES_VIEW = re.compile(r"\bfunction\s+View\s*\(|\b(?:const|let|var)\s+View\s*=")
 
-EDITABLE = ("title", "description", "code", "sources", "agent_tasks", "connections", "slug", "project")
+EDITABLE = ("title", "description", "code", "sources", "agent_tasks", "connections", "task_actions", "slug",
+            "project")
 
 
 def validate_code(code: str) -> str:
@@ -62,7 +63,7 @@ def _snapshot(view: DynamicView, user, note: str) -> DynamicViewRevision:
     return DynamicViewRevision.objects.create(
         view=view, version=view.version, title=view.title, description=view.description,
         code=view.code, sources=view.sources, agent_tasks=view.agent_tasks,
-        connections=view.connections, note=note[:300],
+        connections=view.connections, task_actions=view.task_actions, note=note[:300],
         changed_by=user if getattr(user, "is_authenticated", False) else None,
     )
 
@@ -89,7 +90,8 @@ def create(*, workspace_id: str, project, data: dict, user) -> DynamicView:
         description=data.get("description") or "", code=validate_code(data.get("code") or ""),
         sources=catalog.validate_sources(data.get("sources")),
         agent_tasks=declared_tasks.validate(workspace_id, data.get("agent_tasks"), user),
-        connections=_validate_connections(workspace_id, data.get("connections")), version=1,
+        connections=_validate_connections(workspace_id, data.get("connections")),
+        task_actions=task_actions.validate(workspace_id, project, data.get("task_actions"), user), version=1,
         created_by=who, updated_by=who,
     )
     _snapshot(view, user, data.get("note") or "created")
@@ -144,6 +146,16 @@ def update(view: DynamicView, *, data: dict, user, project=None, project_given: 
     if project_given:
         changed |= (project.pk if project else None) != view.project_id
         view.project = project
+    # After the move: a declaration is checked against where the view ends up.
+    given = data.get("task_actions")
+    if given is not None and given != view.task_actions:
+        declared = task_actions.validate(view.workspace_id, view.project, given, user)
+        changed |= declared != view.task_actions
+        view.task_actions = declared
+    elif view.task_actions and (code_changed or project_given):
+        # New code moves the tasks already declared, so whoever writes it must be able to move them
+        # too; and a view moved to the workspace has no project for them to be in.
+        task_actions.validate(view.workspace_id, view.project, view.task_actions, user)
     if not changed:
         return view
     view.version += 1
@@ -156,12 +168,13 @@ def update(view: DynamicView, *, data: dict, user, project=None, project_given: 
 @transaction.atomic
 def rollback(view: DynamicView, *, version: int, user) -> DynamicView:
     """Restore an earlier version's title, description, code, sources, agent
-    tasks and connections as a NEW version — history only grows, so a rollback can itself be undone."""
+    tasks, connections and task actions as a NEW version — history only grows, so a rollback can itself be undone."""
     rev = view.revisions.filter(version=version).first()
     if rev is None:
         raise LookupError(f"version {version} not found")
     return update(view, user=user, data={
         "title": rev.title, "description": rev.description, "code": rev.code,
         "sources": rev.sources, "agent_tasks": rev.agent_tasks or [],
-        "connections": rev.connections or [], "note": f"restored version {version}",
+        "connections": rev.connections or [], "task_actions": rev.task_actions or [],
+        "note": f"restored version {version}",
     })

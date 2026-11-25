@@ -30,7 +30,7 @@ APPS = ROOT / "apps"
 # ── The tiers (canonical copy lives in ARCHITECTURE.md; keep them in sync) ──────
 FRAMEWORK = {"agents", "agent_runs", "workspaces", "api", "common", "timeline", "tokens", "github_connect", "connections", "oauth_server", "mcp_apps_host", "host_grants", "embedding", "session_sharing", "issues", "mcp", "system", "harness", "push", "realtime", "canopy_sessions", "feedback", "events", "inbound", "contacts",
              "slack", "retention", "admission", "huddles", "threads", "plugins", "capabilities", "passkeys", "attention",
-             "agent_tasks", "approvals"}
+             "agent_tasks", "approvals", "brain", "agent_definitions"}
 PRODUCT = {"projects",
            "walkthroughs", "reviews", "shareouts", "runs", "storyboards", "beta_requests", "mail", "dynamic_views",
            "workspace_apps", "local_apps", "meetings", "listen"}

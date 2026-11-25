@@ -88,6 +88,54 @@ class LocalAppInstallationOut(Schema):
     last_run: LocalAppRunOut | None = None
 
 
+class LocalAppMenuAgentOut(Schema):
+    slug: str
+    name: str
+    workspace: str
+
+
+class LocalAppMenuLinkOut(Schema):
+    label: str
+    path: str
+
+
+class LocalAppMenuEntryOut(Schema):
+    #: The app that adds it, and the item's own key within that app.
+    app: str
+    app_name: str
+    key: str
+    label: str
+    #: A canopy-web path. With `pick` = "agent" the menu lists `agents` under the item,
+    #: and each opens `path?agent=<slug>&workspace=<slug>`.
+    path: str
+    pick: str = ""
+    #: The agents listed under it: the ones you chose, or every one you may use.
+    agents: list[LocalAppMenuAgentOut] = []
+    #: True once you've chosen which agents it lists.
+    chosen: bool = False
+    #: Other pages listed beside the agents (such as Meeting), each opening its own path.
+    links: list[LocalAppMenuLinkOut] = []
+
+
+class LocalAppMenuOut(Schema):
+    items: list[LocalAppMenuEntryOut]
+
+
+class LocalAppMenuAgentsOut(Schema):
+    #: Every agent you may use, to choose from.
+    agents: list[LocalAppMenuAgentOut]
+
+
+class LocalAppMenuAgentRef(Schema):
+    workspace: str
+    slug: str
+
+
+class LocalAppMenuChoiceIn(Schema):
+    #: The agents to list, in order. Empty goes back to every agent you may use.
+    agents: list[LocalAppMenuAgentRef]
+
+
 class LocalAppConfigureIn(Schema):
     settings: dict[str, Any]
 

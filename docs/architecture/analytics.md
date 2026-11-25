@@ -42,7 +42,7 @@ producer by grepping its constant. What the code does not make obvious:
   (`apps/canopy_sessions/api_coaching.py`, whose docstring is the rule): only from the
   per-turn login of a running, unconfined turn of the agent (`turn_asker.serving_turn`),
   with a closed kind, closed words and ids and no field that can hold text; a person
-  must hold a live review grant this turn may use (`access.review_grantors`);
+  must have opted into coaching, within what this turn may use (`access.review_grantors`);
   `finding_routed` refuses `person_id`, because a friction pattern has no one in it.
   `actor` is the agent's login, so the person is in `meta` and never counts as
   active. Facts are deduped on `(kind, ref)`. Nothing reads them yet (`TODOS.md`).
@@ -71,6 +71,43 @@ account or its address is exactly one account's verified email. Writing to an ag
 a workspace you are not a member of is recorded as a contact, which is right for
 access, but it is still that person or agent. The side panel is computed client-side
 from the graph the page holds (`networkGraph.profile`).
+
+## Relations (the 3-D view)
+
+The network page's default view is the relations graph (`apps/brain/graph.py::build`,
+`GET /api/workspaces/{slug}/graph`, any member; the threads view above is its 2-D toggle, admins only).
+It draws typed nodes (`graph.NODE_TYPES`) and typed edges (`graph.EDGE_KINDS`), each with a weight and a
+time, and invents no access: every node and edge is one the viewer already sees on another surface, by
+that surface's rule.
+
+- **Sessions are the viewer's legs 1 to 6** (`access.readable_sessions(brain=False)`). The graph is not
+  a leg-7 surface ([brain.md](brain.md) § Reading as a project's reader), so a person who reads a session
+  only through a project sees the project and not the session.
+- **A sealed session** (`brain.participants.sealed_reason`: sensitive, a contact's, words deleted) is
+  drawn as the threads view draws a thread: its node, who is in it, the agent that ran it, and nothing the
+  brain derives (no project tie, proposal or lineage). A sensitive one never shows its title. A contact is
+  never a node.
+- **Projects and tasks** ask `project_read_q` / `task_read_q`. A project tie (`SourceLink`) shows its tier,
+  layer and evidence; `rejected` only when it is the viewer's own call, as `list_project_sessions` hides it.
+- **Reporting lines** only for a person as themselves (`acting_person.refusal`), never through MCP, and as
+  `list_reporting` shows them: an owner every line of the workspaces they own, anyone else the lines they
+  are in. **Coaching**: the program (`list_coaches`) to any member; who a coach reads from the coach's
+  roster (`access.review_grantors`) and the viewer's own opt-in. **Outputs** by `outputs.visible_to`, their
+  lineage only to sessions already drawn.
+- **`include=proposed`** adds what `associate.propose_many` computes (the batched `propose`, held equal by
+  `tests/test_brain_graph.py`), only where it would change a stored tie (`associate.outranks`), over the
+  drawn unsealed sessions, marked `proposed`; person-only (`person.the_person`)
+  and writes nothing (the test captures every query).
+- **One place reads the brain's rows**: `graph.brain_reads` (participants, ties, reporting lines, outputs and their
+  lineage), given a `source` (`graph.LIVE`, the tables, is the only one). Nothing else in the module reads a brain table
+  (`test_every_brain_read_goes_through_the_one_sourced_function`).
+- **Bounded.** A window of at most `graph.MAX_DAYS`, `MAX_SESSIONS` / `MAX_PROJECTS` / `MAX_OUTPUTS`, with
+  `notes` naming what a cap left out; one query per kind of thing whatever the number of sessions
+  (`test_the_cost_does_not_grow_with_the_sessions`).
+
+The page (`pages/health/RelationsView.tsx`) filters, searches and builds the side panel client-side
+(`relationGraph.ts`); the 3-D canvas (`RelationsCanvas3D.tsx`, three.js through `3d-force-graph`) is a lazy
+chunk no other page loads, and a browser without WebGL gets the same connections as a table.
 
 ## Shipping a change to the shared transcript core
 

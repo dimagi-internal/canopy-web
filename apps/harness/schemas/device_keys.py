@@ -69,6 +69,11 @@ class DeviceKeyVouchOut(Schema):
 
     slug: str
     agent_id: str
+    #: The agent's current vault-key version (0: no vault key yet).
+    kv: int = 0
+    #: YOUR own member wrap at `kv`, when you hold a copy of the key: open it with your
+    #: keyset and wrap the key to this machine yourself (`POST …/vault/zk/wraps/mine`).
+    my_wrap: dict | None = None
 
 
 class RunnerDeviceKeyCreatedOut(Schema):

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, ChevronRight, OctagonX } from "lucide-react";
+import { AlertTriangle, Bot, ChevronRight, OctagonX } from "lucide-react";
 
 import type { Message, MessageAuthor } from "./protocol";
 import { isMine } from "./identity";
@@ -186,6 +186,14 @@ export function MessageItem({
   const apiError = apiErrorOf(message);
   if (apiError) return <ApiErrorRow message={message} signedOut={apiError.signedOut} />;
 
+  // On the person's side, but no person typed it (the server's judgement): an
+  // agent's scheduled wake-up, a skill's instructions, a command a trigger ran.
+  // Kept on the right — it IS input to the agent — but never in the person's
+  // own bubble, which read as them having said it.
+  if (message.role === "user" && message.automatic) {
+    return <AutomaticRow message={message} forceOpen={forceToolOpen} renderMarkdown={renderMarkdown} />;
+  }
+
   const otherAuthor = otherAuthorOf(message, currentUserId, currentContactId);
   // A teammate's line sits on the agent's side of the column, so it needs its
   // own treatment — in the agent's `bg-muted` it read as the agent talking.
@@ -329,6 +337,68 @@ function SystemSeedRow({
       </summary>
       <div className="mt-2 border-t border-border/40 pt-2 text-foreground">
         {renderMarkdown(text)}
+      </div>
+    </details>
+  );
+}
+
+const COMMAND_NAME = /<command-name>\s*([^<]*?)\s*<\/command-name>/;
+const COMMAND_ARGS = /<command-args>\s*([^<]*?)\s*<\/command-args>/;
+/** Short enough to show open; a longer automatic line starts collapsed. */
+const AUTOMATIC_OPEN_LINES = 6;
+
+/** What kind of automatic line this is, and the words to show for it. */
+export function describeAutomatic(message: Message): { label: string; text: string; collapsed: boolean } {
+  const text = message.plaintext;
+  const name = COMMAND_NAME.exec(text)?.[1];
+  if (name) {
+    // Claude Code's record of a slash command: show it as it would be typed.
+    const args = COMMAND_ARGS.exec(text)?.[1] ?? "";
+    const command = `${name.startsWith("/") ? "" : "/"}${name}${args ? ` ${args}` : ""}`;
+    return { label: "Command", text: command, collapsed: false };
+  }
+  const record = message.content?.record as Record<string, unknown> | undefined;
+  if (record?.meta || record?.source_tool_use_id) {
+    return { label: "Skill instructions", text, collapsed: true };
+  }
+  return { label: "Sent automatically", text, collapsed: countLines(text) > AUTOMATIC_OPEN_LINES };
+}
+
+/**
+ * A line on the person's side of the transcript that no person typed. Right-
+ * aligned like the person's lines (it is input to the agent), but outlined and
+ * muted, and labelled, so it never reads as something they said.
+ */
+function AutomaticRow({
+  message,
+  forceOpen,
+  renderMarkdown,
+}: {
+  message: Message;
+  forceOpen: boolean | undefined;
+  renderMarkdown: RenderMarkdown;
+}) {
+  const { label, text, collapsed } = describeAutomatic(message);
+  const lineCount = countLines(text);
+  const open = forceOpen ?? !collapsed;
+  return (
+    <details
+      className="group my-2 ml-auto min-w-0 max-w-[80%] rounded-2xl border border-dashed border-border bg-muted/40 px-3 py-1.5 text-sm [overflow-wrap:anywhere]"
+      data-testid="automatic-row"
+      data-turn-index={message.turn_index}
+      data-role={message.role}
+      open={open}
+    >
+      <summary className="flex cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-foreground select-none list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
+        <Bot className="h-3.5 w-3.5" aria-hidden="true" />
+        <span className="text-xs font-medium">{label}</span>
+        <span className="text-xs text-muted-foreground/70">
+          · not typed by a person{collapsed && lineCount > 1 ? ` · ${lineCount} lines` : ""}
+        </span>
+      </summary>
+      <div className="mt-1.5 text-muted-foreground">
+        {label === "Command" ? <code className="font-mono text-xs">{text}</code> : renderMarkdown(text)}
       </div>
     </details>
   );

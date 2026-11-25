@@ -1,7 +1,7 @@
 """The ONE place the runner knows which OS supervises it.
 
-Nearly everything else in `canopy_runner` is platform-neutral — the producers
-(`inbox.py`, `schedules.py`) shell out to `gog` and do date math, `cdp_control`
+Nearly everything else in `canopy_runner` is platform-neutral — the producer
+(`inbox.py`) shells out to `gog` and does date math, `cdp_control`
 drives emdash through `node`, and the transcript/tail layer is pure pathlib. The
 OS-specific things the runner does are **ask its supervisor to run the updater
 job now** (here), and **render the collision dialog** (`dialog.py`, which carries

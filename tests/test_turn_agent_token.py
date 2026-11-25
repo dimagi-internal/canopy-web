@@ -350,6 +350,48 @@ def test_a_chat_turn_finds_its_own_session(agent, operator):
     assert body["session_id"] == str(s.pk)
 
 
+def test_a_mail_turn_whose_thread_session_is_unbound_gets_the_session_its_key_names(agent, operator):
+    """A mail turn's `chat_session` is the mail-thread conversation canopy-web opened on
+    ingest — never bound to a runner. The session the laptop spawned for the turn is
+    bound under the turn's session key, and that is the one its login follows."""
+    from apps.canopy_sessions.models import Session
+
+    r, spawned, _ = _laptop_session(agent, operator, key="cx-gdhf-outreach-9ask")
+    thread = Session.objects.create(agent=agent, workspace=agent.workspace, title="mail thread")
+    turn = Turn.objects.create(chat_session=thread, origin=Turn.ORIGIN_EMAIL, prompt="x",
+                               idempotency_key=uuid.uuid4().hex, status=Turn.DONE, claimed_by=r,
+                               session_key="cx-gdhf-outreach-9ask")
+    resp = _ask(r, turn, _runner_token(r))
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["session_id"] == str(spawned.pk)
+    assert TurnAgentToken.objects.get(token=PersonalToken.lookup(resp.json()["token"])).session == spawned
+    assert turn_agent_tokens.revoke_stale() == 0
+
+
+def test_a_mail_turn_with_neither_a_bound_thread_nor_a_bound_key_gets_nothing(agent, operator):
+    from apps.canopy_sessions.models import Session
+
+    r, _, _ = _laptop_session(agent, operator, key="some-other-task")
+    thread = Session.objects.create(agent=agent, workspace=agent.workspace, title="mail thread")
+    turn = Turn.objects.create(chat_session=thread, origin=Turn.ORIGIN_EMAIL, prompt="x",
+                               idempotency_key=uuid.uuid4().hex, status=Turn.DONE, claimed_by=r,
+                               session_key="cx-unbound")
+    assert _ask(r, turn, _runner_token(r)).status_code == 404
+
+
+def test_a_confined_mail_turn_is_told_why_not_404(agent, operator):
+    """Found through its key, a confined mail turn now gets the 409 that names the reason."""
+    from apps.canopy_sessions.models import Session
+
+    r, _, _ = _laptop_session(agent, operator, key="cx-confined")
+    thread = Session.objects.create(agent=agent, workspace=agent.workspace, title="mail thread")
+    turn = Turn.objects.create(chat_session=thread, origin=Turn.ORIGIN_EMAIL, prompt="x",
+                               idempotency_key=uuid.uuid4().hex, status=Turn.DONE, claimed_by=r,
+                               session_key="cx-confined", capability="ask")
+    resp = _ask(r, turn, _runner_token(r))
+    assert resp.status_code == 409 and "confined" in resp.content.decode()
+
+
 def test_finishing_a_turn_leaves_its_session_scoped_login_alone(agent, operator):
     r, s, turn = _laptop_session(agent, operator)
     tok = _ask(r, turn, _runner_token(r)).json()["token"]

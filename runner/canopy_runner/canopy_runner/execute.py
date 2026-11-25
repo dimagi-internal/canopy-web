@@ -28,7 +28,7 @@ from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
                native_permissions, page_site, readiness, scoped_token, session_naming, startup_watch, transcript)
-from . import transfer, whois
+from . import stored_agents, transfer, whois
 from .client import ClientError
 from .tail import TailReader
 
@@ -729,6 +729,24 @@ def _repoint(asked: str, got: str, turn: dict, envelope) -> None:
     caller.clear_pending(asked)
 
 
+def _stored_project(cfg, turn: dict) -> str:
+    """A STORED agent has no repo: before emdash creates its session, its materialized
+    checkout becomes its emdash project (`stored_agents.ensure_emdash_project`), so emdash
+    drives it, confined turns included, as it drives a repo agent. "" when that holds (or
+    the turn is not a stored agent's), else why the turn cannot be created here."""
+    if not stored_agents.is_stored(turn):
+        return ""
+    slug = turn.get("agent_slug") or ""
+    if not stored_agents.emdash_present(cfg):
+        if caller.confined_profile(turn) is not None:
+            return (f"'{slug}' is a stored agent, and a caller's confined turn runs only through "
+                    "emdash, which is not on this runner")
+        return (f"'{slug}' is a stored agent and emdash is not on this runner, so it runs headless, "
+                "which needs the Claude Code CLI and the ACP adapter; one is missing here "
+                "(the runner's page shows its readiness)")
+    return stored_agents.ensure_emdash_project(cfg, slug)
+
+
 def _project_missing(cfg, target: str) -> str:
     """Is `target` (an agent slug or repo) an emdash project on this box? "" if yes,
     or if emdash's DB cannot say; else a note for the caller to fail the turn with.
@@ -1191,6 +1209,16 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         logger.info("chat turn=%s reused emdash task=%s (agent=%s) %s", turn_id, task, target,
                     whois.brief(turn))
     else:
+        # The same guard as an agent turn's create (execute_turn): a stored agent's checkout
+        # becomes its emdash project first, and an agent whose repo this emdash lacks cannot
+        # be created here; the sidecar would only say `project "<slug>" not found in the
+        # emdash sidebar`, which hides what is actually missing.
+        missing_project = _stored_project(cfg, turn) or _project_missing(cfg, target)
+        if missing_project:
+            logger.error("chat create skipped turn=%s agent=%s: %s", turn_id, target,
+                         missing_project)
+            client.fail_turn(turn_id, f"chat create failed: {missing_project}"[:300])
+            return f"failed:{turn_id}"
         if _already_created(client, turn_id):
             return f"failed:{turn_id}"
         name = _task_name(target, turn)
@@ -1367,7 +1395,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     # Before anything is written for the session: a box without the agent's repo
     # cannot create it, and that says nothing about the box's health — so no
     # readiness.mark_failed here (see _project_missing).
-    missing_project = _project_missing(cfg, agent)
+    missing_project = _stored_project(cfg, turn) or _project_missing(cfg, agent)
     if missing_project:
         logger.error("CREATE skipped turn=%s agent=%s: %s", turn_id, agent, missing_project)
         client.fail_turn(turn_id, missing_project)

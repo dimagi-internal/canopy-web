@@ -17,6 +17,12 @@ class MailConfig(AppConfig):
 
         move.register(participant)
 
+        # A learning run's mail draft is undone by deleting it when a session it came from is removed
+        # (apps/brain/lineage.py); a sent message cannot be, and is flagged.
+        from apps.brain import lineage  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        lineage.register_undo("mail.maildraft", _undo_draft)
+
         # Hosted mailboxes for agents, and domain sign-in, through the framework's seams
         # (apps/agents/mailbox.py, workspaces.login_gate.register_verified_domain_owner).
         from apps.agents import mailbox
@@ -43,3 +49,8 @@ class MailConfig(AppConfig):
 
         # Trash past its 30 days, and files picked for a message that was never sent.
         ticks.register("mail.purge_expired", storage.purge_expired, 24 * 60 * 60)
+
+
+def _undo_draft(draft) -> bool:
+    draft.delete()
+    return True

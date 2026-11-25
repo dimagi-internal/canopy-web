@@ -622,3 +622,13 @@ out({{"type": "stopped", "reason": "done"}})
         time.sleep(0.05)
     os.kill(pid, 9)
     raise AssertionError("the helper survived its app")
+
+
+def test_the_heartbeat_can_be_made_shorter_from_the_environment_never_longer():
+    env = host_mod.HEARTBEAT_ENV
+    default = host_mod.Limits().heartbeat_every
+    assert host_mod.limits_from_env({}).heartbeat_every == default
+    assert host_mod.limits_from_env({env: "2"}).heartbeat_every == 2.0
+    assert host_mod.limits_from_env({env: "0"}).heartbeat_every == 1.0
+    assert host_mod.limits_from_env({env: "600"}).heartbeat_every == default
+    assert host_mod.limits_from_env({env: "soon"}).heartbeat_every == default

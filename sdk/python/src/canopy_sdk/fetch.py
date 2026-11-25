@@ -205,6 +205,19 @@ def post_form(url: str, data: dict, *, headers: dict | None = None,
     return status, doc, resp_headers
 
 
+def post_bytes(url: str, body: bytes, *, content_type: str, headers: dict | None = None,
+               timeout: float = TIMEOUT_SECONDS,
+               max_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[int, bytes, dict]:
+    """POST ``body`` as ``content_type`` (a signed request whose body IS the JWS); returns
+    the raw response. Redirects are refused, as everywhere here."""
+    status, raw, resp_headers = _request(
+        "POST", url, body=body, headers={"Content-Type": content_type, **(headers or {})},
+        timeout=timeout, max_bytes=max_bytes)
+    if 300 <= status < 400:
+        raise FetchError(f"{url} redirected ({status}); redirects are not followed")
+    return status, raw, resp_headers
+
+
 def post_json(url: str, payload, *, headers: dict | None = None,
               timeout: float = TIMEOUT_SECONDS,
               max_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[int, bytes, dict]:

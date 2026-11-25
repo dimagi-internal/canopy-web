@@ -5,9 +5,12 @@ import { useAuth } from '@/auth/AuthProvider'
 import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
 import { DeclaredConnections } from '@/dynamicViews/DeclaredConnections'
 import { useScopedPath } from '@/lib/scopedLinks'
+import { withParams } from '@/dynamicViews/frameOut'
 import { AppFrame } from '@/workspaceApps/AppFrame'
 import { SetupList } from '@/workspaceApps/SetupList'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
+import { CanopyAIButton } from '@/widget/CanopyAIButton'
+import { useInlineLauncher } from '@/widget/assistant'
 
 /**
  * One installed app, for a member: its member pages as tabs (the ones the
@@ -18,6 +21,18 @@ import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
  * version of the app over sample records, where nothing is sent and nothing
  * touches live data — and its public pages are drawn here too, as a visitor
  * would see them, so the whole change is tried before it is published.
+ *
+ * `canopy.page.setParams` rewrites the query string in place (`history.replaceState`, keeping the
+ * router's own state), so the router, and so the frame, never see it change: no reload, no new frame,
+ * and the address bar and a copied link carry the page's state.
+ *
+ * A live member page with `layout: "full"` is drawn full-bleed: the frame alone, fixed to the whole
+ * viewport above canopy's shell (its dialogs and the Canopy AI bubble stay above it), scrolling itself,
+ * so `position: fixed` inside it is the viewport's. A draft's test copy keeps the header and banner.
+ *
+ * On a phone the floating Canopy AI bubble would sit on the app's own rows, so the
+ * page offers the panel from a small button beside its tabs instead
+ * (`useInlineLauncher` hides the bubble below `sm` while it is mounted).
  */
 export default function WorkspaceAppPage() {
   const { workspace = '', appKey = '', page: pageSlug = '' } = useParams()
@@ -29,6 +44,7 @@ export default function WorkspaceAppPage() {
   const draft = Number(search.get('draft')) || null
   const [app, setApp] = useState<InstalledApp | null>(null)
   const [error, setError] = useState<string | null>(null)
+  useInlineLauncher()
 
   useEffect(() => {
     let cancelled = false
@@ -55,7 +71,41 @@ export default function WorkspaceAppPage() {
     const qs = new URLSearchParams({ ...p, ...(draft ? { draft: String(draft) } : {}) }).toString()
     navigate(scoped(`/apps/${app.key}/${slug}${qs ? `?${qs}` : ''}`))
   }
+  // A full URL for a page of this app (a bundle page opening one in a new tab).
+  const pageHref = (slug: string, p: Record<string, string>) => {
+    const qs = new URLSearchParams({ ...p, ...(draft ? { draft: String(draft) } : {}) }).toString()
+    return `${import.meta.env.BASE_URL.replace(/\/$/, '')}${scoped(`/apps/${app.key}/${slug}${qs ? `?${qs}` : ''}`)}`
+  }
+  // The page's own state in the address bar: in place, with history.state kept so the router stays as it was.
+  const setParams = (p: Record<string, string>) =>
+    window.history.replaceState(window.history.state, '', withParams(window.location.href, p))
   const tabHref = (slug: string) => scoped(`/apps/${app.key}/${slug}${draft ? `?draft=${draft}` : ''}`)
+
+  const frameFor = (p: NonNullable<typeof page>, fill = false) => (
+    <AppFrame
+      key={`${draft}:${p.slug}?${search.toString()}`}
+      workspace={{ slug: workspace, name: workspaceName }}
+      app={{ key: app.key, name: app.name }}
+      page={p}
+      roles={p.audience === 'public' ? ['public'] : [...app.my_roles]}
+      params={params}
+      surface={p.audience === 'public' ? 'preview' : 'member'}
+      draft={draft}
+      dataModel={app.data_model as Record<string, unknown>}
+      settings={app.settings as Record<string, unknown>}
+      connections={app.connections as unknown as DeclaredConnection[] | undefined}
+      viewer={{ email: user?.email ?? '', name: (user as { display_name?: string } | null)?.display_name ?? '' }}
+      onGo={go}
+      onParams={setParams}
+      fill={fill}
+      pageHref={pageHref}
+      pages={app.pages}
+    />
+  )
+  // shared-dialog-exception: not a dialog — the app's page itself, fixed to the viewport (layout "full").
+  if (page && page.layout === 'full' && page.audience === 'member' && !draft && app.enabled) {
+    return <div className="fixed inset-0 z-40 bg-background" data-testid="app-full-bleed">{frameFor(page, true)}</div>
+  }
 
   return (
     <div className="mx-auto max-w-7xl p-6">
@@ -96,6 +146,9 @@ export default function WorkspaceAppPage() {
               Customize{app.has_draft ? ' (draft open)' : app.upgrade_available ? ' (update available)' : ''}
             </Link>
           )}
+          <span className="ml-1 sm:hidden" data-testid="app-canopy-ai">
+            <CanopyAIButton />
+          </span>
         </nav>
       </header>
       {app.may_maintain && !draft && <SetupList workspace={workspace} appKey={app.key} />}
@@ -105,23 +158,7 @@ export default function WorkspaceAppPage() {
       {page?.audience === 'member' && !draft && (
         <DeclaredConnections connections={app.connections as unknown as DeclaredConnection[] | undefined} className="mb-3" />
       )}
-      {page ? (
-        <AppFrame
-          key={`${draft}:${page.slug}?${search.toString()}`}
-          workspace={{ slug: workspace, name: workspaceName }}
-          app={{ key: app.key, name: app.name }}
-          page={page}
-          roles={page.audience === 'public' ? ['public'] : [...app.my_roles]}
-          params={params}
-          surface={page.audience === 'public' ? 'preview' : 'member'}
-          draft={draft}
-          dataModel={app.data_model as Record<string, unknown>}
-          settings={app.settings as Record<string, unknown>}
-          connections={app.connections as unknown as DeclaredConnection[] | undefined}
-          viewer={{ email: user?.email ?? '', name: (user as { display_name?: string } | null)?.display_name ?? '' }}
-          onGo={go}
-        />
-      ) : (
+      {page ? frameFor(page) : (
         <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
           This app has no page for your role here. Ask a workspace admin for one of its roles.
         </div>

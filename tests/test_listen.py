@@ -230,6 +230,20 @@ def test_pending_with_the_runners_own_key(jj, laptop):
     assert other.status_code == 404
 
 
+def test_pending_lists_a_live_meeting_whose_laptop_left_so_it_can_rejoin(jj, laptop):
+    now = timezone.now()
+    here = _session(laptop, state="live", age=dt.timedelta(minutes=10), laptop_channel="c", laptop_seen_at=now)
+    left = _session(laptop, state="live", age=dt.timedelta(minutes=10), laptop_channel="", absent_since=now)
+    silent = _session(laptop, state="live", age=dt.timedelta(minutes=10), laptop_channel="c",
+                      laptop_seen_at=now - dt.timedelta(seconds=services.STALE_S + 5))
+    ended = _session(laptop, state="ended", age=dt.timedelta(minutes=10))
+    pair = _session(laptop, state="live", age=dt.timedelta(minutes=10))
+    ListenSession.objects.filter(pk=pair.pk).update(kind="pair")
+    ids = {str(s.pk) for s in services.pending_for([laptop])}
+    assert ids == {str(left.pk), str(silent.pk)}
+    assert str(here.pk) not in ids and str(ended.pk) not in ids
+
+
 def test_a_runner_key_reaches_pending_and_nothing_else_listen(laptop):
     assert runner_auth.reaches("GET", "/api/runner/listen-sessions/pending", laptop.pk)
     assert not runner_auth.reaches("POST", "/api/listen/sessions", laptop.pk)
@@ -264,7 +278,7 @@ async def test_the_control_channel_forwards_listen_start():
     await consumer.runner_listen_start({"type": "runner.listen_start", "session_id": "s1", "kind": "pair",
                                         "hello": {"phone_eph": EPH, "phone_key": None, "label": ""}})
     assert sent == [{"type": "listen_start", "session_id": "s1", "kind": "pair",
-                     "hello": {"phone_eph": EPH, "phone_key": None, "label": ""}}]
+                     "hello": {"phone_eph": EPH, "phone_key": None, "label": ""}, "v": 0}]
 
 
 # -- the sweep ------------------------------------------------------------------
@@ -279,19 +293,20 @@ def test_sweep_ends_what_no_socket_will(laptop, published):
     now = timezone.now()
     fresh = _session(laptop)
     never = _session(laptop, age=dt.timedelta(minutes=3))
-    left = _session(laptop, state="live", absent_since=now - dt.timedelta(seconds=61))
-    back_soon = _session(laptop, state="live", absent_since=now - dt.timedelta(seconds=20))
+    gone = services.PEER_GONE.total_seconds()
+    left = _session(laptop, state="live", absent_since=now - dt.timedelta(seconds=gone + 1))
+    back_soon = _session(laptop, state="live", absent_since=now - dt.timedelta(seconds=gone - 30))
     too_long = _session(laptop, state="live", age=dt.timedelta(hours=4, minutes=1),
                         phone_channel="a", laptop_channel="b", phone_seen_at=now, laptop_seen_at=now)
     died = _session(laptop, state="live", phone_channel="a", laptop_channel="b",
-                    phone_seen_at=now - dt.timedelta(seconds=90), laptop_seen_at=now)
+                    phone_seen_at=now - dt.timedelta(seconds=gone + 30), laptop_seen_at=now)
     assert services.sweep() == 4
     reasons = dict(ListenSession.objects.values_list("pk", "end_reason"))
     assert reasons[fresh.pk] == "" and reasons[back_soon.pk] == ""
     assert reasons[never.pk] == "not_connected"
     assert reasons[left.pk] == "peer_gone"
     assert reasons[too_long.pk] == "max_duration"
-    assert reasons[died.pk] == "peer_gone"  # its socket's beat went quiet 90 s ago
+    assert reasons[died.pk] == "peer_gone"  # its socket's beat went quiet past PEER_GONE
 
 
 def test_sweep_forgets_long_ended_rows(laptop):

@@ -16,6 +16,9 @@ import { ApiError } from '@/api/problem'
 
 const ORDER: Stage[] = ['started', 'proposed', 'shipped', 'declined']
 
+/** The overview's sections, as the project page names them. */
+export type OverviewPart = 'standing' | 'ideas' | 'people'
+
 export function ProjectOverview({
   agent,
   projectRef: ref,
@@ -23,6 +26,7 @@ export function ProjectOverview({
   showRefs = false,
   details,
   bare = false,
+  wrap,
 }: {
   agent: string
   projectRef: string
@@ -34,6 +38,9 @@ export function ProjectOverview({
   details?: ReactNode
   /** Leave out the header (name, outcome, links, owner): the project page has its own. */
   bare?: boolean
+  /** Wrap each of its sections, told whether it has anything in it — the project page
+   *  uses it to hide the empty ones. */
+  wrap?: (id: OverviewPart, has: boolean, node: ReactNode) => ReactNode
 }): JSX.Element {
   const key = `${agent}/${ref}`
   const [state, setState] = useState<{
@@ -68,7 +75,9 @@ export function ProjectOverview({
   })
 
   const fresh = state?.key === key ? state : null
-  if (!fresh) return <WorkbenchSkeleton />
+  // On the project page (`wrap`) its sections appear as they load, without a placeholder.
+  if (!fresh) return wrap ? <></> : <WorkbenchSkeleton />
+  const part = wrap ?? ((_id: OverviewPart, _has: boolean, node: ReactNode) => node)
   const data = fresh.data
   if (!data) return <p className="text-[13px] text-destructive">{fresh.error}</p>
   // `live` links say what the product does today; they lead "Where it stands".
@@ -115,7 +124,7 @@ export function ProjectOverview({
       )}
 
       {/* Where it stands */}
-      <Section id="team-standing" title="Where it stands">
+      {part('standing', live.length + data.built.length + data.in_progress.length + data.waiting.length > 0, <Section id="team-standing" title="Where it stands">
         <div className="space-y-5">
           {/* These count IDEAS, not the product: a project whose app is live
               but whose ideas are all still open must not read "nothing built". */}
@@ -165,13 +174,13 @@ export function ProjectOverview({
             )}
           </div>
         </div>
-      </Section>
+      </Section>)}
 
       {/* Ideas */}
-      <Section
+      {part('ideas', data.ideas.length > 0, <Section
         id="team-ideas"
         title="Ideas"
-        description="What people want this to do, in their own words, and where each one stands."
+        description="What people want this to do, in their own words."
       >
         <AddIdea agent={agent} projectRef={ref} projectName={data.name} onAdded={reload} />
         {data.ideas.length === 0 ? (
@@ -211,12 +220,12 @@ export function ProjectOverview({
             })}
           </div>
         )}
-      </Section>
+      </Section>)}
 
       {/* People */}
-      <Section id="team-people" title="People" description="Who is behind these ideas, and what each of them is after.">
+      {part('people', data.contributors.length > 0, <Section id="team-people" title="People" description="Who is behind these ideas, and what each is after.">
         <PeopleList people={data.contributors} pageHref={pageHref} />
-      </Section>
+      </Section>)}
     </div>
   )
 }

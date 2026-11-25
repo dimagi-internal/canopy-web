@@ -98,19 +98,21 @@ def declare(user, credential: dict | None, email: str) -> OnBehalf:
     email = (email or "").strip().lower()
     if not email:
         raise Refused("X-Canopy-On-Behalf-Of names no one")
-    ob = _check(user, credential, email)
+    ob = _check(user, credential, email, session_login_live=True)
     setattr(user, ATTR, ob)
     return ob
 
 
 def attach(user, credential: dict | None) -> OnBehalf | None:
     """Work out the person `user`'s turn login works for and attach them; None (and nothing
-    attached) when it works for no one — a stored token, canopy's own turn, an agent's."""
+    attached) when it works for no one — a stored token, canopy's own turn, an agent's. A
+    session-scoped login counts while its session is held, as in `check`, so work an agent
+    starts between the person's messages still carries them."""
     kind = kinds.kind_of(credential or {})
     if kind is None or not kind.may_act_on_behalf:
         return None  # not a turn's login: no lookup at all
     try:
-        ob = _check(user, credential, None)
+        ob = _check(user, credential, None, session_login_live=True)
     except Refused:
         return None
     setattr(user, ATTR, ob)
@@ -161,7 +163,7 @@ def resolve(user, credential: dict | None, email: str) -> OnBehalf:
     email = (email or "").strip().lower()
     if not email:
         raise Refused("X-Canopy-On-Behalf-Of names no one")
-    return _check(user, credential, email)
+    return _check(user, credential, email, session_login_live=True)
 
 
 def _serving(user, credential: dict | None, *, session_login_live: bool = False):
@@ -196,16 +198,18 @@ def _serving(user, credential: dict | None, *, session_login_live: bool = False)
     return grant, current, agent
 
 
-def serving_turn(user) -> Turn | None:
+def serving_turn(user, *, session_login_live: bool = False) -> Turn | None:
     """The one turn `user`'s request is made INSIDE: `user` is an agent's own login and the
     request carries the per-turn login canopy-web issued for a turn of that agent that is
-    running now (not a stored token, a session login, a finished or confined turn). Worked
-    out from the server's own record, never from anything the agent sends. None otherwise."""
+    running now (not a stored token, a finished or confined turn). A session-scoped login
+    (a laptop) counts only for a caller that passes `session_login_live`, and then while
+    its session is held (`session_held`), serving that session's newest turn. Worked out
+    from the server's own record, never from anything the agent sends. None otherwise."""
     cred = getattr(user, CREDENTIAL_ATTR, None) if user is not None else None
     if not cred:
         return None
     try:
-        return _serving(user, cred)[1]
+        return _serving(user, cred, session_login_live=session_login_live)[1]
     except Refused:
         return None
 
@@ -238,6 +242,21 @@ def _principal(turn: Turn):
         person = get_user_model().objects.filter(pk=carried["user_id"]).first()
         if person is not None and _is_person(person):
             return person
+    return None
+
+
+def accountable_person(turn: Turn):
+    """The person `turn` answers to: the person it does the work of (`_principal`), else, for a turn canopy started
+    (a schedule firing), the person who set it up (a system turn's `initiator_user`). None when no active person
+    stands behind it (an agent's own work, an unverified asker, a contact)."""
+    try:
+        person = _principal(turn)
+    except Refused:
+        return None
+    if person is not None:
+        return person
+    if turn.initiator_kind == who.SYSTEM and turn.initiator_user_id and _is_person(turn.initiator_user):
+        return turn.initiator_user
     return None
 
 

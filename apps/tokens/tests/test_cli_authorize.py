@@ -88,7 +88,25 @@ def test_get_renders_authorize_page(authed_client):
 
 @override_settings(REQUIRE_AUTH=False)
 @pytest.mark.django_db
+def _exchange(code, state="nonce-abc"):
+    import json
+
+    from django.test import Client
+
+    return Client().post(reverse("cli_token"), json.dumps({"code": code, "state": state}),
+                         content_type="application/json")
+
+
+def _code_from(resp):
+    assert resp.status_code == 302
+    return parse_qs(urlparse(resp["Location"]).query)["code"][0]
+
+
+@override_settings(REQUIRE_AUTH=False)
+@pytest.mark.django_db
 def test_post_mints_token_and_redirects(authed_client):
+    """The redirect carries a one-time code, never the token: the loopback URL
+    lands in the browser's history. The CLI trades the code for the token."""
     client, user = authed_client
     resp = client.post(reverse("cli_authorize") + "?" + urlencode(_qs()))
     assert resp.status_code == 302
@@ -100,8 +118,11 @@ def test_post_mints_token_and_redirects(authed_client):
 
     qs = parse_qs(parsed.query)
     assert qs["state"] == ["nonce-abc"]
-    assert "token" in qs
-    raw = qs["token"][0]
+    assert "token" not in qs
+    assert not PersonalToken.objects.filter(user=user).exists()   # minted at the exchange
+    got = _exchange(qs["code"][0])
+    assert got.status_code == 200, got.content
+    raw = got.json()["token"]
 
     # The raw token must round-trip through PersonalToken.lookup.
     token = PersonalToken.lookup(raw)
@@ -134,7 +155,7 @@ def test_label_truncated_to_max_length(authed_client):
     client, user = authed_client
     long_label = "x" * 200
     resp = client.post(reverse("cli_authorize") + "?" + urlencode(_qs(label=long_label)))
-    assert resp.status_code == 302
+    assert _exchange(_code_from(resp)).status_code == 200
     token = PersonalToken.objects.filter(user=user).first()
     assert token is not None
     assert len(token.label) <= 64
@@ -145,7 +166,7 @@ def test_label_truncated_to_max_length(authed_client):
 def test_label_defaults_when_blank(authed_client):
     client, user = authed_client
     resp = client.post(reverse("cli_authorize") + "?" + urlencode(_qs(label="")))
-    assert resp.status_code == 302
+    assert _exchange(_code_from(resp)).status_code == 200
     token = PersonalToken.objects.filter(user=user).first()
     assert token.label == "canopy-cli"
 
@@ -211,3 +232,37 @@ def test_form_action_has_no_prefix_when_unprefixed():
     resp = cli_authorize(_asgi_get())
     assert resp.status_code == 200
     assert 'action="/auth/cli/authorize/?' in resp.content.decode()
+
+
+@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.django_db
+def test_a_code_is_spent_once(authed_client):
+    client, user = authed_client
+    code = _code_from(client.post(reverse("cli_authorize") + "?" + urlencode(_qs())))
+    assert _exchange(code).status_code == 200            # anonymous: the code is the proof
+    assert _exchange(code).status_code == 400
+    assert PersonalToken.objects.filter(user=user).count() == 1
+
+
+@override_settings(REQUIRE_AUTH=False)
+@pytest.mark.django_db
+def test_a_code_needs_its_own_mints_state_and_a_wrong_one_burns_it(authed_client):
+    client, user = authed_client
+    code = _code_from(client.post(reverse("cli_authorize") + "?" + urlencode(_qs())))
+    assert _exchange(code, state="another-mint").status_code == 400
+    assert _exchange(code).status_code == 400
+    assert not PersonalToken.objects.filter(user=user).exists()
+
+
+@override_settings(REQUIRE_AUTH=False)
+@pytest.mark.django_db
+def test_an_expired_or_made_up_code_mints_nothing(authed_client, monkeypatch):
+    from apps.tokens import cli_authorize_views
+
+    client, user = authed_client
+    code = _code_from(client.post(reverse("cli_authorize") + "?" + urlencode(_qs())))
+    from django.core.cache import cache
+    cache.delete(cli_authorize_views._code_key(code))      # what the TTL does
+    assert _exchange(code).status_code == 400
+    assert _exchange("made-up").status_code == 400
+    assert not PersonalToken.objects.filter(user=user).exists()

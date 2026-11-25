@@ -169,6 +169,8 @@ function decode(pendingCalls: PendingCalls, frame: AguiFrame): WsEvent[] {
             ...(m.record ? { record: m.record as Record<string, unknown> } : {}),
             // The send's nonce, which ties this echo to the sender's own line.
             ...(m.client_id ? { client_id: str(m.client_id) } : {}),
+            // No person typed it (a wake-up, a skill's body, a trigger's command).
+            ...(m.automatic === true ? { automatic: true } : {}),
           },
         },
       ];

@@ -20,6 +20,9 @@ from .agent import (
     PreferredAgent,
     SenderTrust,
 )
+from .aws import AgentAwsRoleRequest
+from .definition import AgentDefinitionRevision, AgentGitObject, AgentGitRef
+from .project_files import ProjectFilesRevision, ProjectGitObject, ProjectGitRef
 from .kb import (
     KbPassage,
     KbSource,
@@ -71,10 +74,14 @@ from .work import (
 __all__ = [
     "Agent",
     "AgentAdmin",
+    "AgentAwsRoleRequest",
     "AgentBootstrapReport",
     "AgentCredential",
     "AgentCredentialAlert",
     "AgentCredentialRead",
+    "AgentDefinitionRevision",
+    "AgentGitObject",
+    "AgentGitRef",
     "AgentGoogleMint",
     "AgentGrant",
     "AgentLicense",
@@ -98,6 +105,9 @@ __all__ = [
     "MAX_TASK_DEPTH",
     "PreferredAgent",
     "ProjectBacking",
+    "ProjectFilesRevision",
+    "ProjectGitObject",
+    "ProjectGitRef",
     "ProjectMilestone",
     "ProjectMember",
     "ProjectParticipant",

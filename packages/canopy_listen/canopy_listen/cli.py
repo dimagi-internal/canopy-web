@@ -34,6 +34,8 @@ from . import store
 from .recorder import FileSource, MicSource, RelaySource, pid_of, record
 
 START_TIMEOUT_SECONDS = 180  # the first start downloads the models
+#: A queued relay input older than this belongs to a start that never happened: ignored.
+QUEUED_FOR_SECONDS = 300
 RELAY_SOURCES = ("phone", "browser-tab", "browser-mic")
 
 
@@ -55,7 +57,10 @@ def cmd_start(args) -> int:
         #   {"file": path, "speed": n}: a file played in, for testing (`canopy-listen queue-file`).
         try:
             spec = json.loads(queued.read_text())
-            if spec.get("relay"):
+            stale = time.time() - float(spec.get("queued_at") or time.time()) > QUEUED_FOR_SECONDS
+            if spec.get("relay") and stale:
+                pass  # a phone or tab that isn't streaming any more: the microphone, as usual
+            elif spec.get("relay"):
                 relay = str(spec["relay"])
                 source = spec.get("source") if spec.get("source") in RELAY_SOURCES else "relay"
             else:
@@ -254,6 +259,19 @@ def cmd_turns(args) -> int:
     return 0
 
 
+def cmd_transcribe(args) -> int:
+    """Read a voice note (raw int16 PCM, 16 kHz) with the configured speech model and print
+    {"text": ...}. Serve runs it, so the model is loaded only while a note is read."""
+    from . import config, engines, note
+
+    chosen = config.load()
+    with open(args.pcm, "rb") as f:
+        pcm = f.read()
+    recognise = engines.Recogniser(chosen["asr"], chosen.get("language", "en"))
+    print(json.dumps({"text": note.read(pcm, recognise)}))
+    return 0
+
+
 def cmd_record(args) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.relay:
@@ -322,6 +340,9 @@ def parser() -> argparse.ArgumentParser:
     tu.add_argument("name")
     tu.add_argument("wav")
     tu.set_defaults(func=cmd_turns)
+    tr = sub.add_parser("_transcribe")
+    tr.add_argument("pcm")
+    tr.set_defaults(func=cmd_transcribe)
     r = sub.add_parser("_record")
     r.add_argument("id")
     r.add_argument("--file")

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from ninja import Schema
+from pydantic import Field
 
 
 class StoreAppOut(Schema):
@@ -84,6 +85,8 @@ class StoreAppDetailOut(Schema):
     emails: list[StoreEmailOut]
     versions: list[StoreVersionOut]
     installed: bool
+    #: The manifest's `ai.purpose`: the app's pages send what they show to canopy's model for this.
+    ai: str | None = None
 
 
 class InstallationSummaryOut(Schema):
@@ -115,6 +118,12 @@ class PageOut(Schema):
     fills: dict[str, list[dict[str, Any]]] = {}
     forked: bool = False
     origin: str = "template"
+    #: "jsx" (`code`), or "bundle": the app's own files, drawn from `bundle_url` (its `entry`).
+    kind: str = "jsx"
+    entry: str = ""
+    bundle_url: str = ""
+    #: "page" (inside canopy's header), or "full": the whole viewport, no canopy chrome.
+    layout: str = "page"
 
 
 class DraftInfoOut(Schema):
@@ -153,9 +162,30 @@ class PublicAppOut(Schema):
     settings: dict[str, Any]
 
 
+class BundleFileIn(Schema):
+    """One file of a bundle page's file set: its path in the bundle and exactly one of its bytes
+    (base64), its text, or the sha256 of bytes already sent to `upload_workspace_app_bundle_blobs`."""
+    path: str
+    content_base64: str | None = None
+    text: str | None = None
+    sha256: str | None = None
+
+
 class InstallIn(Schema):
     template: str = ""
     manifest: dict[str, Any] | None = None
+    #: The files of the manifest's bundle pages (`"kind": "bundle"`), with your own `manifest` only.
+    files: list[BundleFileIn] | None = None
+
+
+class BundleBlobsIn(Schema):
+    files: list[BundleFileIn]
+
+
+class BundleBlobOut(Schema):
+    path: str
+    sha256: str
+    size: int
 
 
 class InstallationPatch(Schema):
@@ -267,6 +297,37 @@ class VersionOut(Schema):
     created_at: datetime
     published_by: str | None = None
     published_at: datetime | None = None
+    #: What going live changed about who can see and do what, in plain words; empty for none.
+    reach_changes: list[str] = []
+    #: The right it went live under: `admin`, `maintainer:content`, `maintainer:permissions`.
+    published_under: str = ""
+
+
+class ReleaseIn(Schema):
+    #: The app's whole manifest, pages included — the shape installing your own app takes.
+    manifest: dict[str, Any]
+    note: str = ""
+    #: Its bundle pages' files, as installing takes them; none keeps the live version's files.
+    files: list[BundleFileIn] | None = None
+
+
+class MaintainerIn(Schema):
+    #: A workspace member by address — a person, or an agent's own login.
+    email: str = ""
+    #: Or an agent, by slug; its login must be a member of the workspace.
+    agent: str = ""
+    level: Literal["content", "permissions"] = "content"
+
+
+class MaintainerOut(Schema):
+    id: int
+    email: str
+    #: The agent's slug when the maintainer is an agent's own login.
+    agent: str | None = None
+    name: str
+    level: str
+    granted_by: str | None = None
+    granted_at: datetime
 
 
 class DraftIn(Schema):
@@ -303,3 +364,34 @@ class GuideOut(Schema):
     contract: str
     manifest: dict[str, Any]
     draft: int | None = None
+
+
+class BrowserAppOut(Schema):
+    """One app page the browser extension's panel may show for a tab (`browser.py`)."""
+    workspace: str
+    workspace_name: str
+    app_key: str
+    app_name: str
+    page_slug: str
+    page_title: str
+    adapter: str
+    capabilities: list[str]
+    #: Which of `capabilities` change the page (the registry's `acts`): the panel relays one only from a click.
+    acts: list[str]
+    events: list[str]
+    #: The page's match patterns: the panel checks the tab against them again before every call.
+    matches: list[str]
+
+
+class AiCompleteIn(Schema):
+    # Checked again, block by block, in ai.clean (the shapes are documented there and in
+    # docs/architecture/app-ai.md); typed loosely here so a page's request reaches that one check.
+    model: Literal["fast", "smart"] = "fast"
+    system: str = ""
+    messages: list[dict[str, Any]]
+    max_tokens: int | None = None
+    # Named in the request as `json_schema` (a field of that name would shadow Schema's own).
+    answer_schema: dict[str, Any] | None = Field(None, alias="json_schema")
+    tools: list[dict[str, Any]] = []
+    web_search: bool = False
+    feature: str = ""

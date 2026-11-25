@@ -14,9 +14,8 @@ import pytest
 from django.contrib.auth.models import User
 from django.utils import timezone
 
-from apps.canopy_sessions import session_row
 from apps.canopy_sessions import services as chat
-from apps.canopy_sessions import transcript_ingest
+from apps.canopy_sessions import session_row, transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding
 from apps.canopy_sessions.stream_map import turn_event_to_frames
 from apps.harness import services as harness
@@ -74,9 +73,41 @@ def test_an_unbound_session_has_no_runner_model():
     assert session_row.session_out(session)["runner_model"] == ""
 
 
+def test_a_box_that_reports_no_model_serves_the_claims_model(settings):
+    # A cloud box reports none; its turns start on what the claim sends.
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "opus[1m]"}
+    _user, session, runner = _ctx()
+    RunnerBinding.objects.create(session=session, runner=runner, thread_key="tk")
+    assert session_row.session_out(session)["runner_model"] == "opus[1m]"
+
+
+def test_the_agents_own_model_wins_over_the_box(settings):
+    from apps.agents.models import Agent
+
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "opus[1m]"}
+    _user, session, runner = _ctx()
+    agent = Agent.objects.create(slug="a", name="A", workspace_id=session.workspace_id,
+                                 cli_models={"claude-code": "claude-sonnet-5-5"})
+    session.agent = agent
+    session.save(update_fields=["agent"])
+    harness.heartbeat(runner, active_turn_ids=[], claude_model="opus[1m]")
+    RunnerBinding.objects.create(session=session, runner=runner, thread_key="tk")
+    assert session_row.session_out(session)["runner_model"] == "claude-sonnet-5-5"
+
+
 def test_claude_model_is_reported_not_set_by_hand(client):
     user, _session, runner = _ctx()
     client.force_login(user)
     resp = client.patch(f"/api/harness/runners/{runner.id}", data={"capabilities": {"claude_model": "x"}},
                         content_type="application/json")
     assert resp.status_code == 422
+
+
+def test_the_conversations_held_model_wins(settings):
+    # What the claim sends every turn (`claim_payload.conversation_model`).
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "opus[1m]"}
+    _user, session, runner = _ctx()
+    session.cli_model = "claude-sonnet-5-5"
+    session.save(update_fields=["cli_model"])
+    RunnerBinding.objects.create(session=session, runner=runner, thread_key="tk")
+    assert session_row.session_out(session)["runner_model"] == "claude-sonnet-5-5"

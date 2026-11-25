@@ -919,6 +919,16 @@ def test_app_features_says_when_start_session_turns_on(tmp_path):
     assert "start_session ON" in line and "#1238" in line and "idle timeout 900s" in line
 
 
+def test_app_features_reads_a_newer_cache_format_version(tmp_path):
+    # Claude 6.28899 writes version byte 3 with the same body; acedimagi's gate line
+    # read "unknown" while its start_session gate was on.
+    p = _write_fcache(tmp_path / "fcache", {desktop.GATE_START_SESSION: {"value": True, "on": True}})
+    raw = bytearray(p.read_bytes())
+    raw[desktop.FCACHE_VERSION_AT] = 3
+    p.write_bytes(bytes(raw))
+    assert desktop.app_features(p)["start_session"] is True
+
+
 def test_app_features_missing_gates_are_unknown_not_off(tmp_path):
     f = desktop.app_features(_write_fcache(tmp_path / "fcache", {}))
     assert f["start_session"] is None and f["idle_timeout"] is None
@@ -934,6 +944,31 @@ def test_app_features_unreadable_cache_is_none(tmp_path, content):
     assert "unknown" in desktop.describe_app_features(None)
 
 
+def test_runtime_show_prints_the_gate_when_canopy_web_times_out(monkeypatch, capsys):
+    """The gate is read from this Mac alone; a canopy-web timeout must not hide it."""
+    from canopy_runner import main
+    from canopy_runner.client import ClientError
+
+    class Slow:
+        def __init__(self, *a, **k):
+            pass
+
+        def list_runners(self):
+            raise ClientError("GET /runners/ -> timed out", transient=True)
+
+    monkeypatch.setattr(main.Config, "load", staticmethod(
+        lambda path: SimpleNamespace(base_url="https://x", runner_id="r-1")))
+    monkeypatch.setattr(main.RunnerCredential, "for_config", staticmethod(lambda cfg: None))
+    monkeypatch.setattr(main, "Client", Slow)
+    monkeypatch.setattr(desktop, "app_features", lambda: {
+        "fetched_at": 1, "start_session": True, "idle_timeout": 0})
+    rc = main.runtime_cmd(SimpleNamespace(config="x", action="show", engine=""))
+    out = capsys.readouterr()
+    assert rc == 1
+    assert "start_session ON" in out.out
+    assert "runtime unknown" in out.err and "timed out" in out.err
+
+
 def test_a_long_reply_is_cut_with_a_marker_linking_the_turn(cfg):
     """A cut reply must not read as a whole one (a bare `[:2000]` note would) and its reader dispatched follow-ups to get the rest."""
     cfg.base_url = "https://canopy.example.org"
@@ -947,3 +982,106 @@ def test_a_long_reply_is_cut_with_a_marker_linking_the_turn(cfg):
     assert long_note.endswith(
         "… [truncated — full reply: https://canopy.example.org/w/dimagi/agents/ace/turns#turn-0001-aaaa]")
     assert short_note == "short"
+
+
+# ── stored agents ───────────────────────────────────────────────────────────
+# A stored agent has no repo: its checkout is ~/.canopy/agents/<slug>, brought to the
+# live revision by `canopy agent materialize` before a new session is cut from it.
+
+STORED = {"source": "stored", "revision": 3, "root_sha256": "ab" * 32}
+
+
+def _stored_turn(**kw):
+    return _turn(project="", agent_slug="connect-helper", definition=STORED, **kw)
+
+
+def test_a_stored_agent_resolves_to_its_materialized_checkout(cfg, tmp_path, monkeypatch):
+    from canopy_runner import stored_agents
+
+    seen = []
+    monkeypatch.setattr(stored_agents, "ensure_checkout",
+                        lambda slug, **kw: seen.append(slug) or tmp_path / ".canopy" / "agents" / slug)
+    repo, base = desktop.project_repo(cfg, "connect-helper", _stored_turn())
+    assert repo == tmp_path / ".canopy" / "agents" / "connect-helper" and base == "HEAD"
+    assert seen == ["connect-helper"]
+    # Without the turn (or for a repo agent) nothing changes: no emdash project, no checkout.
+    with pytest.raises(RuntimeError, match="no checkout"):
+        desktop.project_repo(cfg, "connect-helper")
+
+
+def test_a_stored_agents_new_thread_on_an_emdash_box_runs_headless(cfg, monkeypatch):
+    monkeypatch.setattr(desktop, "_adapter_missing", lambda: False)
+    made = []
+    monkeypatch.setattr(desktop.TurnRun, "run", lambda self: made.append(self.cli))
+    action = desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th")
+    assert action.startswith("desktop:create:")
+    for th in list(desktop.IN_FLIGHT.values()):
+        th.join()
+    assert made == [True]
+
+
+def test_a_stored_agent_on_an_emdash_box_without_the_adapter_is_left_to_say_why(cfg, monkeypatch):
+    monkeypatch.setattr(desktop, "_adapter_missing", lambda: True)
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
+    from canopy_runner.execute import _stored_project
+    assert "ACP adapter" in _stored_project(cfg, _stored_turn())
+    assert _stored_project(cfg, _turn(agent_slug="hal")) == ""
+
+
+def test_a_stored_agents_new_thread_on_a_box_with_emdash_goes_to_emdash(cfg, tmp_path, monkeypatch):
+    """With emdash here the checkout is the agent's emdash project, so nothing runs headless."""
+    db = tmp_path / "emdash.db"
+    db.write_text("")
+    cfg.emdash_db = str(db)
+    monkeypatch.setattr(desktop, "_adapter_missing", lambda: False)
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
+
+
+def test_a_stored_agent_without_the_adapter_starts_installing_it(cfg, monkeypatch):
+    """Without the adapter a stored agent cannot run on an emdash box at all, so declining
+    one starts the install."""
+    monkeypatch.setattr(desktop, "_adapter_missing", lambda: True)
+    kicked = []
+    monkeypatch.setattr(desktop, "_kick_adapter", lambda force=False: kicked.append(force))
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
+    assert kicked == [False]
+
+
+def test_an_emdash_box_installs_the_adapter_once_on_its_first_heartbeat(monkeypatch):
+    from canopy_runner import headless
+
+    seen = []
+    monkeypatch.setattr(desktop, "_current", desktop.EMDASH)
+    monkeypatch.setattr(desktop, "_adapter_kicked", False)
+    monkeypatch.setattr(headless, "ensure_adapter", lambda: seen.append("adapter"))
+    desktop.observe({"engine": "emdash"})
+    desktop.observe({"engine": "emdash"})
+    deadline = time.time() + 5
+    while not seen and time.time() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.05)
+    assert seen == ["adapter"]
+
+
+def test_a_stored_agents_confined_turn_goes_to_emdash(cfg, monkeypatch):
+    monkeypatch.setattr(desktop.caller, "confined_profile", lambda turn: {"name": "read"})
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
+    from canopy_runner.execute import _stored_project
+    # Without emdash on the box it says so: a confined turn never runs headless.
+    assert "only through emdash" in _stored_project(cfg, _stored_turn())
+
+
+def test_a_stored_agent_that_cannot_be_fetched_fails_its_turn_with_the_reason(cfg, monkeypatch):
+    from canopy_runner import stored_agents
+
+    def broken(slug, **kw):
+        raise stored_agents.StoredAgentError("connect-helper is a stored agent, and ... update canopy")
+
+    monkeypatch.setattr(stored_agents, "ensure_checkout", broken)
+    monkeypatch.setattr(desktop, "_current", desktop.CLAUDE_CLI)
+    client = FakeClient()
+    run = desktop.TurnRun(cfg, client, "r", _stored_turn(), "th", {"reuse": False}, reuse="")
+    monkeypatch.setattr(run, "_prompt", lambda: "hi")
+    run.run()
+    fails = client.of("fail_turn")
+    assert fails and "update canopy" in fails[0][1][1]

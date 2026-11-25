@@ -2,6 +2,14 @@
 
 ## Canopy-Web Platform
 
+### Dispatch and origin issues across workspaces
+
+**What:** decide whether an origin issue record (`apps/issues`, keyed by repo and number across every workspace) and a dispatch to another agent (`apps/harness/dispatch.py`, `target_agent`) may cross a tenant, and enforce the answer.
+
+**Why not yet:** both are known to reach past one workspace and the trust model is a human decision. Until it is made, the issues routes are excluded from the two-tenant sweep (`tests/test_two_tenant_isolation.py::CROSS_WORKSPACE_BY_DESIGN`); remove them from it when the decision lands.
+
+**Effort:** S once decided.
+
 ### Coaching facts on a dashboard
 
 **What:** a coaching panel that reads `coaching.note_sent`, `coaching.reply` and `coaching.finding_routed`.

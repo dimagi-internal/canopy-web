@@ -13,7 +13,7 @@ from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.harness import clis, routing, routing_audit, turn_asker
 from apps.harness import runners as harness_runners
-from apps.harness.actors import actor_of, normalize_actor
+from apps.harness.actors import ACTORLESS_ORIGINS, actor_of, normalize_actor
 from apps.harness.runner_queries import runner_read_q
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.routing import (
@@ -227,7 +227,7 @@ def list_agent_pinnable_runners(request: HttpRequest, slug: str) -> list[AgentPi
     runners = [
         r for r in runners
         if services.runner_may_hold_agent(r, agent, standings=standings)
-        and not cannot_serve(r, agent.slug)
+        and not cannot_serve(r, agent)
         and offered & set(clis.reported(r))
     ]
     order = (agent.runner_assignments.filter(source="", enabled=True).values_list("runner_id", flat=True)
@@ -259,7 +259,7 @@ def get_agent_route_preview(
     if actor and not who:
         raise HttpError(422, f"not an email address: {actor!r}")
     defaults, priorities = routing.load_assignment_rows([agent.pk])
-    rows = routing.labelled_assignment_rows(agent.pk, source, who, defaults, priorities, serves=agent.slug)
+    rows = routing.labelled_assignment_rows(agent.pk, source, who, defaults, priorities, serves=agent)
     ladder = [priorities.get((agent.pk, source, who)) if who else None, priorities.get((agent.pk, source, ""))]
     strict = next((rule[0].strict for rule in ladder if rule), False)
     follows = (None if agent.pk in agents_with_own_order([agent.pk])
@@ -526,6 +526,8 @@ def _rule_key_or_422(source: str, actor: str) -> tuple[str, str]:
     actor = _actor_or_422(actor)
     if source == Turn.ORIGIN_CANOPY_SCHEDULER:
         raise HttpError(422, "no person is behind canopy_scheduler turns, so a person's rule can't apply there")
+    if source == Turn.ORIGIN_SITE_MESSAGE:
+        raise HttpError(422, "a site_message turn is from a host site's contact, so a person's rule can't apply there")
     return source, actor
 
 
@@ -609,11 +611,12 @@ def _actor_or_422(actor: str) -> str:
 
 
 def _actor_sources() -> list[str]:
-    """Every routable source whose turns carry a person. The scheduler is the
-    one that doesn't (`apps/harness/actors.py`), so an actor rule on it is dead."""
+    """Every routable source whose turns carry a person an actor rule can name. The
+    scheduler's and a host site's relayed messages don't (`actors.ACTORLESS_ORIGINS`),
+    so an actor rule on either is dead."""
     from typing import get_args
 
-    return [s for s in get_args(RoutableSource) if s != Turn.ORIGIN_CANOPY_SCHEDULER]
+    return [s for s in get_args(RoutableSource) if s not in ACTORLESS_ORIGINS]
 
 
 @router.get("/{slug}/actor-routes", response=list[AgentActorRouteOut],

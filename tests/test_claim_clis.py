@@ -86,7 +86,7 @@ def test_legacy_box_claims_as_before():
     claimed = claim.claim_next_turn(runner)
     assert claimed == turn
     assert claimed.cli == "claude-code"
-    assert claim_payload(claimed)["cli_model"] == ""
+    assert claim_payload(claimed)["cli_model"] == "opus[1m]"
 
 
 def test_confined_turn_runs_only_where_its_cli_confines():
@@ -247,3 +247,58 @@ def test_a_fleet_member_signed_in_to_codex_is_still_wakeable():
     assert runner.wakeable is True
     runner.capabilities = {**runner.capabilities, "clis": {"codex": {"signed_in": False}}}
     assert runner.wakeable is False
+
+
+def test_start_model_prefers_the_agent_then_the_server_default(settings):
+    from apps.harness.claim_payload import start_model
+
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "opus"}
+    named = Agent(slug="a", name="A", cli_models={"claude-code": "claude-sonnet-5-5"})
+    unnamed = Agent(slug="b", name="B", cli_models={})
+    assert start_model(named, "claude-code") == "claude-sonnet-5-5"
+    assert start_model(unnamed, "claude-code") == "opus"
+    # A project turn has no agent: the server default, never the box's account default.
+    assert start_model(None, "claude-code") == "opus"
+    assert start_model(None, None) == "opus"
+    # A CLI with no server default starts on its own.
+    assert start_model(None, "codex") == ""
+    settings.DEFAULT_CLI_MODELS = {}
+    assert start_model(None, "claude-code") == ""
+
+
+def test_a_conversation_keeps_the_model_its_first_claim_picked(settings):
+    # Changing the agent's model or the server default reaches new conversations,
+    # never one mid-history: the next turn of this one still starts on its model.
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "opus[1m]"}
+    agent, session, runner = _ctx(agent_clis=("claude-code",), report={"claude-code": CONFINING})
+    _send(session, "k1")
+    first = claim.claim_next_turn(runner)
+    assert claim_payload(first)["cli_model"] == "opus[1m]"
+    session.refresh_from_db()
+    assert session.cli_model == "opus[1m]"
+
+    Turn.objects.filter(pk=first.pk).update(status=Turn.DONE, finished_at=timezone.now())
+    agent.cli_models = {"claude-code": "claude-sonnet-5-5"}
+    agent.save(update_fields=["cli_models"])
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "haiku"}
+    _send(session, "k2")
+    second = claim.claim_next_turn(runner)
+    assert second is not None and second.pk != first.pk
+    assert claim_payload(second)["cli_model"] == "opus[1m]"
+
+    # A new conversation takes the agent's new model.
+    other = Session.objects.create(workspace=session.workspace, created_by=session.created_by,
+                                   agent=agent, title="t2")
+    _send(other, "k3")
+    third = claim.claim_next_turn(runner)
+    assert claim_payload(third)["cli_model"] == "claude-sonnet-5-5"
+
+
+def test_a_turn_with_no_conversation_holds_nothing(settings):
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "opus[1m]"}
+    agent, session, runner = _ctx(agent_clis=("claude-code",), report=None)
+    _agent_turn(agent)
+    claimed = claim.claim_next_turn(runner)
+    assert claim_payload(claimed)["cli_model"] == "opus[1m]"
+    session.refresh_from_db()
+    assert session.cli_model == ""

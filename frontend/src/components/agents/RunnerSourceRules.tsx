@@ -32,6 +32,7 @@ export const ROUTABLE_SOURCES: readonly RoutableSource[] = [
   'canopy_scheduler',
   'canopy_web_chat',
   'slack',
+  'site_message',
   'api',
 ]
 
@@ -41,12 +42,14 @@ export const SOURCE_LABEL: Record<string, string> = {
   canopy_scheduler: 'scheduler',
   canopy_web_chat: 'canopy chat',
   slack: 'slack',
+  site_message: 'host site message',
   api: 'other (API)',
 }
 
 // Sources whose turns have no human sender: a schedule fires on a clock, so a
 // rule for one can only ever be an anyone-rule (apps/harness/actors.py).
-export const ACTORLESS_SOURCES: ReadonlySet<string> = new Set(['canopy_scheduler'])
+// A host site's relayed message is from the site's contact, never an address a rule names.
+export const ACTORLESS_SOURCES: ReadonlySet<string> = new Set(['canopy_scheduler', 'site_message'])
 
 export type RuleRow = {
   source: string

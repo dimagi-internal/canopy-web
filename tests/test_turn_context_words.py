@@ -77,8 +77,9 @@ EXISTING_FIELDS = frozenset({
     "CapabilityOrphansOut.capability", "CapabilitySlotsOut.capability", "CapabilitySpendRow.capability",
     "AgentHealthOut.capabilities", "PairingRunnerIn.capabilities", "RunnerPairByRoleIn.capabilities",
     "RunnerOut.capabilities", "RunnerIn.capabilities", "RunnerCapabilitiesIn.capabilities",
-    # the A2A protocol's own field, and a storyboard share link's grant
-    "A2AAgentCardOut.capabilities", "StoryboardListItemOut.capability", "StoryboardOut.capability",
+    # the A2A protocol's own field, the browser extension's wire contract (what a site adapter can do,
+    # docs/architecture/browser-extension.md), and a storyboard share link's grant
+    "A2AAgentCardOut.capabilities", "BrowserAppOut.capabilities", "StoryboardListItemOut.capability", "StoryboardOut.capability",
     "StoryboardIn.capability", "StoryboardPatchIn.capability", "NarrativeReadOut.capability",
     # stored: `AdmissionRule.capability` (section 9)
     "AdmissionRuleOut.capability", "AdmissionRuleIn.capability", "AdmissionRulePatch.capability",

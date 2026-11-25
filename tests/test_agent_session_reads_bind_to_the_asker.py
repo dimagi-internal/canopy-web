@@ -23,7 +23,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import access
-from apps.canopy_sessions.models import Session, SessionReviewGrant
+from apps.canopy_sessions.models import CoachingOptIn, Session
 from apps.contacts.models import Contact
 from apps.harness import turn_agent_tokens
 from apps.harness.models import Runner, Turn, TurnAgentToken
@@ -33,6 +33,7 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
+from tests.fixtures.session_world import grant_coaching
 
 pytestmark = pytest.mark.django_db
 
@@ -52,7 +53,7 @@ def w():
     box = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=owner, workspace=ws,
                                 last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     for name in ("lili", "bo"):
-        SessionReviewGrant.objects.create(user=people[name], agent=trellis)
+        grant_coaching(people[name], trellis)
     sessions = {name: Session.objects.create(workspace=ws, created_by=people[name], title=f"{name}'s chat")
                 for name in ("lili", "bo", "col")}
     sealed = Session.objects.create(workspace=ws, created_by=people["lili"], title="",
@@ -209,13 +210,20 @@ def test_the_grantor_and_everyone_else_are_unchanged(w):
     assert lili.get(f"/api/canopy-sessions/{w['chat']['lili'].pk}").status_code == 200
     assert lili.get(f"/api/canopy-sessions/{w['chat']['bo'].pk}").status_code == 404
     assert access.can_read(w["bo"], w["chat"]["bo"])
+    # The agent's owner administers the coaching agent but holds no coaching role of their own: no read.
     assert not access.can_read(w["owner"], w["chat"]["bo"])
+    # Designated a coach for the workspace, they read the people who opted in, and only them.
+    from apps.canopy_sessions.models import CoachingRole
+
+    CoachingRole.objects.create(workspace=w["ws"], user=w["owner"])
+    assert access.can_read(w["owner"], w["chat"]["bo"]) and access.can_read(w["owner"], w["chat"]["lili"])
+    assert not access.can_read(w["owner"], w["chat"]["col"])
 
 
 def test_a_revoked_grant_ends_it_inside_the_turn(w):
     bearer = _asked_by(w, "lili")
     assert _reads(bearer, w["chat"]["lili"])
-    SessionReviewGrant.objects.filter(user=w["lili"]).update(revoked_at=timezone.now())
+    CoachingOptIn.objects.filter(user=w["lili"]).update(revoked_at=timezone.now())
     assert not _reads(bearer, w["chat"]["lili"])
 
 

@@ -50,7 +50,16 @@ export function readCookieFrom(cookieString: string, name: string): string {
  */
 export const CSRF_COOKIE_NAME: string = __CSRF_COOKIE_NAME__
 
-/** Read the CSRF token from its (deployment-specific) cookie. */
+/** The token `/api/csrf/` last said (`api/csrf.ts`), for a page that can't read its cookies. */
+let toldToken = ''
+
+export function rememberCsrfToken(token: string): void {
+  toldToken = token
+}
+
+/** Read the CSRF token from its (deployment-specific) cookie; else the one `/api/csrf/` said.
+ *  Inside the browser extension's side panel Chrome sends canopy's cookies but hides them from
+ *  `document.cookie`, so there the cookie reads empty and only the told token works. */
 export function getCsrfToken(): string {
-  return readCookieFrom(document.cookie, CSRF_COOKIE_NAME)
+  return readCookieFrom(document.cookie, CSRF_COOKIE_NAME) || toldToken
 }

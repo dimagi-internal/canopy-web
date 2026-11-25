@@ -25,7 +25,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 s3, world = kb_fixtures.s3, kb_fixtures.world
 
-GATEWAY_TOOLS = {"projects", "open_project", "project_skill"}
+GATEWAY_TOOLS = {"projects", "open_project", "project_skill", "project_file"}
 KB_TOOLS = {s["name"] for s in kb_tool_specs()}
 ALL_TOOLS = GATEWAY_TOOLS | KB_TOOLS
 

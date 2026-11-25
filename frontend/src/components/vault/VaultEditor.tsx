@@ -66,7 +66,7 @@ export function VaultEditor({
   onSave: (name: string, value: string) => Promise<void>
   /** Return the stored value. Omit to offer no Reveal. */
   onReveal?: (name: string) => Promise<string>
-  /** Omit to offer no Delete. */
+  /** Delete the stored value, or on an entry with none, remove the name. Omit to offer no Delete. */
   onDelete?: (name: string) => Promise<void>
   /** The "Last used" cell. Defaults to when it was last read. */
   usage?: (entry: VaultEntry) => ReactNode
@@ -188,9 +188,12 @@ export function VaultEditor({
     void run('Could not reveal', async () => setRevealed({ name, value: await onReveal(name) }))
   }
 
-  const remove = (name: string) => {
+  const remove = (name: string, hasValue: boolean) => {
     if (!onDelete) return
-    if (!window.confirm(`Delete the stored value for "${name}"? This cannot be undone.`)) return
+    const ask = hasValue
+      ? `Delete the stored value for "${name}"? This cannot be undone.`
+      : `Remove "${name}" from this vault?`
+    if (!window.confirm(ask)) return
     void run('Could not delete', async () => {
       await onDelete(name)
       if (revealed?.name === name) setRevealed(null)
@@ -313,7 +316,7 @@ export function VaultEditor({
                   detailsOpen={detailsFor === e.name}
                   onChange={() => { close(); setEditing(e.name) }}
                   onReveal={onReveal && e.set && !e.sealed ? () => reveal(e.name) : undefined}
-                  onDelete={onDelete && e.set ? () => remove(e.name) : undefined}
+                  onDelete={onDelete && !e.sealed ? () => remove(e.name, e.set) : undefined}
                   onDetails={detailsNode(e) ? () => setDetailsFor(detailsFor === e.name ? null : e.name) : undefined}
                 />
                 {detailsFor === e.name && (

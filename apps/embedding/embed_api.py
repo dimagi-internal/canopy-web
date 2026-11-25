@@ -36,6 +36,8 @@ from .schemas import (
     EmbedAgentOut,
     EmbedDefaultAgentIn,
     EmbedDefaultAgentOut,
+    EmbedPrepareIn,
+    EmbedPrepareOut,
     EmbedSelfOut,
     EmbedSelfTokenOut,
     EmbedSessionMemoryOut,
@@ -210,7 +212,12 @@ def embed_self(request: HttpRequest) -> EmbedSelfOut:
     `/api/embed/agents`, which answers for the caller and is the only place
     that intersects the app's allowlist with the viewer's memberships.
     """
-    app = _self_app()
+    # Off for a session a token made (`is_machine`): the Canopy Runner app's panel
+    # signs in that way, from the runner's token. `/api/embed/token` refuses such a
+    # session by design, so offering the button there only led to a 403 on click.
+    from apps.common.views_debug import is_machine  # noqa: PLC0415 — loads the session store
+
+    app = None if is_machine(request) else _self_app()
     return EmbedSelfOut(
         enabled=app is not None,
         app=app.name if app else "",
@@ -319,6 +326,29 @@ def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "", 
     audit(event=EmbedAuditLog.MINT, request=request, app=self_app, subject=request.user,
           detail=f"ttl={TOKEN_TTL_SECONDS}s host_grant={granted} page={page[:40]!r} app={page_app[:60]!r}")
     return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat(), host_grant=granted)
+
+
+@embed_router.post("/prepare", response=EmbedPrepareOut,
+                   summary="The panel opened: let the agent's runner get ready for a question")
+@gate("member", kind="action", viewer_write="it starts nothing and reads nothing: it only lets "
+      "the runner that would take the visitor's question warm up for an agent this site offers them")
+def embed_prepare(request: HttpRequest, payload: EmbedPrepareIn) -> EmbedPrepareOut:
+    """Say the panel is open with this agent, before anything is asked.
+
+    An agent set up for fast page answers on this site gets its runner ready now, so the
+    first question is answered sooner. Nothing is started, created or read: the question
+    still starts the conversation. An agent this site does not offer you is a 404.
+    """
+    from apps.agents import services as agent_services  # noqa: PLC0415 — one caller
+    from apps.embedding import delegation  # noqa: PLC0415 — one caller
+    from apps.harness import prepare  # noqa: PLC0415 — harness loads with a call
+
+    app = getattr(request, "delegated_app", None)
+    offered = delegation.offered_for(request)
+    agent = agent_services.get_agent(payload.agent_slug)
+    if app is None or offered is None or agent is None or agent.pk not in offered:
+        raise HttpError(404, f"{payload.agent_slug!r} is not offered here")
+    return EmbedPrepareOut(rung=prepare.ring_agent(agent, app.name) > 0)
 
 
 @embed_router.post("/ws-ticket", response={200: WsTicketOut, **refusals(400)},

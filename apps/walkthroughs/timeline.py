@@ -15,7 +15,7 @@ from apps.workspaces import links as wslinks
 
 
 def recent_events(
-    *, limit: int, before: dt.datetime | None, user, workspace_slugs=None
+    *, limit: int, before: dt.datetime | None, user, workspace_slugs: set[str]
 ) -> list:
     from apps.timeline.types import ActivityEvent, actor_name, cursor_page, truncate
 
@@ -27,8 +27,7 @@ def recent_events(
         .select_related("owner")
         .order_by("-created_at")
     )
-    if workspace_slugs is not None:
-        qs = qs.filter(workspace_id__in=workspace_slugs)
+    qs = qs.filter(workspace_id__in=workspace_slugs)
     return [
         ActivityEvent(
             subsystem="walkthroughs",

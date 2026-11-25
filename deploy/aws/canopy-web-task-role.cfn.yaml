@@ -118,9 +118,11 @@ Resources:
                 Resource: !Sub arn:${AWS::Partition}:s3:::${AttachmentsBucketName}/*
         # AWS keys vended to agents (apps/agents/api_aws.py, settings.CANOPY_AWS_ROLES):
         # one hour of connect-labs' read-only, non-sensitive observability role
-        # (labs-read) or its agent read-write role (labs-readwrite), stamped with
+        # (labs-read), its agent read-write role (labs-readwrite) or its app-secrets
+        # role (labs-config), stamped with
         # the agent. Each role's trust names this role too (connect-labs
-        # infra/labs-observe-readonly.yml and infra/labs-agent-readwrite.yml,
+        # infra/labs-observe-readonly.yml, infra/labs-agent-readwrite.yml and
+        # infra/labs-agent-config.yml,
         # BrokerRoleName).
         - PolicyName: assume-labs-observe
           PolicyDocument:
@@ -134,6 +136,10 @@ Resources:
                 Effect: Allow
                 Action: [sts:AssumeRole, sts:SetSourceIdentity, sts:TagSession]
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/labs-jj-agent-readwrite
+              - Sid: VendLabsConfig
+                Effect: Allow
+                Action: [sts:AssumeRole, sts:SetSourceIdentity, sts:TagSession]
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/labs-jj-agent-config
         # Memory search by meaning (apps/contacts/embeddings.py): embedding
         # models only, never a generating model. Inert until
         # HCP_EMBEDDINGS_MODEL is set in canopy-web.cfn.yaml.

@@ -56,6 +56,9 @@ NOT_INSTALLED, NOT_LINKED, NO_SESSION, AGENT_NOT_ON_SLACK, NOT_IN_CHANNEL, \
 #: The conversation holds a host's sensitive data and never goes to Slack
 #: (`apps.harness.sensitivity`).
 SENSITIVE = "sensitive"
+#: Binding gives a Slack thread the session: its replies are sent into it, so only someone who may
+#: write in it (`access.can_write`) binds one, never a viewer.
+CANNOT_WRITE = "cannot_write"
 
 #: Slack's answers that mean "the bot cannot post there", as opposed to a fault.
 _CANNOT_POST_THERE = frozenset({"not_in_channel", "channel_not_found", "is_archived"})
@@ -311,6 +314,13 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
             return ShareResult(NO_SESSION, "You can't share a session you can't open.")
     if session is not None and sensitivity.is_sensitive(session):
         return ShareResult(SENSITIVE, sensitivity.REFUSAL)
+    if session is not None and not own_turn and mode == BIND:
+        from apps.canopy_sessions import access  # noqa: PLC0415 — as `resolve_turn_session`
+
+        if not access.can_write(user, session):
+            return ShareResult(CANNOT_WRITE, (
+                "Binding gives a Slack thread this session, so its replies reach it: only someone who may "
+                "write in the session can. Share it as a broadcast instead."))
     channel = (channel or "").strip()
     if mode not in MODES:
         return ShareResult(BAD_REQUEST, f"Mode must be one of {', '.join(MODES)}.")

@@ -57,6 +57,10 @@ def site(key):
         allow(agent, capability="connect")
         editors_run(agent)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
+    # A site canopy trusts for email, so its members' verified addresses resolve them
+    # (`contacts.services.resolve_arrival`).
+    AppCredential.objects.filter(pk=app.pk).update(asserts_verified_email=True)
+    app.asserts_verified_email = True
     app.public_keys = [public_pem(key)]
     app.save()
     for agent in (ace, labsdata):

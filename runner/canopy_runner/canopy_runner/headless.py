@@ -74,15 +74,20 @@ def adapter_argv() -> list[str] | None:
 
 
 def ensure_adapter() -> bool:
-    """Install the adapter under ADAPTER_PREFIX if it is missing. True when present."""
+    """Install the pinned adapter under ADAPTER_PREFIX, replacing another version
+    there. True when an adapter is present."""
     from canopy_acp import install_adapter
 
-    if adapter_argv() is not None:
-        return True  # e.g. the bundle's own copy: nothing to install
+    from . import bundle
+
+    if bundle.adapter_prefixes() is not None and adapter_argv() is not None:
+        return True  # the bundle's own copy, pinned at build: nothing to install
 
     outcome = install_adapter(ADAPTER_PREFIX)
-    if outcome not in ("present", "installed"):
+    if outcome in ("no-node",) or outcome.startswith("failed"):
         logger.error("claude-cli runtime: the ACP adapter could not be installed (%s)", outcome)
+    elif outcome != "present":
+        logger.info("claude-cli runtime: ACP adapter %s", outcome)
     return adapter_argv() is not None
 
 

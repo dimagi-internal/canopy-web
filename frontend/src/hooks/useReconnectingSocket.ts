@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 
-/** The reconnect ladder every live socket in the app walks: 1s, 2s, 5s, then 10s
- *  for as long as it stays down. A successful open resets it. */
-export const RECONNECT_BACKOFFS_MS = [1000, 2000, 5000, 10000] as const
+/** The reconnect ladder every live socket in the app walks: 1s, 2s, 5s, 10s, 30s,
+ *  then once a minute for as long as it stays down. A successful open resets it.
+ *  A server that refuses the handshake looks the same to the browser as one that
+ *  is briefly gone, so the tail stays slow: a tab left open on a socket the
+ *  server keeps refusing costs one request a minute, not six. */
+export const RECONNECT_BACKOFFS_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000] as const
+
+/** A step of the ladder spread over ±50%, so the sockets of a server task that
+ *  stopped (a scale-in, a deploy) do not all reconnect on the same tick. */
+export function jittered(ms: number, random: () => number = Math.random): number {
+  return Math.round(ms * (0.5 + random()))
+}
 
 export interface ReconnectingSocketOptions {
   /** Called on every (re)connect to build the URL actually dialled — for a
@@ -58,7 +67,7 @@ export function useReconnectingSocket(
       ws.onclose = () => {
         setConnected(false)
         if (closed) return
-        const delay = RECONNECT_BACKOFFS_MS[Math.min(attempt, RECONNECT_BACKOFFS_MS.length - 1)]
+        const delay = jittered(RECONNECT_BACKOFFS_MS[Math.min(attempt, RECONNECT_BACKOFFS_MS.length - 1)])
         attempt += 1
         timer = setTimeout(connect, delay)
       }

@@ -280,12 +280,18 @@ def menu_from_permission_request(payload) -> dict | None:
     drawn label before pressing (`hooks.answer_menu_with`).
 
     Needs no CDP, so unlike reading the screen it steals no focus.
+
+    **None for `AskUserQuestion`.** Claude Code fires this hook for the ask too,
+    after `PreToolUse`. That dialog is the question itself, already held as a
+    full menu by `menu_from_hook`; a Yes-only card in its place cannot answer it.
     """
     if not isinstance(payload, dict) or payload.get("hook_event_name") != PERMISSION_EVENT:
         return None
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input")
     if not isinstance(tool, str) or not tool or not isinstance(tool_input, dict):
+        return None
+    if tool == ASK_TOOL:
         return None
     command = tool_input.get("command")
     body = command if isinstance(command, str) and command else json.dumps(

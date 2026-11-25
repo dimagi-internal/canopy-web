@@ -306,3 +306,46 @@ def test_on_windows_the_session_is_found_by_command_line_not_pgrep(monkeypatch):
     assert seen[0][0] == "powershell" and "pgrep" not in seen[0]
     # The query's own command line names the session; it must not find itself.
     assert "$_.ProcessId -ne $PID" in seen[0][-1] and "*sid-w*" in seen[0][-1]
+
+
+def test_on_text_hears_each_reply_whole_as_it_is_written():
+    heard = []
+    events, log = [], []
+
+    def make_agent(cwd, env, on_update):
+        return Agent(cwd, env, on_update, log=log, updates=[
+            chunk("Check"), chunk("ing."),
+            tool("c1", "pending", title="Terminal", rawInput={}),
+            tool("c1", "completed", rawInput={"command": "ls"}, rawOutput="a.txt"),
+            chunk("Do"), chunk("ne.")])
+
+    res = drive_turn("go", make_agent=make_agent, reducer=UpdateReducer(), emit=events.extend,
+                     cwd="/tmp", release_wait=0, on_text=lambda i, t: heard.append((i, t)))
+    assert res.ok
+    # Whole so far, never a fragment; the reply after the tool call is the next one.
+    assert heard == [(0, "Check"), (0, "Checking."), (1, "Do"), (1, "Done.")]
+    # The ledger still gets each reply once, whole.
+    assert [e["payload"]["text"] for e in events if e["kind"] == "assistant"] == ["Checking.", "Done."]
+
+
+def test_on_text_never_hears_a_replayed_history():
+    heard = []
+
+    def make_agent(cwd, env, on_update):
+        return Agent(cwd, env, on_update, replay=[chunk("earlier reply")], updates=[chunk("new")])
+
+    drive_turn("go", make_agent=make_agent, reducer=UpdateReducer(), emit=lambda _e: None,
+               cwd="/tmp", release_wait=0, resume="old-sid", on_text=lambda i, t: heard.append(t))
+    assert heard == ["new"]
+
+
+def test_a_failing_on_text_never_costs_the_turn():
+    def boom(_i, _t):
+        raise RuntimeError("network down")
+
+    def make_agent(cwd, env, on_update):
+        return Agent(cwd, env, on_update, updates=[chunk("Hi")])
+
+    res = drive_turn("go", make_agent=make_agent, reducer=UpdateReducer(), emit=lambda _e: None,
+                     cwd="/tmp", release_wait=0, on_text=boom)
+    assert res.ok and res.text == "Hi"

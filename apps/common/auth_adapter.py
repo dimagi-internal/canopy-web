@@ -15,7 +15,6 @@ from .log_redact import path_template
 
 logger = logging.getLogger(__name__)
 
-
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     def on_authentication_error(
         self, request, provider, error=None, exception=None, extra_context=None
@@ -115,18 +114,32 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
                 and email_admitted_outside_domain(email)
             )
             if not admitted_outside_domain:
-                allowed = ", ".join(allowed_email_domains())
-                response = render(
-                    request,
-                    "auth/domain_rejected.html",
-                    {
-                        "email": email,
-                        "allowed_domain": allowed,
-                        "next": sociallogin.state.get("next") or "",
-                    },
-                    status=403,
-                )
-                raise ImmediateHttpResponse(response)
+                self._refuse(request, sociallogin, email)
+
+        elif email not in self._verified_emails(sociallogin):
+            # The allowlist vouches for an address only when the PROVIDER says
+            # it belongs to this account; a Google account can carry an
+            # unverified address at any domain.
+            self._refuse(request, sociallogin, email)
+        elif not self._managed_by_allowed_domain(sociallogin):
+            # A verified address at an allowlisted domain is not yet proof that
+            # the domain issued the account: anyone who can receive mail there
+            # can register a CONSUMER Google account for it and verify it. Only
+            # a Google Workspace account carries `hd` (its hosted domain), and
+            # only the domain's own admin can make one.
+            self._refuse(request, sociallogin, email, reason=self.NOT_WORKSPACE)
+
+        agent_login = self._agent_login_landed_on(sociallogin, email)
+        if agent_login is not None:
+            # An agent's own Google account signs in as the agent's login, like any
+            # account: the session has exactly the permissions the agent's tokens
+            # already have, and every step-up-gated act stays refused to it
+            # (`apps/passkeys/stepup.py::require_a_person`).
+            if not sociallogin.is_existing:
+                # The one user `_agent_login_landed_on` matched on this provider-verified
+                # address; the JIT merge never connects onto an agent's login itself.
+                sociallogin.connect(request, get_user_model().objects.get(pk=agent_login))
+            return
 
         if admitted_outside_domain:
             # Never run the JIT-identity merge on this branch: it connects
@@ -141,6 +154,76 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             return
 
         self._connect_jit_identity(request, sociallogin, email)
+
+    def save_user(self, request, sociallogin, form=None):
+        """The account a social sign-up creates carries a PROVIDER-verified email.
+
+        When the Google address already belongs to a `User`, allauth does not
+        auto-sign-up: it shows its own signup form, whose email field the
+        visitor fills in. Saved as typed, that let anyone who got past
+        `pre_social_login` once (an invited guest) create an account at any
+        unused allowlisted address — and the real owner's first Google sign-in
+        later links onto it (`_connect_jit_identity`). Whatever path reaches
+        here, the address saved must be one Google vouched for on this login.
+        """
+        if form is not None and hasattr(form, "cleaned_data"):
+            chosen = form.cleaned_data.get("email") or ""
+        else:
+            chosen = getattr(sociallogin.user, "email", "") or ""
+        chosen = chosen.strip().lower()
+        if not chosen or chosen not in self._verified_emails(sociallogin):
+            logger.warning("social signup refused: email is not provider-verified")
+            self._refuse(request, sociallogin, chosen)
+        return super().save_user(request, sociallogin, form=form)
+
+    #: Why a sign-in was refused, for the page (`templates/auth/domain_rejected.html`).
+    NOT_ALLOWED = "not_allowed"
+    NOT_WORKSPACE = "not_workspace"
+
+    @staticmethod
+    def _refuse(request, sociallogin, email, *, reason=NOT_ALLOWED):
+        if reason != CustomSocialAccountAdapter.NOT_ALLOWED:
+            logger.warning("social login refused: %s", reason)
+        response = render(
+            request,
+            "auth/domain_rejected.html",
+            {
+                "email": email,
+                "reason": reason,
+                "allowed_domain": ", ".join(allowed_email_domains()),
+                "next": (sociallogin.state or {}).get("next") or "",
+            },
+            status=403,
+        )
+        raise ImmediateHttpResponse(response)
+
+    @staticmethod
+    def _managed_by_allowed_domain(sociallogin) -> bool:
+        """Google's `hd` claim (the account's Google Workspace domain) names an
+        allowlisted domain. Google sends it on every sign-in of a Workspace
+        account, read fresh from this login's ID token, so an account linked
+        before this check carries it as well. A consumer account has none."""
+        allowed = allowed_email_domains()
+        if not allowed:  # no allowlist (dev): there is no domain to be managed by
+            return True
+        hd = str((sociallogin.account.extra_data or {}).get("hd") or "").strip().lower()
+        return bool(hd) and hd in allowed
+
+    @staticmethod
+    def _agent_login_landed_on(sociallogin, email) -> int | None:
+        """The agent login this sign-in would open a session as, if any: an account
+        already linked to one, or the one user `_connect_jit_identity` would link."""
+        User = get_user_model()
+        if sociallogin.is_existing:
+            pk = sociallogin.user.pk
+            return pk if User.objects.filter(pk=pk, agent_identity__isnull=False).exists() else None
+        if not email:
+            return None
+        matches = list(User.objects.filter(email__iexact=email)
+                       .values_list("pk", flat=True)[:2])
+        if len(matches) == 1 and User.objects.filter(pk=matches[0], agent_identity__isnull=False).exists():
+            return matches[0]
+        return None
 
     @staticmethod
     def _verified_emails(sociallogin) -> set[str]:
@@ -177,7 +260,9 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             return
         User = get_user_model()
         matches = list(User.objects.filter(email__iexact=email)[:2])
-        if len(matches) == 1:
+        # Never onto an agent's login (`pre_social_login` refuses that sign-in
+        # before it gets here; this keeps the merge itself from ever doing it).
+        if len(matches) == 1 and not hasattr(matches[0], "agent_identity"):
             sociallogin.connect(request, matches[0])
 
 
@@ -205,6 +290,14 @@ class CustomAccountAdapter(DefaultAccountAdapter):
 
     def is_open_for_signup(self, request):
         return False
+
+    def authenticate(self, request, **credentials):
+        # allauth's `/accounts/login/` password form ends here. Every identity comes
+        # from Google, so no stored password signs anyone in: an account that has one
+        # (a superuser made by `createsuperuser`) would otherwise reach the admin past
+        # Google and the domain allowlist (`apps/common/admin_access.py`).
+        logger.warning("refused a password sign-in at /accounts/login/")
+        return None
 
     def is_safe_url(self, url):
         # allauth's own check trusts every host in ALLOWED_HOSTS, and labs runs

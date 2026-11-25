@@ -35,7 +35,8 @@ def test_speaker_accuracy_matches_found_speakers_to_real_ones_one_to_one():
 def test_a_live_replay_reports_what_was_said_how_late_and_how_fast():
     def recognise(audio):
         n = len(audio) / SAMPLE_RATE
-        return [Sentence("hello there", 0.0, 1.0)] if n >= 1.0 else []
+        # Words only where there is sound: the silence after the sentence holds none.
+        return [Sentence("hello there", 0.0, 1.0)] if n >= 1.0 and audio[:SAMPLE_RATE].any() else []
 
     audio = np.concatenate([np.full(SAMPLE_RATE, 0.1, np.float32), np.zeros(4 * SAMPLE_RATE, np.float32)])
     out = bench.run_live(recognise, audio)

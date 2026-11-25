@@ -20,7 +20,18 @@ import type { DynamicViewSource } from '@/api/dynamicViews'
 /** How many of a project's views draw on its page; the rest are links. */
 const DRAWN = 3
 
-export function ProjectViewsSection({ workspace, handle, projectName }: { workspace: string; handle: string; projectName: string }) {
+export function ProjectViewsSection({
+  workspace,
+  handle,
+  projectName,
+  onContent,
+}: {
+  workspace: string
+  handle: string
+  projectName: string
+  /** Whether the project has a view (the page hides an empty section). */
+  onContent?: (has: boolean) => void
+}) {
   const canEdit = useCanEditViews(workspace)
   const workspaceName = useWorkspaceList().find((w) => w.slug === workspace)?.display_name ?? workspace
   const { user } = useAuth()
@@ -43,13 +54,18 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
     }
   }, [workspace, handle])
 
+  const has = views === null ? null : views.length > 0
+  useEffect(() => {
+    if (has !== null) onContent?.(has)
+  }, [has, onContent])
+
   if (views === null || (views.length === 0 && !canEdit)) return null
   const newHref = scopedPath(workspace, `/views?project=${encodeURIComponent(handle)}&new=1`)
   return (
     <Section
       id="project-views"
       title="Views"
-      description="Screens generated over this project's data. Each runs in a sandbox and shows only what you can already read."
+      description="Screens made from this project's data."
     >
       {views.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">
@@ -66,10 +82,10 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
                 </Link>
                 <span className="text-[11.5px] text-muted-foreground">v{v.version}</span>
               </div>
-              <DeclaredTasks tasks={v.agent_tasks} className="mb-1" />
+              <DeclaredTasks tasks={v.agent_tasks} taskActions={v.task_actions} className="mb-1" />
               <DeclaredConnections connections={v.connections as DeclaredConnection[] | undefined} className="mb-1" />
               <DynamicViewFrame
-                view={{ code: v.code, sources: v.sources as DynamicViewSource[], agent_tasks: v.agent_tasks, connections: v.connections as DeclaredConnection[] | undefined }}
+                view={{ code: v.code, sources: v.sources as DynamicViewSource[], agent_tasks: v.agent_tasks, connections: v.connections as DeclaredConnection[] | undefined, task_actions: v.task_actions }}
                 scope={{
                   workspace: { slug: workspace, name: workspaceName },
                   project: { handle, name: projectName },

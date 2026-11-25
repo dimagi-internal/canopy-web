@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from canopy_listen import cli, store
 from canopy_listen.live import SAMPLE_RATE, Sentence
+from canopy_listen.recorder import keep_awake as real_keep_awake
 from canopy_listen.recorder import record
 
 
@@ -34,8 +35,9 @@ class FakeSource:
 
 
 def recognise(buffer):
+    # One two-second sentence: what is left once it has been committed holds no words.
     n = len(buffer) / SAMPLE_RATE
-    return [Sentence("the budget is due friday", 0.0, min(2.0, n))] if n > 0.5 else []
+    return [Sentence("the budget is due friday", 0.0, min(2.0, n))] if n > 1.5 else []
 
 
 def test_a_recording_reads_like_a_superwhisper_meeting(capsys):
@@ -109,3 +111,35 @@ def test_a_failure_names_the_error_and_not_the_words():
 def test_meeting_ids_cannot_climb_out_of_the_store():
     with pytest.raises(ValueError):
         store.meeting_dir("../etc")
+
+
+def test_the_mac_is_kept_awake_while_recording_and_let_go_after(_no_caffeinate):
+    meeting = store.new_meeting("standup", "fake")
+    assert record(meeting["id"], FakeSource(1.0), recognise=recognise, keep_audio=False) == 0
+    assert len(_no_caffeinate) == 2 and _no_caffeinate[1] == "released"
+
+
+def test_keep_awake_waits_on_the_recorder_and_only_on_a_mac(monkeypatch):
+    import sys
+
+    calls = []
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/caffeinate")
+    assert real_keep_awake(4242, spawn=lambda argv, **kw: calls.append(argv) or "holder") == "holder"
+    assert calls == [["caffeinate", "-i", "-s", "-w", "4242"]]
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert real_keep_awake(4242, spawn=lambda argv, **kw: calls.append(argv)) is None and len(calls) == 1
+
+
+@pytest.mark.parametrize("age, records", [(10, "relay"), (cli.QUEUED_FOR_SECONDS + 60, "microphone")])
+def test_a_queued_relay_input_is_used_once_and_only_while_fresh(monkeypatch, age, records):
+    import time as _time
+
+    launched = []
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda cmd, **kw: launched.append(cmd))
+    queued = store.home() / "next-input.json"
+    store.home().mkdir(parents=True, exist_ok=True)
+    queued.write_text(json.dumps({"relay": "abc123", "source": "phone", "queued_at": _time.time() - age}))
+    cli.main(["start", "--wait", "0"])
+    assert not queued.exists()  # read once, whatever it said
+    assert ("--relay" in launched[0]) == (records == "relay")
