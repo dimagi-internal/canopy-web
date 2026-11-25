@@ -235,9 +235,9 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
     // The gate reads the tab as the extension last described it (`link.context`), on every call.
     const gate = new BrowserGate(decl, link)
     return {
-      info: { adapter: decl.adapter, capabilities: [...decl.capabilities], events: [...decl.events] },
+      info: { adapter: decl.adapter, capabilities: [...decl.capabilities], acts: [...decl.acts], events: [...decl.events] },
       context: () => gate.context(),
-      request: (capability, args) => gate.request(capability, args),
+      request: (capability, args, clicked) => gate.request(capability, args, clicked),
       open: (url) => gate.open(url),
       subscribe(listener) {
         const onEvent = (event: string, data: unknown, tabId: number, adapter: string) => {

@@ -212,6 +212,7 @@
     return {
       adapter: info.adapter,
       capabilities: (info.capabilities || []).slice(),
+      acts: (info.acts || []).slice(),
       events: (info.events || []).slice(),
       context: function () { return call({ op: 'context' }) },
       request: function (capability, args) { return call({ op: 'request', capability: capability, args: args || {} }) },

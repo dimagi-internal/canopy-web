@@ -97,10 +97,15 @@ extension's side panel shows that page beside a matching tab, and there canopy.b
 (null everywhere else — always check): canopy.browser.context() -> Promise<{tab: {url, title}} | null>,
 canopy.browser.request(name, args) -> Promise<result> for a declared adapter capability (gmail:
 read_open_email -> {threadId, messageId, subject, date, from, to, cc, bodyText} or null;
-compose_recipients -> {to, cc, bcc} or null), canopy.browser.on(event, handler) for a declared event
+read_open_thread -> every message of the open thread; compose_recipients -> {to, cc, bcc} or null;
+start_compose (a new compose, reply or reply-all, filled) and fill_compose (the focused compose's
+body/subject) — neither ever sends), canopy.browser.on(event, handler) for a declared event
 or "context" (the tab changed), returning an unsubscribe, and canopy.browser.open(url) for an https
-URL from a click. A refusal rejects with e.code (no_adapter, not_ready, unknown_capability,
-adapter_error, timeout, bad_request). The template declares it; a workspace change cannot.
+URL from a click. ACTS — capabilities that change the page, listed in canopy.browser.acts (gmail:
+start_compose, fill_compose) — work only when called straight from a click on the page, like open();
+otherwise they reject with e.code "needs_click". A refusal rejects with e.code (no_adapter, not_ready,
+unknown_capability, adapter_error, timeout, bad_request, needs_click). The template declares it; a
+workspace change cannot, and a template update that adds an act needs a workspace admin.
 
 BUNDLE PAGES: a page with "kind": "bundle" is the template's own static files (an existing web UI:
 its "entry" HTML plus JS, CSS, images, fonts, uploaded as `files` with the version, never as a

@@ -25,12 +25,20 @@ connections ([`vault-connections.md`](vault-connections.md) § Calls from screen
   same app, an adapter, and capabilities and events from the registry
   (`browser.py::ADAPTERS`); its `matches` are https match patterns whose host is within the
   adapter's hosts. Unknown names fail validation. A template update that changes the
-  declaration needs an admin (`template_diff.py`).
+  declaration needs an admin (`template_diff.py`), and one that adds an act says so on its own.
+- **Reads and acts.** An adapter's `acts` (`browser.py::ADAPTERS`, a subset of its capabilities;
+  Gmail: `start_compose`, `fill_compose`) change the page; the rest read it. No adapter
+  capability ever sends. The registry is the only source of the classification — never the
+  extension's `hello`. `list_browser_apps` carries each row's `acts`; a page sees them as
+  `canopy.browser.acts`.
 - **The canopy page enforces it, never the sandboxed code.** `BrowserGate` relays a request
   only for a declared capability, and only while the extension's last `context` says the tab
   in front matches the page's patterns; an event reaches the page only if declared, from its
-  adapter, about that tab. `canopy.browser.open` needs a click on the page
-  (`connectionCalls.ts::pageClickedFrame`) and an https URL; so does `canopy.open(url)` in the panel,
+  adapter, about that tab. **An act, and `canopy.browser.open`, need a click on the page**: the
+  canopy page reads it (`connectionCalls.ts::pageClickedFrame`) as the call arrives in
+  `DynamicViewFrame.tsx` and `BrowserGate.request` refuses an act without it, `needs_click`
+  ("This needs a click."), before anything reaches the extension — the same path for dynamic-view
+  and bundle pages. `open` also needs an https URL; so does `canopy.open(url)` in the panel,
   which goes through the same gate. A `layout: "full"` page fills the panel below the picker, unpadded
   (`ExtPanelPage.tsx`); `canopy.page.setParams` there changes only `app.params`, as the panel has no
   address bar.

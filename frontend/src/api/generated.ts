@@ -29366,6 +29366,8 @@ export interface components {
             readonly adapter: string;
             /** Capabilities */
             readonly capabilities: readonly string[];
+            /** Acts */
+            readonly acts: readonly string[];
             /** Events */
             readonly events: readonly string[];
             /** Matches */

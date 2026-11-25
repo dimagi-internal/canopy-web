@@ -68,6 +68,6 @@ def list_browser_apps(request: HttpRequest, url: str) -> list[BrowserAppOut]:
         out.append(BrowserAppOut(workspace=inst.workspace_id, workspace_name=ws.display_name or inst.workspace_id,
                                  app_key=inst.key, app_name=inst.name, page_slug=r["page"],
                                  page_title=r["page_title"], adapter=r["adapter"],
-                                 capabilities=r["capabilities"], events=r["events"], matches=r["matches"]))
+                                 capabilities=r["capabilities"], acts=r["acts"], events=r["events"], matches=r["matches"]))
     out.sort(key=lambda b: (b.workspace_name.lower(), b.app_name.lower(), b.page_slug))
     return out

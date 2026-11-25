@@ -85,7 +85,8 @@ function message(e: unknown): string {
 export interface BrowserHost {
   info: BrowserInfo
   context(): { tab: { url: string; title: string } } | null
-  request(capability: unknown, args: unknown): Promise<unknown>
+  /** `clicked`: a click on this frame, read by the page when the call arrived (an act needs one). */
+  request(capability: unknown, args: unknown, clicked: boolean): Promise<unknown>
   open(url: unknown): void
   /** Admitted adapter events, and `context` when the tab changes; returns an unsubscribe. */
   subscribe(listener: (event: string, data: unknown) => void): () => void
@@ -375,7 +376,7 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
           }
           if (req.op === 'open') {
             // Read the click NOW, before any await: a page may open a tab only from a click on it.
-            if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK)
+            if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK, 'needs_click')
             try {
               browser.open(req.url)
               post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: null })
@@ -385,7 +386,8 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
             return
           }
           if (req.op === 'request') {
-            browser.request(req.capability, req.args)
+            // The click too is read NOW, by this page: the gate relays an act only with one.
+            browser.request(req.capability, req.args, pageClickedFrame(frame.current))
               .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
               .catch((e) => fail(message(e), (e as { code?: string }).code ?? 'adapter_error'))
             return
