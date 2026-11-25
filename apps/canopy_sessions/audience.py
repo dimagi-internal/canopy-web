@@ -59,8 +59,9 @@ def _box_owners(session) -> set[int]:
 
 
 def _agent_admins(session) -> set[int]:
-    """Leg 4: the admins of the agent whose runner-origin session this is."""
-    if session.origin != Session.ORIGIN_RUNNER or not session.agent_id:
+    """Legs 4 and 4b: the admins of the agent whose runner-origin session, or whose
+    conversation with a contact, this is (read-only on a contact's)."""
+    if not session.agent_id or (session.origin != Session.ORIGIN_RUNNER and not session.contact_id):
         return set()
     agent = session.agent
     ids = set(AgentAdmin.objects.filter(agent=agent).values_list("user_id", flat=True))
@@ -210,7 +211,9 @@ def summary(session, viewer) -> dict:
     extras: list[str] = []
 
     if session.contact_id:
-        label = "The visitor who started it"
+        agent = (session.agent.name or session.agent.slug) if session.agent_id else ""
+        label = (f"The visitor who started it, and {agent}'s admins (read-only)" if agent
+                 else "The visitor who started it")
     elif meta.get(EMAIL_THREAD_KEY) or meta.get("source") == "email":
         label = f"Everyone on this email thread ({len(p['participants'])})"
     elif meta.get(_SLACK_THREAD_KEY):

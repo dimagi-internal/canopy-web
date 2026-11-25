@@ -23,7 +23,7 @@ from django.core.cache import cache
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.models import Session
+from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.contacts.models import Contact
 from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent
@@ -245,9 +245,11 @@ def test_a_members_conversation_is_invisible_to_a_contact():
     assert c.get("/api/contact/sessions", **hdr).json() == []
 
 
-def test_a_contacts_conversation_is_invisible_to_the_workspace_owner():
-    """The Contact model's whole property, at the conversation level: knowing
-    somebody is not being able to read what they said."""
+def test_the_agents_admins_read_a_contacts_conversation_read_only():
+    """The people operating an agent read what it says to a contact (leg 4b), so a wrong
+    or missing answer can be seen and fixed; they read, they do not drive."""
+    from apps.canopy_sessions import access
+
     owner, _ws, _app, priv, _offered, _private = _world()
     c = Client()
     hdr = _contact_headers(priv)
@@ -255,7 +257,29 @@ def test_a_contacts_conversation_is_invisible_to_the_workspace_owner():
                  content_type="application/json", **hdr).json()["id"]
 
     member = Client()
-    member.force_login(owner)
+    member.force_login(owner)  # the workspace owner administers its agents
+
+    assert member.get(f"/api/canopy-sessions/{sid}").status_code == 200
+    listed = member.get("/api/canopy-sessions/").json()
+    assert any(row["id"] == sid for row in listed)
+    session = Session.objects.get(pk=sid)
+    assert access.role_for(owner, session) == SessionParticipant.VIEWER
+    assert not access.can_write(owner, session)
+    assert not access.can_share(owner, session)
+
+
+def test_a_contacts_conversation_is_invisible_to_a_member_who_does_not_run_the_agent():
+    """Knowing somebody is not being able to read what they said: only the agent's admins."""
+    owner, ws, _app, priv, _offered, _private = _world()
+    plain = User.objects.create_user("plain", "plain@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=plain, workspace=ws, role=WorkspaceMembership.EDITOR)
+    c = Client()
+    hdr = _contact_headers(priv)
+    sid = c.post("/api/contact/sessions", data={"agent_slug": "echo"},
+                 content_type="application/json", **hdr).json()["id"]
+
+    member = Client()
+    member.force_login(plain)
 
     assert member.get(f"/api/canopy-sessions/{sid}").status_code == 404
     listed = member.get("/api/canopy-sessions/").json()

@@ -29,7 +29,7 @@ their own people (`tenancy-sensitive-conversations.md` § Sensitive conversation
 | **Web chat** | its creator + people they add | the same |
 | **Email** | everyone on the thread who is a verified member (§ Who is in a session) | the agent's admins, + the thread's people |
 | **Slack** | everyone in the Slack channel (a DM: its people), read + write, as in Slack | the agent's admins, + the channel's people |
-| **Panel** (an embedded widget) | the visitor (a contact: `contact_session_q`) | the visitor |
+| **Panel** (an embedded widget) and **a host site's contact** (e.g. a Connect Worker over labs) | the visitor (a contact: `contact_session_q`); + the agent's admins, read-only (`access._contact_conversation_q`, leg 4b), so a wrong or missing answer can be seen and fixed. A sensitive one stays sealed to its own people | the visitor |
 | **An agent's own work** (an alarm, a scheduled turn) | the agent's admins (`Agent.is_admin`) | the agent's admins |
 | **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
 | **Coaching** | + the coaches of the person (`CoachingOptIn` + `CoachingRole`: an agent's login in a running turn, or a person designated for the workspace and below, as themselves), read-only, in a turn asked by them or by the agent's admin, or dispatched for that one person, never a sensitive one, never one whose words its person deleted, never one someone in it took out of learning, only in the workspaces the person's learning consent covers (`access._coach_q`) | no — it reads what is already uploaded |
