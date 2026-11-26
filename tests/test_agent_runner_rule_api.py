@@ -71,8 +71,7 @@ def _wholesale(client, ace):
     rows: dict = {}
     for a in RunnerAssignment.objects.filter(agent=ace).exclude(source="").order_by("rank"):
         rule = rows.setdefault((a.source, a.actor), {"source": a.source, "actor": a.actor,
-                                                    "strict": a.strict, "turn_mode": a.turn_mode,
-                                                    "runners": []})
+                                                    "strict": a.strict, "runners": []})
         rule["runners"].append({"runner_id": str(a.runner_id), "enabled": a.enabled})
     return list(rows.values())
 
@@ -178,26 +177,22 @@ def test_delete_removes_exactly_one_rule(fleet):
         "/api/agents/ace/runner-rules/ace_web?actor=mtheis@dimagi.com").status_code == 204
 
 
-# ── auto: setting it is for admins; keeping it is not ───────────────────────
+# ── routing carries no mode ─────────────────────────────────────────────────
 
-@pytest.fixture
-def editor(fleet):
+def test_a_routing_rule_refuses_a_turn_mode(fleet):
+    """Mode is a turn-mode rule (PUT /turn-mode-rules); a routing write that
+    still sends one is told so by the schema rather than silently dropping it."""
+    fleet["client"].force_login(fleet["jj"])
+    res = _put(fleet["client"], "ace_web", fleet["ec2_1"], actor="mtheis@dimagi.com", turn_mode="auto")
+    assert res.status_code == 422
+
+
+def test_a_runner_refusal_says_mode_needs_no_runner(fleet):
     ed = get_user_model().objects.create_user(username="ed", email="ed@dimagi.com")
     WorkspaceMembership.objects.create(workspace=fleet["ace"].workspace, user=ed,
                                        role=WorkspaceMembership.EDITOR)
-    RunnerAssignment.objects.filter(agent=fleet["ace"], source="api").update(turn_mode="auto")
     fleet["client"].force_login(ed)
-    return ed
+    res = _put(fleet["client"], "ace_web", fleet["ec2_1"], actor="someone@dimagi.com")
+    assert res.status_code == 403, res.content
+    assert "turn-mode-rules" in res.json()["detail"]
 
-
-def test_an_editor_may_resave_an_auto_rule_an_admin_set(fleet, editor):
-    res = fleet["client"].put("/api/agents/ace/runner-rules",
-                              data={"rules": _wholesale(fleet["client"], fleet["ace"])},
-                              content_type="application/json")
-    assert res.status_code == 200, res.content
-
-
-def test_an_editor_may_not_turn_a_rule_auto(fleet, editor):
-    res = _put(fleet["client"], "ace_web", fleet["ec2_1"], actor="mtheis@dimagi.com",
-               turn_mode="auto")
-    assert res.status_code == 403

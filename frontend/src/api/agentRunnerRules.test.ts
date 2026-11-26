@@ -13,7 +13,7 @@ function row(over: Partial<AgentRunnerRuleOut>): AgentRunnerRuleOut {
   return {
     source: 'ace_web', actor: '', rank: 0, runner_id: 'ec2-1', runner_name: 'cloud-ec2-1',
     kind: 'cloud', strict: true, online: true, ready: true, enabled: true, queued_count: 0,
-    turn_mode: '', ...over,
+    ...over,
   }
 }
 
@@ -23,7 +23,7 @@ const prev = [
   row({ actor: 'stewari@dimagi.com', runner_id: 'st-mbp', runner_name: 'st-mbp' }),
 ]
 const asEdits = (rules: AgentRunnerRuleOut[]) =>
-  rules.map((r) => ({ source: r.source, actor: r.actor, runnerIds: [r.runner_id], strict: r.strict, turnMode: '' as const }))
+  rules.map((r) => ({ source: r.source, actor: r.actor, runnerIds: [r.runner_id], strict: r.strict }))
 
 afterEach(() => vi.clearAllMocks())
 
@@ -67,7 +67,7 @@ describe('saveAgentRunnerRules', () => {
     PUT.mockResolvedValue({ data: [] })
     GET.mockResolvedValue({ data: withOff })
     await saveAgentRunnerRules('ace', withOff, [{
-      source: 'ace_web', actor: 'mtheis@dimagi.com', runnerIds: ['ec2-1', 'ec2-2'], strict: true, turnMode: '',
+      source: 'ace_web', actor: 'mtheis@dimagi.com', runnerIds: ['ec2-1', 'ec2-2'], strict: true,
     }])
     expect(PUT.mock.calls[0][1].body.runners).toEqual([
       { runner_id: 'ec2-1', enabled: false },

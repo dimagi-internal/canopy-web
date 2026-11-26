@@ -10,10 +10,10 @@ const MODES: { mode: TurnMode; label: string; blurb: string }[] = [
 // config: the fleet turn procedure reads it at preflight, and this toggle is
 // the one place a human flips it (the agent's own repo publish can't).
 //
-// It is the AGENT'S mode — the "Everything else" row of the routing table — and a
-// routing rule may override it for its own work. `compact`
-// is that table cell: no blurb, since the table states what the modes mean once.
-// `onChange` lets the table show what a rule that says nothing inherits.
+// It is the AGENT'S mode — the "Everything else" row of the turn-mode table
+// (AgentTurnModeRules) — and a turn-mode rule may override it for one channel or
+// one person. `compact` is that table cell: no blurb, since the table states what
+// the modes mean once.
 export function TurnModeToggle({
   agentSlug,
   initialMode,

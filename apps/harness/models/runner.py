@@ -789,8 +789,17 @@ class RunnerFlag(models.Model):
 
 
 class RunnerAssignment(models.Model):
-    """One row of an agent's ordered runner list — THE routing authority for agent
-    turns. An agent with no rows is explicitly unroutable."""
+    """Which runners may take an agent's work, in preference order — THE routing
+    authority for agent turns. Two kinds of row share this table:
+
+    * the agent's DEFAULT ORDER: `source=""`, ranked by `rank`. An agent with no
+      default rows follows its workspace's order (`routing_orders.inherited_orders`);
+    * a RULE: the rows sharing one (`source`, `actor`), ranked by `rank` within the
+      rule. A person's rule (`actor` set) beats the anyone-rule for its source,
+      which beats the default order (`routing_orders.assignment_rows_for`).
+
+    Routing only: whether the work then runs `manual` or `auto` is a separate
+    decision about the agent, not the box (`TurnModeRule`)."""
 
     agent = models.ForeignKey(
         "agents.Agent", on_delete=models.CASCADE, related_name="runner_assignments"
@@ -798,45 +807,26 @@ class RunnerAssignment(models.Model):
     runner = models.ForeignKey(
         Runner, on_delete=models.CASCADE, related_name="agent_assignments"
     )
-    rank = models.PositiveSmallIntegerField()  # 0 = first choice
-    # A disabled row stays in the agent's list (rank preserved, visible greyed
-    # in the UI) but must NEVER route: the claim path excludes it entirely, and
-    # it neither claims nor counts as a better-ranked availability blocker for a
-    # lower rank. Distinct from removal — the operator's "x" toggles this
-    # instead of deleting the row, so re-enabling doesn't lose the rank.
+    rank = models.PositiveSmallIntegerField()  # 0 = first choice, within the default order or the rule
+    # A disabled row stays where it is (rank preserved, greyed in the UI) but
+    # NEVER routes: the claim path drops it, so it neither claims nor counts as a
+    # better-ranked runner blocking a lower one. The operator's "x" toggles this
+    # instead of deleting the row, so re-enabling keeps the rank. A runner
+    # disabled in the default order is still live in a rule that names it: the
+    # rule's row has its own toggle (tests/test_source_rules.py).
     enabled = models.BooleanField(default=True)
-    # THE SOURCE RULE. "" = this row belongs to the agent's
-    # DEFAULT ordered list. Non-empty = this row is
-    # the single priority runner for that source, and `rank` is meaningless on it
-    # (the uniqueness constraint below allows exactly one). The column is kept
-    # rather than dropped so an ordered per-source list needs no second migration.
-    #
-    # Note `enabled` then means two things across the two row kinds: a runner
-    # switched off in the default list is still live for any source that names
-    # it, because the rule is its own row with its own toggle. Pinned by
-    # tests/test_source_rules.py and stated in the Runners-tab UI.
+    # "" = a default-order row. Otherwise the `Turn.origin` this rule routes.
     source = models.CharField(max_length=32, blank=True, default="")
-    # THE ACTOR RULE. "" = this rule applies to any actor
-    # (a source rule for every actor). Non-empty = a
-    # normalized, lowercased bare address, matched against `actors.actor_of(turn)`.
-    #
-    # Only meaningful alongside a non-empty `source`: a default-list row routes
-    # every actor by definition, and the constraints below keep `actor` out of
-    # its key. 254 is the RFC 5321 maximum address length.
+    # "" = the rule routes anyone's work on its source. Otherwise one person's: a
+    # normalized bare lowercase address, matched against `actors.actor_of(turn)`.
+    # Always "" on a default-order row (the constraints keep it out of that key).
+    # 254 is the RFC 5321 maximum address length.
     actor = models.CharField(max_length=254, blank=True, default="")
-    # Only meaningful on a source row. False: the priority runner goes first and
-    # the default list follows beneath it. True: that runner or nothing — the turn
-    # waits rather than degrading, which is the point for a source whose work can
-    # only happen on one box (mailbox credentials, local files).
+    # Rule-level (written to every row of a rule; meaningless on a default-order
+    # row). False: the rule's runners go first and the default order follows. True:
+    # these runners or nothing — the turn waits rather than run elsewhere, for work
+    # that can only happen on one box (mailbox credentials, local files).
     strict = models.BooleanField(default=False)
-    # THE MODE RULE. Only meaningful on a source row, and
-    # rule-level like `strict` (written to every row of the rule). "" = the rule
-    # says nothing about mode, so the next rung decides: an actor rule defers to
-    # the source rule, which defers to `Agent.turn_mode`. "manual" or "auto"
-    # overrides. Resolved at claim by `apps/harness/turn_mode.py`, which withholds
-    # an `auto` that names a person unless THIS message is verified — routing on a
-    # forged From: only picks a box; auto on one would let a forger act unreviewed.
-    turn_mode = models.CharField(max_length=8, blank=True, default="")
 
     class Meta:
         ordering = ["agent_id", "rank"]

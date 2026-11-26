@@ -2,7 +2,8 @@
 workspace. This module holds the agent itself (create, read, move, delete, its
 identity, admins, licenses and settings) and its syncs and turns; the rest of
 the surface is split by subdomain into the `api_*.py` modules beside it:
-`api_routing` (which runners do its work), `api_skills`, `api_board` (projects,
+`api_routing` (which runners do its work), `api_turn_mode` (whether it may act
+without approval, per channel or person), `api_skills`, `api_board` (projects,
 tasks, the action queue), `api_credentials` (an agent's secrets and their resolve),
 `api_vault_zk`, `api_vault_members`, `api_secret_requests`, `api_sender_trust`, `api_github`
 and `api_pat_rotation` (the rest of its vault and identity; who may write the vault is
@@ -848,10 +849,11 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
     A human decision made from the board; the agent-repo upsert (POST /) cannot
     touch this field. `manual` from any editor; `auto` from the agent's owner or
-    an admin — it is the last rung of the routing ladder ("Everything else")."""
+    an admin. It is the last rung: per-channel and per-person turn-mode rules
+    (`/turn-mode-rules`) come first."""
     agent = agent_for_work(request, slug)
     if payload.turn_mode == "auto" and agent.turn_mode != "auto":
-        refuse_auto_unless_admin(request, agent, "setting the agent's turn mode")
+        refuse_auto_unless_admin(request, agent, "setting the agent's turn mode to auto")
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
     return _detail(request, agent)

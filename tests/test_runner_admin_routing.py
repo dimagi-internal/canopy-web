@@ -5,8 +5,7 @@ accept only runners the caller OWNED, or the fleet's conductor (an agent login
 holding RunnerAdmin grants on every box, but pairing none of them) could not
 rebuild a routing it was asked to fix. The runner side asks "owns it, or
 administers it" of every runner a write ADDS (`_runners_for_routing`);
-the agent side is editor tier to route, agent admin for
-`turn_mode: auto`; the box must still be able to hold the agent
+the agent side is editor tier to route; the box must still be able to hold the agent
 (`runner_may_hold_agent`). This file pins the rule end to end, for
 the default list as well as the rules, and that administering a box is still
 not BEING it.
@@ -50,9 +49,8 @@ def _put_runners(c, slug, *runners):
                  content_type="application/json")
 
 
-def _put_rules(c, slug, *runners, turn_mode=""):
-    body = {"rules": [{"source": "slack", "runners": [{"runner_id": str(r.id)} for r in runners],
-                       "turn_mode": turn_mode}]}
+def _put_rules(c, slug, *runners):
+    body = {"rules": [{"source": "slack", "runners": [{"runner_id": str(r.id)} for r in runners]}]}
     return c.put(f"/api/agents/{slug}/runner-rules", data=json.dumps(body),
                  content_type="application/json")
 
@@ -77,7 +75,7 @@ def test_runner_admin_cannot_name_a_box_they_neither_own_nor_administer(world):
 
 def test_runner_admin_can_set_a_source_rule_naming_a_box_they_administer(world):
     world["client"].force_login(world["ada"])
-    r = _put_rules(world["client"], "echo", world["cloud"], turn_mode="manual")
+    r = _put_rules(world["client"], "echo", world["cloud"])
     assert r.status_code == 200, r.content
     assert RunnerAssignment.objects.filter(agent=world["agent"], source="slack",
                                            runner=world["cloud"]).exists()
@@ -90,19 +88,20 @@ def test_runner_admin_rule_naming_an_unadministered_box_is_403(world):
     assert not RunnerAssignment.objects.filter(agent=world["agent"]).exists()
 
 
-def test_an_auto_rule_still_needs_the_agents_admin(world):
+def test_auto_still_needs_the_agents_admin(world):
     """Administering the BOX says nothing about the AGENT: `auto` is the agent
-    admins' to set, runner admin or not."""
+    admins' to set, runner admin or not — and it names no box at all."""
     world["client"].force_login(world["ada"])
-    r = _put_rules(world["client"], "echo", world["cloud"], turn_mode="auto")
+    path = "/api/agents/echo/turn-mode-rules"
+    body = json.dumps({"source": "slack", "turn_mode": "auto"})
+    r = world["client"].put(path, data=body, content_type="application/json")
     assert r.status_code == 403, r.content
-    assert "auto" in r.json()["detail"]
-    assert not RunnerAssignment.objects.filter(agent=world["agent"]).exists()
+    assert "owner or admins" in r.json()["detail"]
 
     from apps.agents.models import AgentAdmin
 
     AgentAdmin.objects.get_or_create(agent=world["agent"], user=world["ada"])
-    r = _put_rules(world["client"], "echo", world["cloud"], turn_mode="auto")
+    r = world["client"].put(path, data=body, content_type="application/json")
     assert r.status_code == 200, r.content
 
 
@@ -143,7 +142,7 @@ def test_the_owner_is_unchanged(world):
     world["client"].force_login(world["jj"])
     r = _put_runners(world["client"], "echo", world["cloud"], world["laptop"])
     assert r.status_code == 200, r.content
-    r = _put_rules(world["client"], "echo", world["laptop"], world["cloud"], turn_mode="auto")
+    r = _put_rules(world["client"], "echo", world["laptop"], world["cloud"])
     assert r.status_code == 200, r.content
 
 

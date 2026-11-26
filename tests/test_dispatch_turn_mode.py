@@ -20,7 +20,7 @@ from django.utils import timezone
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import caller_context, claim
 from apps.harness import turn_mode as modes
-from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.harness.models import Runner, RunnerAssignment, Turn, TurnModeRule
 from apps.tokens.models import AppCredential, DelegatedToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.token_helpers import pat_client
@@ -150,8 +150,7 @@ def test_requested_auto_wins_over_the_agents_manual_switch(fleet):
 
 def test_requested_manual_wins_over_an_actor_auto_rule(fleet):
     hal = fleet["hal"]
-    RunnerAssignment.objects.create(agent=hal, runner=fleet["other"], rank=0,
-                                    source=Turn.ORIGIN_API, actor=ADA, turn_mode="auto")
+    TurnModeRule.objects.create(agent=hal, source=Turn.ORIGIN_API, actor=ADA, turn_mode="auto")
     _post(pat_client(fleet["ada"]), turn_mode="manual")
     claimed = claim.claim_next_turn(fleet["other"])
     assert (claimed.turn_mode, claimed.turn_mode_basis) == (
@@ -162,8 +161,7 @@ def test_requested_auto_wins_over_an_actor_manual_rule(fleet):
     hal = fleet["hal"]
     hal.turn_mode = Agent.AUTO
     hal.save(update_fields=["turn_mode"])
-    RunnerAssignment.objects.create(agent=hal, runner=fleet["other"], rank=0,
-                                    source=Turn.ORIGIN_API, actor=ADA, turn_mode="manual")
+    TurnModeRule.objects.create(agent=hal, source=Turn.ORIGIN_API, actor=ADA, turn_mode="manual")
     _post(pat_client(fleet["ada"]), turn_mode="auto")
     assert claim.claim_next_turn(fleet["other"]).turn_mode == "auto"
 

@@ -133,7 +133,6 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
             "source": a.source,
             "actor": a.actor,
             "strict": a.strict,
-            "turn_mode": a.turn_mode,
             "can_claim": None,  # filled below, once the agent's workspace is known
         })
         # A directed-only box listed on an agent never takes its routed work:
@@ -144,7 +143,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
         for rank, r in enumerate(inh.runners):
             routes_by_agent.setdefault(agent_id, []).append({
                 "runner_id": r.pk, "rank": rank, "enabled": True, "source": "", "actor": "",
-                "strict": False, "turn_mode": "", "can_claim": None, "inherited": True,
+                "strict": False, "can_claim": None, "inherited": True,
             })
             serves.setdefault(r.pk, set()).add(agent_id)
 

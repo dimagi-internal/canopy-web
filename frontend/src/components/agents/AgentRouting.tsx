@@ -3,7 +3,6 @@ import {
   getAgentRunnerRules,
   saveAgentRunnerRules,
   type AgentRunnerRuleOut,
-  type TurnMode,
 } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { AgentDefaultRunners } from '@/components/agents/AgentDefaultRunners'
@@ -15,17 +14,18 @@ import {
   toRows,
   type RuleRow,
 } from '@/components/agents/RunnerSourceRules'
-import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
 import { GRID, Cell, RuleRowView } from './AgentRoutingRules'
 import { AddRuleRow } from './AgentRoutingAddRule'
 
-// ONE TABLE for "where does this agent's work run, and how".
+// ONE TABLE for "which runner takes this agent's work".
 //
-// A rule can set the MODE as well as the box — "Beth's email → cloud, auto" is
-// one decision — so the turn mode, the default order and the source rules are
-// rows of one table, in the order they are evaluated: the specific rules first, the agent's
-// defaults last as "Everything else". Reading it top to bottom IS the precedence,
-// so only the two cases the table cannot show need a footnote.
+// The rules and the default order are rows of one table, in the order they are
+// evaluated: the specific rules first, the agent's default order last as
+// "Everything else". Reading it top to bottom IS the precedence, so only the two
+// cases the table cannot show need a footnote.
+//
+// Routing only. Whether the work runs manual or auto is the agent's turn mode
+// (AgentTurnModeRules), a separate decision that needs no runner.
 //
 // Layout is a CSS grid under a container query rather than a <table>: the same
 // component renders in the Settings page (wide) and in the supervisor's runner
@@ -34,7 +34,6 @@ import { AddRuleRow } from './AgentRoutingAddRule'
 
 export function AgentRouting({
   agentSlug,
-  initialTurnMode,
   workspace,
   onSaved,
   agentName,
@@ -44,14 +43,12 @@ export function AgentRouting({
   /** The agent's workspace, when the page is under another (the fleet map at a
    *  parent, the supervisor). Its routes resolve the agent within one tenant. */
   workspace?: string
-  initialTurnMode: TurnMode
-  /** A rule, the default order or the mode was saved — for a host that draws
+  /** A rule or the default order was saved — for a host that draws
    *  the routing elsewhere too (the fleet map) and must redraw it. */
   onSaved?: () => void
 }): JSX.Element {
   const [rules, setRules] = useState<AgentRunnerRuleOut[] | null>(null)
   const [fleet, setFleet] = useState<readonly RunnerOut[]>([])
-  const [agentMode, setAgentMode] = useState<TurnMode>(initialTurnMode)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
@@ -108,7 +105,6 @@ export function AgentRouting({
             ready: f?.ready ?? existing?.ready ?? false,
             enabled: true,
             queued_count: existing?.queued_count ?? 0,
-            turn_mode: r.turnMode,
           } as AgentRunnerRuleOut
         }),
       ),
@@ -144,9 +140,7 @@ export function AgentRouting({
   }
 
   const grouped = groupRules(rules)
-  const merged = mergeRules(grouped, agentMode)
-  // Said once, here, rather than under every row it applies to.
-  const namedAuto = merged.some((m) => m.actor && (m.turnMode || m.inherited) === 'auto')
+  const merged = mergeRules(grouped)
 
   return (
     <div className="@container flex flex-col gap-2" data-testid={`runner-rules-${agentSlug}`}>
@@ -156,7 +150,6 @@ export function AgentRouting({
           <span role="columnheader">From</span>
           <span role="columnheader">Runs on, in order</span>
           <span role="columnheader">If all are down</span>
-          <span role="columnheader">Mode</span>
           <span />
         </div>
 
@@ -168,17 +161,16 @@ export function AgentRouting({
           <AddRuleRow
             fleet={fleet}
             rules={grouped}
-            agentMode={agentMode}
             onCancel={() => setAdding(false)}
-            onAdd={(source, actor, runnerId, turnMode) => {
+            onAdd={(source, actor, runnerId) => {
               setAdding(false)
-              mutate((rows) => nextRulesForAdd(rows, source, runnerId, { actor, turnMode }))
+              mutate((rows) => nextRulesForAdd(rows, source, runnerId, { actor }))
             }}
           />
         )}
 
-        {/* The agent's own defaults — last because they are what every row
-            above falls back to. Its mode IS the agent's turn mode. */}
+        {/* The agent's default order — last because it is what every row
+            above falls back to. */}
         <div role="row" className={`flex flex-col gap-1.5 bg-muted/20 px-2 py-2 ${GRID}`} data-testid="routing-default-row">
           <Cell label="Work" className="@3xl:col-span-2">
             <span className="text-[12px] font-medium text-foreground">Everything else</span>
@@ -194,16 +186,6 @@ export function AgentRouting({
           </Cell>
           <Cell label="If all down">
             <span className="text-[11px] text-muted-foreground">Waits</span>
-          </Cell>
-          <Cell label="Mode">
-            <TurnModeToggle
-              agentSlug={agentSlug}
-              initialMode={initialTurnMode}
-              workspace={workspace}
-              compact
-              onChange={setAgentMode}
-              onSaved={onSaved}
-            />
           </Cell>
           <span />
         </div>
@@ -227,21 +209,14 @@ export function AgentRouting({
       {/* One line, and the detail behind a disclosure: two
           paragraphs under the table would be read once and skipped ever after. */}
       <p className="text-[11px] text-muted-foreground" data-testid="routing-footer">
-        The first row that matches a turn picks its runners and mode.
-        {namedAuto && (
-          <span data-testid="routing-verified-note">
-            {' '}Auto for a named sender holds only when the message is verified as theirs; anything else runs Manual.
-          </span>
-        )}
+        The first row that matches a turn picks its runners. Adding a runner to a rule needs admin on that runner.
       </p>
       <details className="text-[11px] text-muted-foreground">
         <summary className="w-fit cursor-pointer text-primary hover:underline">How routing works</summary>
         <p className="mt-1 leading-relaxed">
           Rows are checked top to bottom. <span className="text-foreground-secondary">Fall back</span> passes
           the turn to the rows below when none of the row&apos;s runners is available;{' '}
-          <span className="text-foreground-secondary">Wait</span> holds it until one is.{' '}
-          <span className="text-foreground-secondary">Manual</span>: outbound actions wait for approval.{' '}
-          <span className="text-foreground-secondary">Auto</span>: the agent reviews its own work and sends it.
+          <span className="text-foreground-secondary">Wait</span> holds it until one is.
           {/* The cases the table cannot show, and the one place `enabled`
               means two things: a runner switched off under Everything else
               still takes the work of any rule that names it. */}{' '}

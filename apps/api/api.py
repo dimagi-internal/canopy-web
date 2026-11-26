@@ -319,6 +319,7 @@ from apps.agents.api_access_list import router as agent_access_list_router  # no
 from apps.agents.api_answering import router as agent_answering_router  # noqa: E402
 from apps.agents.api_roles import router as agent_roles_router  # noqa: E402
 from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
+from apps.agents.api_turn_mode import router as agent_turn_mode_router  # noqa: E402
 from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
 from apps.agents.api_vault_keeper import router as vault_keeper_router  # noqa: E402
 from apps.agents.api_vaults import router as workspace_vaults_router  # noqa: E402
@@ -494,6 +495,7 @@ api.add_router("/agents", agents_router)
 # The rest of apps/agents' surface, split by subdomain. Mounted in the order the
 # routes were written in, which is the order of /api/openapi.json's paths.
 api.add_router("/agents", agent_routing_router)
+api.add_router("/agents", agent_turn_mode_router)
 api.add_router("/agents", agent_access_list_router)
 api.add_router("/agents", agent_answering_router)
 api.add_router("/workspaces", agent_defaults_router)

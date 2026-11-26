@@ -169,7 +169,7 @@ which role.
   Google's own footer link (`inbox_rules.doc_comment_of`); `apps/agents/doc_comment.py::of_turn` decides whether a
   turn's ids are honoured.
 * **Row 2** may steer the whole agent. With `manual_only` on every line that gives them `write`, every turn they start
-  runs `manual` and they may not set `auto` anywhere: not on a dispatch, a routing rule or actor route, or the agent's
+  runs `manual` and they may not set `auto` anywhere: not on a dispatch, a turn-mode rule, or the agent's
   own switch. Granting a whole workspace `read_write` or `editor` through a default is the workspace owner's call
   because it hands every agent there to everyone in it.
 * **Row 1's `system`** is bounded by the person canopy acted FOR: a schedule's occurrence carries its creator as the

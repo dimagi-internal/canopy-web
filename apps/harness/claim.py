@@ -384,6 +384,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # claim (it is absent from the composed list, so `mine` comes back None) nor
     # count as a better-ranked availability blocker for a lower enabled rank.
     defaults, priorities = load_assignment_rows(agent_ids)
+    mode_rules = None  # the agents' turn-mode rules (turn_mode.load_rules), read on first use
     # The workspace runner order, for the repo turns and unbound project chats
     # among the candidates — the ranking a project dispatch never had
     # (WorkspaceRunnerOrder).
@@ -515,9 +516,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                                   "confine it")
                 continue
 
-        # The mode is decided HERE, once, from the same rules that just routed
-        # the turn (apps/harness/turn_mode.py), and stamped so a rule edited
-        # mid-turn cannot flip the posture of work already under way.
+        # The mode is decided HERE, once (apps/harness/turn_mode.py), and stamped
+        # so a turn-mode rule edited mid-turn cannot flip work already under way.
         from . import turn_mode as modes
 
         # A turn started as a lower role is judged at that role.
@@ -532,7 +532,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             else:
                 stamp = ""
         acts_as = stamp or turn_cap
-        mode = modes.for_turn(turn, priorities, fresh=True)
+        if mode_rules is None:
+            # Loaded once per claim, and only when a candidate gets this far.
+            mode_rules = modes.load_rules(agent_ids)
+        mode = modes.for_turn(turn, mode_rules, fresh=True)
         if acts_as and mode is not None and mode.mode == modes.AUTO:
             # Only an agent admin may run auto, and a capped initiator is not one.
             mode = modes.Resolved(modes.MANUAL, f"started as {acts_as}: manual")

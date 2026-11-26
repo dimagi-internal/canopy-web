@@ -6,6 +6,7 @@ import { AgentHowItRuns } from '@/components/agents/AgentHowItRuns'
 import { AgentClisControl } from '@/components/agents/AgentClisControl'
 import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryControl'
 import { AgentRouting } from '@/components/agents/AgentRouting'
+import { AgentTurnModeRules } from '@/components/agents/AgentTurnModeRules'
 import { AgentHoldControl } from '@/components/agents/AgentHold'
 import { AgentSetupChecklist } from '@/components/agents/AgentSetupChecklist'
 import { DeleteAgentControl } from '@/components/agents/DeleteAgentControl'
@@ -54,16 +55,26 @@ export function OverviewTab({ agent, isAdmin, canRoute, admins, hold, setHold, c
         {/* The two ways an agent runs, side by side — a summary that links to
             the settings below (docs/architecture/runners.md). */}
         <AgentHowItRuns slug={agent.slug} name={agent.name} isAdmin={isAdmin} />
-        {/* Turn mode and runners are one table whose last row is the agent's
-            own defaults: a routing rule can set both. */}
+        {/* Two separate decisions: whether it may act without approval (about the
+            agent), and which runner takes the work (about the box). */}
+        <div id="turn-mode" className="scroll-mt-6 border-t border-border">
+          <Setting
+            title="Turn mode"
+            who="editors set Manual; Auto is for its owner and admins"
+            canEdit={canRoute}
+            description="Whether it may act without approval — for everyone, one channel, or one person."
+          >
+            <AgentTurnModeRules agentSlug={agent.slug} initialTurnMode={agent.turn_mode} />
+          </Setting>
+        </div>
         <div id="routing" className="scroll-mt-6 border-t border-border">
           <Setting
             title="Routing"
-            who="workspace editors and above"
+            who="workspace editors and above, on runners they administer"
             canEdit={canRoute}
-            description="Which runner takes each kind of work, and whether it may act without approval."
+            description="Which runner takes each kind of work."
           >
-            <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
+            <AgentRouting agentSlug={agent.slug} agentName={agent.name} />
           </Setting>
         </div>
         {hold && (

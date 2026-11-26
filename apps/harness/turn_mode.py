@@ -1,29 +1,27 @@
-"""Which MODE a turn runs in — the other half of a routing rule.
+"""Which MODE a turn runs in: `manual` (outbound waits for a person) or `auto`.
 
 `manual` / `auto`, the ladder below, and who may ask for which are defined in
 `docs/architecture/access.md`; the person-side half (who may request `auto`,
 whose turns are capped to manual) is `apps/agents/turn_context.resolve_turn_context`.
 
-A routing rule (`RunnerAssignment` with a non-empty `source`) already answers
-"which box runs this person's work on this channel". The same
-rule can also answer "and may the agent act on it without asking first":
-`eva / email / beth@… → cloud, auto`.
+Mode is a decision about the AGENT, never about the box. Which runner takes the
+work is routing (`RunnerAssignment`); whether the agent may act on it without
+asking first is a turn-mode rule (`TurnModeRule`): `eva / email / beth@… → auto`.
+Neither names the other, so changing one never needs rights over the other.
 
-The ladder is the routing ladder, read for its `turn_mode` instead of its
-runners: the (source, actor) rule, then the (source, anyone) rule, then
-`Agent.turn_mode`. A rung whose mode is "" says nothing and the next one decides,
-so a rule that only moves work to another box leaves the agent's posture alone.
+The standing ladder, most specific first: the rule for this channel AND this
+person, the rule for this person on any channel, the rule for this channel and
+anyone, then `Agent.turn_mode` (`resolve`).
 
-**An `auto` that names a person needs a verified message.** Routing on a forged
-`From:` is harmless — it only chooses which machine runs the turn. Auto on one
-would hand whoever forged Beth's address an agent that sends without review. So
-an actor rule's `auto` applies only when `caller_context.is_verified(turn)` holds
-for THIS message; otherwise the turn runs MANUAL and the basis says why. Not
-"fall through to the agent's mode": the rule was written about Beth, and a
+**An `auto` that names a person needs a verified message.** Auto on a forged
+`From:` would hand whoever forged Beth's address an agent that sends without
+review. So a person's `auto` applies only when `caller_context.is_verified(turn)`
+holds for THIS message; otherwise the turn runs MANUAL and the basis says why.
+Not "fall through to the agent's mode": the rule was written about Beth, and a
 message that may not be Beth is exactly the case to slow down on. A `manual`
 rule is always honoured — lowering autonomy is safe from anyone.
 
-An anyone-rule (`actor=""`) makes no claim about who sent it, so it needs no
+A channel rule (`actor=""`) makes no claim about who sent it, so it needs no
 verification: `email → auto` means what the agent-wide switch already means.
 
 **A dispatch may ask for a mode, and that request is the top rung.** An admin
@@ -57,8 +55,8 @@ manual stays RAISABLE by an admission `auto` rule when the turn's own rungs give
 standing posture, the message is verified and the caller is not confined (`_carried`):
 the session's posture is kept, but which box may answer it is the admission rule's.
 
-Pure given the loaded rows, like `services.assignment_rows_for` — callable from
-the claim path (which has them) and from the envelope (which loads them).
+`resolve` is pure given `load_rules`' answer: the claim loads the rules once for
+every agent it considers, and any other reader (the envelope) loads them itself.
 """
 from __future__ import annotations
 
@@ -76,7 +74,7 @@ class Resolved:
     mode: str
     # Human-readable, repeated by the agent in its turn opening.
     basis: str
-    # True only for the agent's STANDING posture (a routing rule or the agent's
+    # True only for the agent's STANDING posture (a turn-mode rule or the agent's
     # switch). An admission `auto` rule may raise that; never a mode someone held
     # back: an editor's cap, a dispatch that asked for manual, auto withheld from
     # an unverified message, or a session that started manual (unless `_carried`
@@ -84,22 +82,31 @@ class Resolved:
     raisable: bool = field(default=False, compare=False)
 
 
-def _rule_label(origin: str, actor: str) -> str:
-    return f"rule {origin}/{actor or 'anyone'}"
+def _rule_label(source: str, actor: str) -> str:
+    return f"rule {source or 'any channel'}/{actor or 'anyone'}"
 
 
-def resolve(*, agent, origin: str, actor: str, verified: bool, priorities: dict) -> Resolved:
-    """The mode for one (agent, origin, actor), given `load_assignment_rows`' rules."""
-    exact = priorities.get((agent.id, origin, actor)) if actor else None
-    anyone = priorities.get((agent.id, origin, ""))
-    for rule, named in ((exact, True), (anyone, False)):
-        if not rule:
-            continue
-        mode = rule[0].turn_mode
+def load_rules(agent_ids) -> dict:
+    """(agent id, source, actor) -> mode, for every turn-mode rule of these agents."""
+    from .models import TurnModeRule
+
+    return {
+        (agent_id, source, actor): mode
+        for agent_id, source, actor, mode in TurnModeRule.objects.filter(agent_id__in=list(agent_ids))
+        .values_list("agent_id", "source", "actor", "turn_mode")
+    }
+
+
+def resolve(*, agent, origin: str, actor: str, verified: bool, rules: dict) -> Resolved:
+    """The standing mode for one (agent, origin, actor), given `load_rules`."""
+    ladder = [(origin, actor), ("", actor)] if actor else []
+    ladder.append((origin, ""))
+    for source, who_ in ladder:
+        mode = rules.get((agent.id, source, who_))
         if mode not in MODES:
             continue
-        label = _rule_label(origin, actor if named else "")
-        if mode == AUTO and named and not verified:
+        label = _rule_label(source, who_)
+        if mode == AUTO and who_ and not verified:
             return Resolved(MANUAL, f"{label}: auto withheld, message not verified")
         return Resolved(mode, label, raisable=True)
     mode = agent.turn_mode if agent.turn_mode in MODES else MANUAL
@@ -228,7 +235,7 @@ def session_started_manual(turn) -> Resolved | None:
     return None
 
 
-def for_turn(turn, priorities: dict | None = None, *, fresh: bool = False) -> Resolved | None:
+def for_turn(turn, rules: dict | None = None, *, fresh: bool = False) -> Resolved | None:
     """The mode for a turn, or None for one with no agent (a project turn).
 
     Reads the claim-time stamp when there is one, so a rule edited mid-turn does
@@ -244,11 +251,11 @@ def for_turn(turn, priorities: dict | None = None, *, fresh: bool = False) -> Re
         return None
     started = session_started_manual(turn)
     if started is not None:
-        return _carried(started, turn, agent, priorities)
-    return _own_posture(turn, agent, priorities)
+        return _carried(started, turn, agent, rules)
+    return _own_posture(turn, agent, rules)
 
 
-def _carried(started: Resolved, turn, agent, priorities: dict | None) -> Resolved:
+def _carried(started: Resolved, turn, agent, rules: dict | None) -> Resolved:
     """A session that started manual keeps this turn manual. That manual is still
     RAISABLE by an admission `auto` rule when nothing about THIS turn holds it back:
     its own rungs resolve to the agent's standing posture, the message is verified,
@@ -261,14 +268,14 @@ def _carried(started: Resolved, turn, agent, priorities: dict | None) -> Resolve
 
     if not is_verified(turn):
         return started
-    if not _own_posture(turn, agent, priorities).raisable:
+    if not _own_posture(turn, agent, rules).raisable:
         return started
     return Resolved(MANUAL, started.basis, raisable=True)
 
 
-def _own_posture(turn, agent, priorities: dict | None) -> Resolved:
-    """The ladder below the session rung: a dispatch's request, the editor cap,
-    then the routing rules and the agent's switch."""
+def _own_posture(turn, agent, rules: dict | None) -> Resolved:
+    """The ladder below the session rung: a dispatch's request, a trigger's, the
+    editor cap, then the turn-mode rules and the agent's switch."""
     asked = requested(turn, agent)
     if asked is not None:
         return asked
@@ -278,13 +285,11 @@ def _own_posture(turn, agent, priorities: dict | None) -> Resolved:
     capped = editor_cap(turn, agent)
     if capped is not None:
         return capped
-    if priorities is None:
-        from .routing import load_assignment_rows
-
-        _defaults, priorities = load_assignment_rows([agent.id])
+    if rules is None:
+        rules = load_rules([agent.id])
     from .caller_context import is_verified
 
     return resolve(
         agent=agent, origin=turn.origin, actor=actors.actor_of(turn),
-        verified=is_verified(turn), priorities=priorities,
+        verified=is_verified(turn), rules=rules,
     )

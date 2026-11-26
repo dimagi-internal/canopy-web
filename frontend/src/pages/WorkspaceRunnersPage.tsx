@@ -178,7 +178,6 @@ function Topology({ slug }: { slug: string }): JSX.Element {
                                 </span>{' '}
                                 → <RouteChips routes={rows} runners={runners} selected={selected} />
                                 {rows[0].strict && <span className="ml-1 text-muted-foreground">only</span>}
-                                {rows[0].turn_mode && <span className="ml-1 text-muted-foreground">{rows[0].turn_mode}</span>}
                               </li>
                             ))}
                           </ul>

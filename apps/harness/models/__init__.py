@@ -52,6 +52,7 @@ from .schedule import (  # noqa: F401
     AgentSchedule,
     _default_notify,
 )
+from .turn_mode_rule import TurnModeRule  # noqa: F401
 from .turn import (  # noqa: F401
     ActAsGrant,
     CallerToken,

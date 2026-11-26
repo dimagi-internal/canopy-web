@@ -37,8 +37,6 @@ export type AgentRunnerRuleOut = Schemas['AgentRunnerRuleOut']
 // The routable source union, straight off the generated request schema — the
 // picker and the rule rows both key on it, so there is no hand-kept copy.
 export type RoutableSource = Schemas['AgentRunnerRuleIn']['source']
-// A rule's mode: '' (defer to the row below), 'manual' or 'auto'.
-export type RuleTurnMode = NonNullable<Schemas['AgentRunnerRuleIn']['turn_mode']>
 
 // The two runtime autonomy postures, straight off the request schema so the
 // toggle can't drift from the server's accepted values.
@@ -653,7 +651,6 @@ export type RunnerRuleEdit = {
   actor: string
   runnerIds: readonly string[]
   strict: boolean
-  turnMode: RuleTurnMode
 }
 
 // Saves the rules ONE AT A TIME: only the rules this edit changed are sent, and a
@@ -690,8 +687,7 @@ export async function saveAgentRunnerRules(
     const unchanged =
       old.length === r.runnerIds.length &&
       old.every((o, i) => o.runner_id === r.runnerIds[i]) &&
-      old[0]?.strict === r.strict &&
-      (old[0]?.turn_mode ?? '') === r.turnMode
+      old[0]?.strict === r.strict
     if (unchanged) continue
     const res = await apiV2.PUT('/api/agents/{slug}/runner-rules/{source}', {
       params: {
@@ -712,13 +708,45 @@ export async function saveAgentRunnerRules(
           enabled: old.find((o) => o.runner_id === id)?.enabled ?? true,
         })),
         strict: r.strict,
-        // '' = the rule says nothing about mode; the next row down decides.
-        turn_mode: r.turnMode,
       },
     })
     unwrap(res, 'setAgentRunnerRule')
   }
   return getAgentRunnerRules(slug, workspace)
+}
+
+// ---- turn-mode rules: whether work runs manual or auto (no runner involved) ----
+export type TurnModeRuleOut = Schemas['TurnModeRuleOut']
+export type TurnModeRuleIn = Schemas['TurnModeRuleIn']
+
+export async function getTurnModeRules(slug: string, workspace?: string): Promise<TurnModeRuleOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/turn-mode-rules', {
+    params: { path: { slug } },
+    ...pin(workspace),
+  })
+  return Array.from(unwrap(res, 'getTurnModeRules'))
+}
+
+// Sets ONE rule, keyed by (source, actor); returns every rule.
+export async function setTurnModeRule(
+  slug: string, rule: TurnModeRuleIn, workspace?: string,
+): Promise<TurnModeRuleOut[]> {
+  const res = await apiV2.PUT('/api/agents/{slug}/turn-mode-rules', {
+    params: { path: { slug } },
+    ...pin(workspace),
+    body: rule,
+  })
+  return Array.from(unwrap(res, 'setTurnModeRule'))
+}
+
+export async function deleteTurnModeRule(
+  slug: string, rule: { source: string; actor: string }, workspace?: string,
+): Promise<void> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/turn-mode-rules', {
+    params: { path: { slug }, query: { source: rule.source, actor: rule.actor } },
+    ...pin(workspace),
+  })
+  if (res.error) unwrap(res, 'deleteTurnModeRule')
 }
 
 export type AgentAdminOut = Schemas['AgentAdminOut']

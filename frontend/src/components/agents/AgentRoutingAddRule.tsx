@@ -1,34 +1,28 @@
 // The add-a-rule row of the routing table (`AgentRouting`).
 import { useState, } from 'react'
-import {
-  type RoutableSource,
-  type RuleTurnMode,
-  } from '@/api/agents'
+import { type RoutableSource } from '@/api/agents'
 import { type RunnerOut } from '@/api/harness'
 import {
   ACTORLESS_SOURCES,
   ROUTABLE_SOURCES,
   SOURCE_LABEL,
   hasRule,
-  inheritedMode,
   type GroupedRule,
   } from '@/components/agents/RunnerSourceRules'
 
-import { GRID, Cell, RuleModeSelect } from './AgentRoutingRules'
+import { GRID, Cell } from './AgentRoutingRules'
 
 export function AddRuleRow({
-  fleet, rules, agentMode, onAdd, onCancel,
+  fleet, rules, onAdd, onCancel,
 }: {
   fleet: readonly RunnerOut[]
   rules: readonly GroupedRule[]
-  agentMode: 'manual' | 'auto'
-  onAdd: (source: string, actor: string, runnerId: string, turnMode: RuleTurnMode) => void
+  onAdd: (source: string, actor: string, runnerId: string) => void
   onCancel: () => void
 }) {
   const [source, setSource] = useState<RoutableSource>('email')
   const [actor, setActor] = useState('')
   const [runnerId, setRunnerId] = useState(fleet[0]?.id ?? '')
-  const [turnMode, setTurnMode] = useState<RuleTurnMode>('')
   const actorless = ACTORLESS_SOURCES.has(source)
   const who = actorless ? '' : actor.trim()
   const duplicate = hasRule(rules, source, who)
@@ -36,7 +30,7 @@ export function AddRuleRow({
 
   const submit = () => {
     if (duplicate || !runnerId) return
-    onAdd(source, who, runnerId, turnMode)
+    onAdd(source, who, runnerId)
   }
 
   return (
@@ -93,14 +87,6 @@ export function AddRuleRow({
         </Cell>
         <Cell label="If all down">
           <span className="text-[11px] text-muted-foreground">Fall back</span>
-        </Cell>
-        <Cell label="Mode">
-          <RuleModeSelect
-            value={turnMode}
-            inherited={who ? inheritedMode({ source, actor: who }, rules, agentMode) : agentMode}
-            label="Mode"
-            onChange={setTurnMode}
-          />
         </Cell>
         <span />
       </form>

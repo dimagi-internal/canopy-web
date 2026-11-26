@@ -1,5 +1,18 @@
-"""/api/agents/{slug}/… — which runners do an agent's work: the ordered default list,
-per-source rules and per-person routes, and the gate every routing write passes."""
+"""/api/agents/{slug}/… — WHICH RUNNERS do an agent's work. Routing only: whether
+that work runs manual or auto is `api_turn_mode.py`, and needs no runner.
+
+Three things, evaluated most specific first (`routing_orders.assignment_rows_for`):
+
+* a person's rule — `source` + `actor`: that person's work on that channel;
+* a channel rule — `source`, any actor;
+* the default order — `GET|PUT /runners` (or, with none, the workspace's order).
+
+A rule is the `RunnerAssignment` rows sharing one (source, actor). Writes:
+`PUT /runner-rules/{source}[?actor=]` sets one rule, `PUT /actor-routes/{actor}` sets
+one person's rule on several channels at once, and `PUT /runner-rules` replaces
+them all (for scripts). Every write passes one gate, `_runners_for_routing`: a
+runner it ADDS must be one the caller administers and one that may hold the agent.
+"""
 from __future__ import annotations
 
 from django.db import transaction
@@ -33,7 +46,6 @@ from .gates import (
     agent_for_read,
     agent_for_work,
 )
-from .route_refusals import refuse_auto_unless_admin
 from .schemas import (
     AgentActorRouteIn,
     AgentActorRouteOut,
@@ -118,8 +130,10 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
     if refused:
         raise HttpError(
             403,
-            f"you don't administer runner(s) {', '.join(sorted(refused))} — ask its owner to "
-            "grant you admin (POST /api/harness/runners/{id}/admins)",
+            f"you don't administer runner(s) {', '.join(sorted(refused))}, so you can't send "
+            f"{agent.slug}'s work there — ask the runner's owner to do it or to grant you admin. "
+            "(To change only whether work runs manual or auto, you need no runner: that is a "
+            f"turn-mode rule, PUT /api/agents/{agent.slug}/turn-mode-rules.)",
         )
     _refuse_runners_that_cannot_hold(agent, [by_id[rid] for rid in added])
     _refuse_runners_serving_others(agent, [by_id[rid] for rid in added])
@@ -355,8 +369,11 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
             summary="List the agent's per-source routing rules")
 @gate("member")
 def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunnerRuleOut]:
-    """The per-source overrides on top of the default ordered list. One rule per source, max — the priority runner, and whether it is
-    the only one allowed to take that source's work."""
+    """The rules layered on the default order, one row per (source, person, runner):
+    a rule's runners in preference order, and whether ONLY they may take its work
+    (`strict`). A rule with `actor` routes one person's work on that source; one
+    without routes anyone's. Routing only: whether that work runs manual or auto is
+    `GET /turn-mode-rules`."""
     from collections import Counter
 
     agent = agent_for_read(request, slug)
@@ -396,32 +413,22 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
             # Every row of a rule repeats its RULE's count: the parked queue belongs
             # to the rule, not to one runner in it.
             queued_count=queued.get((row.source, row.actor), 0),
-            turn_mode=row.turn_mode,
         )
         for row in rows
     ]
 
 
-def _current_rules(agent) -> dict:
-    """(source, actor) -> {"ids": runner ids in the rule, "turn_mode": its mode}."""
+def _rule_runner_ids(agent) -> dict[tuple[str, str], set]:
+    """(source, actor) -> the runner ids that rule names now — what a write KEEPS
+    rather than adds (`_runners_for_routing`)."""
 
     out: dict = {}
-    for source, actor, runner_id, turn_mode in (
+    for source, actor, runner_id in (
         RunnerAssignment.objects.filter(agent=agent).exclude(source="")
-        .values_list("source", "actor", "runner_id", "turn_mode")
+        .values_list("source", "actor", "runner_id")
     ):
-        rule = out.setdefault((source, actor), {"ids": set(), "turn_mode": turn_mode})
-        rule["ids"].add(runner_id)
+        out.setdefault((source, actor), set()).add(runner_id)
     return out
-
-
-def _refuse_new_auto(request: HttpRequest, agent, source: str, actor: str, turn_mode: str,
-                     current: dict) -> None:
-    """Setting a rule to `auto` is for the agent's admins — but only SETTING it:
-    keeping an `auto` an admin already set is not, or an editor could never save
-    the rules around it."""
-    if turn_mode == "auto" and current.get((source, actor), {}).get("turn_mode") != "auto":
-        refuse_auto_unless_admin(request, agent, f"a routing rule ({source}/{actor or 'anyone'})")
 
 
 @router.put("/{slug}/runner-rules", response=list[AgentRunnerRuleOut],
@@ -452,12 +459,7 @@ def replace_agent_runner_rules(
             raise HttpError(422, f"not an email address: {r.actor!r}")
         actors.append(actor)
 
-    current = _current_rules(agent)
-
-    # `auto` on a rule is the agent's admins' to set (docs/architecture/access.md).
-    # Asked before the runners are, so an editor is told the actual reason.
-    for r, actor in zip(payload.rules, actors):
-        _refuse_new_auto(request, agent, r.source, actor, r.turn_mode, current)
+    current = _rule_runner_ids(agent)
 
     # One rule per (source, actor) — several actors MAY share a source, which is
     # the whole feature. Caught here rather than left to the DB constraint so the
@@ -483,7 +485,7 @@ def replace_agent_runner_rules(
     for r, actor in zip(payload.rules, actors):
         by_id.update(_runners_for_routing(
             request, agent, [row.runner_id for row in r.runners],
-            current.get((r.source, actor), {}).get("ids", ()),
+            current.get((r.source, actor), ()),
         ))
 
     with transaction.atomic():
@@ -496,7 +498,6 @@ def replace_agent_runner_rules(
             RunnerAssignment(
                 agent=agent, runner=by_id[row.runner_id], rank=rank,
                 source=r.source, actor=actor, strict=r.strict, enabled=row.enabled,
-                turn_mode=r.turn_mode,
             )
             for r, actor in zip(payload.rules, actors)
             for rank, row in enumerate(r.runners)
@@ -510,11 +511,8 @@ def replace_agent_runner_rules(
 
 # ---- one rule at a time ----
 #
-# A rule belongs to one (source, person) — the person's work, routed to boxes that
-# may belong to someone else entirely. Saving ALL of an agent's rules to change
-# one made every save depend on rights over every box any rule names, which no
-# one holds once two people's boxes are involved. The Settings page saves here,
-# one changed rule at a time; the wholesale PUT above stays for scripts.
+# The Settings page saves here, one changed rule at a time, so a save never
+# re-sends rules that name someone else's boxes.
 
 def _rule_key_or_422(source: str, actor: str) -> tuple[str, str]:
     from typing import get_args
@@ -549,9 +547,7 @@ def set_agent_runner_rule(
     ids = [row.runner_id for row in payload.runners]
     if len(ids) != len(set(ids)):
         raise HttpError(422, "a runner may appear once per rule")
-    current = _current_rules(agent)
-    _refuse_new_auto(request, agent, source, actor, payload.turn_mode, current)
-    by_id = _runners_for_routing(request, agent, ids, current.get((source, actor), {}).get("ids", ()))
+    by_id = _runners_for_routing(request, agent, ids, _rule_runner_ids(agent).get((source, actor), ()))
 
     scope = f"{source} rule" + (f" for {actor}" if actor else "")
     with transaction.atomic():
@@ -561,7 +557,6 @@ def set_agent_runner_rule(
             RunnerAssignment(
                 agent=agent, runner=by_id[row.runner_id], rank=rank, source=source,
                 actor=actor, strict=payload.strict, enabled=row.enabled,
-                turn_mode=payload.turn_mode,
             )
             for rank, row in enumerate(payload.runners)
         ])
@@ -592,15 +587,11 @@ def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor
     return Status(204, None)
 
 
-# ---- per-person routing (the additive face of the actor rules above) ----
+# ---- per-person routing ----
 #
-# The same RunnerAssignment rows as /runner-rules, addressed by PERSON instead of
-# wholesale. Two things made "route Alice to my laptop" impractical there:
-#   1. a person spans five sources, so it took five hand-built rules; and
-#   2. the PUT replaces every rule and requires the caller to have paired every
-#      runner it names — so anyone but the operator who owns ALL the boxes got a
-#      422 just for re-sending the rules already there.
-# These routes touch one actor's rows only, and gate on the runners being NAMED.
+# The same rows as /runner-rules, addressed by PERSON: one write sets that person's
+# rule on every channel it names (all channels that carry a person, by default),
+# and touches no one else's.
 
 def _actor_or_422(actor: str) -> str:
 
@@ -636,7 +627,7 @@ def list_agent_actor_routes(request: HttpRequest, slug: str) -> list[AgentActorR
 
     grouped: dict[tuple, AgentActorRouteOut] = {}
     for (actor, source), rows in by_rule.items():
-        key = (actor, tuple((r.runner_id, r.enabled) for r in rows), rows[0].strict, rows[0].turn_mode)
+        key = (actor, tuple((r.runner_id, r.enabled) for r in rows), rows[0].strict)
         route = grouped.get(key)
         if route is None:
             route = grouped[key] = AgentActorRouteOut(
@@ -648,7 +639,7 @@ def list_agent_actor_routes(request: HttpRequest, slug: str) -> list[AgentActorR
                     )
                     for r in rows
                 ],
-                strict=rows[0].strict, sources=[], turn_mode=rows[0].turn_mode,
+                strict=rows[0].strict, sources=[],
             )
         route.sources.append(source)
         route.queued_count += rows[0].queued_count
@@ -668,15 +659,17 @@ def set_agent_actor_route(
     `actor` is the person's email. With `strict` (the default) only the named
     runners may take their work — if those are offline it waits; with
     `strict=false` it falls back to the agent's usual runners after a minute.
-    You may name only runners you administer (you own it, or its owner
-    granted you admin) — this decides where work runs, so it is gated on the box,
-    not just the agent. Remove a route with DELETE on the same path.
+    A runner the route ADDS must be one you administer (you own it, or its owner
+    granted you admin): this decides where work runs, so it is gated on the box.
+    Runners it already names are kept as they are. Routing only — whether this
+    person's work runs manual or auto is `PUT /turn-mode-rules`, which names no
+    runner. Remove a route with DELETE on the same path.
     An `actor` that is not an email address is a 422.
     """
 
     agent = agent_for_work(request, slug)
     actor = _actor_or_422(actor)
-    current = _current_rules(agent)
+    current = _rule_runner_ids(agent)
 
     sources = list(dict.fromkeys(payload.sources or _actor_sources()))
     dead = [s for s in sources if s not in _actor_sources()]
@@ -688,13 +681,10 @@ def set_agent_actor_route(
     if len(ids) != len(set(ids)):
         raise HttpError(422, "a runner may appear once per route")
 
-    # Per source, like the rules it writes: `auto` and the runners are gated on
-    # what changes in each (`_refuse_new_auto`, `_runners_for_routing`).
+    # Per source, like the rules it writes: the gate is on the runners each one ADDS.
     runners: dict = {}
     for source in sources:
-        _refuse_new_auto(request, agent, source, actor, payload.turn_mode, current)
-        runners.update(_runners_for_routing(
-            request, agent, ids, current.get((source, actor), {}).get("ids", ())))
+        runners.update(_runners_for_routing(request, agent, ids, current.get((source, actor), ())))
 
     with transaction.atomic():
         before = routing_audit.agent_rows(agent, actor=actor, rules_only=True)
@@ -703,7 +693,6 @@ def set_agent_actor_route(
             RunnerAssignment(
                 agent=agent, runner=runners[row.runner_id], rank=rank, source=source,
                 actor=actor, strict=payload.strict, enabled=row.enabled,
-                turn_mode=payload.turn_mode,
             )
             for source in sources
             for rank, row in enumerate(payload.runners)

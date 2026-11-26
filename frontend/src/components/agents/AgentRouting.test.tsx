@@ -14,7 +14,6 @@ vi.mock('@/api/harness', () => ({ listRunners }))
 // The last row's controls have their own tests; here they only need to render.
 vi.mock('@/components/agents/RunnerAssignments', () => ({ RunnerAssignments: () => <div>default-runners</div> }))
 vi.mock('@/components/agents/AgentDefaultRunners', () => ({ AgentDefaultRunners: () => <div>default-runners</div> }))
-vi.mock('@/components/agents/TurnModeToggle', () => ({ TurnModeToggle: () => <div>agent-mode</div> }))
 
 const { AgentRouting } = await import('./AgentRouting')
 
@@ -27,7 +26,7 @@ function rule(over: Partial<AgentRunnerRuleOut>): AgentRunnerRuleOut {
   return {
     source: 'email', actor: '', rank: 0, runner_id: 'r-cloud', runner_name: 'cloud-1',
     kind: 'cloud', strict: false, online: true, ready: true, enabled: true, queued_count: 0,
-    turn_mode: '', ...over,
+    ...over,
   }
 }
 
@@ -40,7 +39,7 @@ async function mount(rules: AgentRunnerRuleOut[]) {
   getAgentRunnerRules.mockResolvedValue(rules)
   listRunners.mockResolvedValue(fleet)
   saveAgentRunnerRules.mockImplementation(async () => rules)
-  render(<AgentRouting agentSlug="eva" initialTurnMode="manual" />)
+  render(<AgentRouting agentSlug="eva" />)
   await screen.findByTestId('routing-default-row')
 }
 
@@ -63,25 +62,10 @@ describe('AgentRouting', () => {
     ])
   })
 
-  it('says what a rule with no mode inherits', async () => {
-    await mount([rule({ actor: '', turn_mode: 'auto' }), rule({ actor: 'beth@dimagi.com' })])
-    const beth = screen.getByTestId('runner-rule-email-beth@dimagi.com')
-    const select = within(beth).getByRole('combobox', { name: /Mode for/ }) as HTMLSelectElement
-    expect(select.selectedOptions[0].textContent).toBe('As below (Auto)')
-  })
-
-  it('says once, under the table, that a named auto rule holds only for verified mail', async () => {
-    await mount([
-      rule({ actor: 'beth@dimagi.com', turn_mode: 'auto' }),
-      rule({ source: 'api', actor: 'jj@dimagi.com', turn_mode: 'auto', runner_id: 'r-mbp', runner_name: 'jj-mbp' }),
-    ])
-    expect(screen.getAllByTestId('routing-verified-note')).toHaveLength(1)
-    expect(screen.getByTestId('routing-verified-note').textContent).toMatch(/verified as theirs/)
-  })
-
-  it('leaves the verified note out when no named rule runs auto', async () => {
+  it('has no mode column: mode is the turn-mode table, not routing', async () => {
     await mount([rule({ actor: 'beth@dimagi.com' })])
-    expect(screen.queryByTestId('routing-verified-note')).toBeNull()
+    expect(screen.queryByRole('columnheader', { name: 'Mode' })).toBeNull()
+    expect(within(screen.getByTestId('runner-rule-email-beth@dimagi.com')).queryByRole('combobox', { name: /Mode/ })).toBeNull()
     // the detail sits behind one disclosure
     expect(screen.getByText('How routing works')).toBeTruthy()
   })
@@ -125,22 +109,21 @@ describe('AgentRouting', () => {
     fireEvent.change(add, { target: { value: 'canopy_web_chat' } })
     await waitFor(() => expect(saveAgentRunnerRules).toHaveBeenCalled())
     expect(saveAgentRunnerRules.mock.calls[0][2]).toEqual([
-      { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-mbp'], strict: true, turnMode: '' },
-      { source: 'canopy_web_chat', actor: 'jj@dimagi.com', runnerIds: ['r-mbp'], strict: true, turnMode: '' },
+      { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-mbp'], strict: true },
+      { source: 'canopy_web_chat', actor: 'jj@dimagi.com', runnerIds: ['r-mbp'], strict: true },
     ])
   })
 
-  it('adds "email from beth -> cloud, auto" in one step', async () => {
+  it('adds "email from beth -> cloud" in one step', async () => {
     await mount([])
     fireEvent.click(screen.getByTestId('runner-rules-add-toggle'))
     const form = screen.getByTestId('routing-add-row')
     fireEvent.change(within(form).getByRole('textbox', { name: 'Sender' }), { target: { value: 'beth@dimagi.com' } })
-    fireEvent.change(within(form).getByRole('combobox', { name: 'Mode' }), { target: { value: 'auto' } })
     fireEvent.click(screen.getByTestId('routing-add-submit'))
 
     await waitFor(() => expect(saveAgentRunnerRules).toHaveBeenCalled())
     expect(saveAgentRunnerRules.mock.calls[0][2]).toEqual([{
-      source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r-cloud'], strict: false, turnMode: 'auto',
+      source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r-cloud'], strict: false,
     }])
   })
 

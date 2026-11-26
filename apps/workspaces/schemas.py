@@ -316,7 +316,6 @@ class TopologyRouteOut(StrictModel):
     source: str
     actor: str
     strict: bool
-    turn_mode: str
     can_claim: bool
     # True for a default-order row the agent FOLLOWS from its workspace's order
     # (it has none of its own), rather than a row of its own.
@@ -570,7 +569,7 @@ class AgentHealthOut(StrictModel):
     email: str
     repo_url: str
     # manual: its turns stop for a person's approval before acting or sending;
-    # auto: they run through. (A routing rule can set a turn's mode itself.)
+    # auto: they run through. (A turn-mode rule can set it per channel or person.)
     turn_mode: str
     # Whether it publishes read mode or a host site: what people other than its admins may
     # ask it to do.
