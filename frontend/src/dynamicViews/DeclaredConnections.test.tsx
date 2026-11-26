@@ -24,6 +24,21 @@ describe('DeclaredConnections', () => {
     expect(container.textContent).toContain('This screen acts as eva in Salesforce: Change Leads, Search any record eva can see')
   })
 
+  it('is one line until opened: which accounts, with the full list behind "What it can do"', () => {
+    const { container } = render(
+      <DeclaredConnections
+        connections={[
+          { provider: 'salesforce', as: 'viewer', reads: [{ method: 'GET', path: 'query' }] },
+          { provider: 'google', as: 'viewer', reads: [{ method: 'GET', path: 'gmail/v1/users/me/messages' }] },
+        ]}
+      />,
+    )
+    const details = container.querySelector('details')
+    expect(details).toBeTruthy()
+    expect(details?.open).toBe(false)
+    expect(container.querySelector('summary')?.textContent).toBe('This screen uses your Salesforce and your Google. What it can do')
+  })
+
   it('shows an unrecognised call as code', () => {
     render(<DeclaredConnections connections={[{ provider: 'salesforce', reads: [{ method: 'GET', path: 'limits' }] }]} />)
     expect(screen.getByText('GET limits').className).toContain('font-mono')
