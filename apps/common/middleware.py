@@ -243,7 +243,10 @@ def _is_storyboard_link(request) -> bool:
 # /ext/panel/ is the browser extension's side panel (apps/embedding/extension.py): it is
 # framed, and a framed bounce to Google is refused, so a signed-out panel must render its
 # own "Sign in to Canopy" button. The shell carries no data; every read needs a session.
-_PUBLIC_PAGES = frozenset({"/about", "/get-started", "/listen", "/ext/panel/", "/ext/panel"})
+# /robots.txt and /sitemap.xml are for crawlers (config/crawlers.py): bounced to Google
+# sign-in, Search Console reads the sign-in page as the site's robots rules.
+_PUBLIC_PAGES = frozenset({"/about", "/get-started", "/listen", "/ext/panel/", "/ext/panel",
+                           "/robots.txt", "/sitemap.xml"})
 
 
 def _is_public_page(path: str) -> bool:
