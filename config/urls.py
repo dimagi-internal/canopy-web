@@ -28,6 +28,7 @@ from apps.oauth_server import views_oauth
 from apps.oauth_server.views_oauth import client_metadata as oauth_client_metadata
 from apps.oauth_server.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
+from config import crawlers
 from config.views import FLAT_ARTIFACT_PATH, csrf_view, flat_artifact_gone, health_check, spa_view
 
 # The admin opens through the Google session only: no password form.
@@ -66,6 +67,9 @@ urlpatterns = [
     # public keys only. See apps/oauth_server/views_oauth.py.
     # Google site verification for canopy's domain (apps/common/site_verification.py).
     re_path(r"^(?P<name>google[0-9a-f]{16}\.html)$", google_site_verification, name="google-site-verification"),
+    # What crawlers may read: Google Search, the public site only; no AI crawler (config/crawlers.py).
+    path("robots.txt", crawlers.robots_txt, name="robots-txt"),
+    path("sitemap.xml", crawlers.sitemap_xml, name="sitemap-xml"),
     path("oauth/client.json", oauth_client_metadata, name="oauth-client-metadata"),
     path("oauth/jwks.json", oauth_jwks, name="oauth-jwks"),
     # canopy-web as a HOST of its own MCP (apps/host_grants/self_host.py): the

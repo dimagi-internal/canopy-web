@@ -83,6 +83,8 @@ PUBLIC_PATHS = [
     "/get-started",
     "/listen",
     "/api/system/public-stats",
+    "/robots.txt",
+    "/sitemap.xml",
 ]
 
 
