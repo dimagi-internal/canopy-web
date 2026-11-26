@@ -1070,9 +1070,8 @@ def _landed_upstream(repo: pathlib.Path, tip: str) -> bool:
     branch as the same change: cherry-picked / rebase-merged (`git cherry` marks every
     one `-`), or squash-merged (the branch's whole diff has the patch-id of one commit
     there). A PR merged with "Squash and merge" leaves the session's local commit on no
-    remote forever, so without this the sweep kept every such dir and the disk filled
-    (cloud-ec2-live, 2026-11-26: 45 kept dirs, 12.8 GiB, 96% full; one of them was
-    canopy-web #2707's pre-squash commit). Anything it cannot decide is NOT landed:
+    remote forever; counting that as unsaved keeps every such dir and fills the disk.
+    Anything it cannot decide is NOT landed:
     a stale or missing origin ref, an unreadable repo, a diff that changed on the way."""
     default = _remote_default(repo)
     if not default:

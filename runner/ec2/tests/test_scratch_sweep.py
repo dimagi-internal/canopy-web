@@ -174,9 +174,8 @@ def _squash_into_origin(origin, clone, branch, msg):
 
 
 def test_a_branch_squash_merged_upstream_is_not_unsaved_work(box):
-    """cloud-ec2-live, 2026-11-26: 45 dirs (12.8 GiB) were kept as 'commits on no
-    remote', the disk hit 96%, and one of them was canopy-web #2707's pre-squash
-    commit. Its change was on main; only its sha was not."""
+    """A squash merge puts the branch's change on main under a new sha, so the
+    branch's own commits stay on no remote. The work is saved; the dir can go."""
     cr, scratch, _work, origin, _ = box
     clone = _clone(origin, scratch / "squashed")
     _git("checkout", "-qb", "feat/keep-awake", cwd=clone)
@@ -184,7 +183,7 @@ def test_a_branch_squash_merged_upstream_is_not_unsaved_work(box):
     _commit(clone, "keep awake, part 1")
     (clone / "b.py").write_text("two\n")
     _commit(clone, "keep awake, part 2")
-    _squash_into_origin(origin, clone, "feat/keep-awake", "Laptop runner: stay awake (#2707)")
+    _squash_into_origin(origin, clone, "feat/keep-awake", "Laptop runner: stay awake (squashed)")
     (origin / "later.txt").write_text("main moved on\n")
     _commit(origin, "an unrelated later commit")
     _git("fetch", "-q", "origin", cwd=clone)
