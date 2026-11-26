@@ -1028,14 +1028,71 @@ def _unsaved_git_work(path: pathlib.Path) -> str:
             return f"{repo}: git cannot read it"
         if status.strip():
             return f"{repo}: uncommitted changes"
-        refs = ["HEAD"] if (repo / ".git").is_file() else ["HEAD", "--branches"]
-        sha = _git_out("-C", str(repo), "rev-list", "-n1", *refs, "--not", "--remotes")
-        if sha is None:
-            return f"{repo}: git cannot read it"
-        if sha.strip():
-            subject = (_git_out("-C", str(repo), "log", "-1", "--format=%s", sha.strip()) or "").strip()
-            return f"{repo}: commits on no remote ({subject[:120]})"
+        tips = ["HEAD"]
+        if not (repo / ".git").is_file():
+            branches = _git_out("-C", str(repo), "for-each-ref", "--format=%(refname)", "refs/heads")
+            if branches is None:
+                return f"{repo}: git cannot read it"
+            tips += branches.split()
+        for tip in tips:
+            sha = _git_out("-C", str(repo), "rev-list", "-n1", tip, "--not", "--remotes")
+            if sha is None:
+                return f"{repo}: git cannot read it"
+            if sha.strip() and not _landed_upstream(repo, tip):
+                subject = (_git_out("-C", str(repo), "log", "-1", "--format=%s", sha.strip()) or "").strip()
+                return f"{repo}: commits on no remote ({subject[:120]})"
     return ""
+
+
+_UPSTREAM_SCAN = 3000  # commits on the default branch searched for a squash of a tip
+
+
+def _remote_default(repo: pathlib.Path) -> str | None:
+    """The remote-tracking ref of origin's default branch, as this clone last fetched it."""
+    head = (_git_out("-C", str(repo), "symbolic-ref", "-q", "refs/remotes/origin/HEAD") or "").strip()
+    for ref in ([head] if head else []) + ["refs/remotes/origin/main", "refs/remotes/origin/master"]:
+        if _git_out("-C", str(repo), "rev-parse", "-q", "--verify", ref):
+            return ref
+    return None
+
+
+def _patch_ids(diff_text: str) -> set[str]:
+    try:
+        r = subprocess.run(["git", "patch-id", "--stable"], input=diff_text, capture_output=True,
+                           text=True, timeout=60)
+    except Exception:  # noqa: BLE001
+        return set()
+    return {line.split()[0] for line in r.stdout.splitlines() if line.strip()}
+
+
+def _landed_upstream(repo: pathlib.Path, tip: str) -> bool:
+    """True when the commits `tip` holds on no remote already reached origin's default
+    branch as the same change: cherry-picked / rebase-merged (`git cherry` marks every
+    one `-`), or squash-merged (the branch's whole diff has the patch-id of one commit
+    there). A PR merged with "Squash and merge" leaves the session's local commit on no
+    remote forever; counting that as unsaved keeps every such dir and fills the disk.
+    Anything it cannot decide is NOT landed:
+    a stale or missing origin ref, an unreadable repo, a diff that changed on the way."""
+    default = _remote_default(repo)
+    if not default:
+        return False
+    cherry = _git_out("-C", str(repo), "cherry", default, tip)
+    if cherry is None:
+        return False
+    if cherry.strip() and not any(line.startswith("+") for line in cherry.splitlines()):
+        return True
+    base = (_git_out("-C", str(repo), "merge-base", default, tip) or "").strip()
+    if not base:
+        return False
+    whole = _git_out("-C", str(repo), "diff", base, tip)
+    if not whole or not whole.strip():
+        return False
+    mine = _patch_ids(whole)
+    if len(mine) != 1:
+        return False
+    upstream = _git_out("-C", str(repo), "log", "-p", "--no-merges", f"--max-count={_UPSTREAM_SCAN}",
+                        f"{base}..{default}", timeout=120)
+    return bool(upstream) and bool(mine & _patch_ids(upstream))
 
 
 def _entry_bytes(path: pathlib.Path) -> int:

@@ -162,6 +162,84 @@ def test_a_branch_not_checked_out_still_counts(box):
     assert clone.exists()
 
 
+def _squash_into_origin(origin, clone, branch, msg):
+    """What GitHub's "Squash and merge" does: the branch's whole change lands on main
+    as ONE new commit, so the branch's own commits never reach the remote."""
+    diff = subprocess.run(["git", "diff", "main", branch], cwd=clone, check=True,
+                          capture_output=True, text=True).stdout
+    subprocess.run(["git", "apply"], input=diff, cwd=origin, check=True, text=True,
+                   capture_output=True)
+    _commit(origin, msg)
+    _git("fetch", "-q", "origin", cwd=clone)
+
+
+def test_a_branch_squash_merged_upstream_is_not_unsaved_work(box):
+    """A squash merge puts the branch's change on main under a new sha, so the
+    branch's own commits stay on no remote. The work is saved; the dir can go."""
+    cr, scratch, _work, origin, _ = box
+    clone = _clone(origin, scratch / "squashed")
+    _git("checkout", "-qb", "feat/keep-awake", cwd=clone)
+    (clone / "a.py").write_text("one\n")
+    _commit(clone, "keep awake, part 1")
+    (clone / "b.py").write_text("two\n")
+    _commit(clone, "keep awake, part 2")
+    _squash_into_origin(origin, clone, "feat/keep-awake", "Laptop runner: stay awake (squashed)")
+    (origin / "later.txt").write_text("main moved on\n")
+    _commit(origin, "an unrelated later commit")
+    _git("fetch", "-q", "origin", cwd=clone)
+    assert cr._unsaved_git_work(clone) == ""
+    _age(clone)  # after the check: its `git status` rewrites files under .git
+    cr.sweep_scratch()
+    assert not clone.exists()
+
+
+def test_a_branch_rebase_merged_upstream_is_not_unsaved_work(box):
+    cr, scratch, _work, origin, _ = box
+    clone = _clone(origin, scratch / "rebased")
+    _git("checkout", "-qb", "fix/one", cwd=clone)
+    (clone / "f").write_text("x\n")
+    _commit(clone, "fix one")
+    sha = _git("rev-parse", "HEAD", cwd=clone)
+    (origin / "other.txt").write_text("main moved first\n")
+    _commit(origin, "main moved first")  # so the pick gets a new sha, as a rebase-merge does
+    _git("fetch", "-q", str(clone), sha, cwd=origin)
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "cherry-pick", sha, cwd=origin)
+    _git("fetch", "-q", "origin", cwd=clone)
+    assert cr._unsaved_git_work(clone) == ""
+
+
+def test_a_squash_that_differs_from_the_branch_keeps_it(box):
+    """Main got a DIFFERENT version of the change (edited in review, or a partial
+    merge): the branch's diff is not on main, so its work exists nowhere else."""
+    cr, scratch, _work, origin, _ = box
+    clone = _clone(origin, scratch / "diverged")
+    _git("checkout", "-qb", "feat/x", cwd=clone)
+    (clone / "a.py").write_text("mine\n")
+    _commit(clone, "my version")
+    (origin / "a.py").write_text("theirs\n")
+    _commit(origin, "their version")
+    _git("fetch", "-q", "origin", cwd=clone)
+    assert "commits on no remote" in cr._unsaved_git_work(clone)
+    _age(clone)
+    cr.sweep_scratch()
+    assert clone.exists()
+
+
+def test_an_unmerged_branch_beside_a_squash_merged_one_still_keeps_the_clone(box):
+    cr, scratch, _work, origin, _ = box
+    clone = _clone(origin, scratch / "mixed")
+    _git("checkout", "-qb", "feat/done", cwd=clone)
+    (clone / "done.py").write_text("d\n")
+    _commit(clone, "done")
+    _squash_into_origin(origin, clone, "feat/done", "done (#1)")
+    _git("checkout", "-q", "main", cwd=clone)
+    _git("checkout", "-qb", "feat/open", cwd=clone)
+    (clone / "open.py").write_text("o\n")
+    _commit(clone, "still open")
+    _git("checkout", "-q", "main", cwd=clone)
+    assert "still open" in cr._unsaved_git_work(clone)
+
+
 def test_a_clone_nested_in_a_scratch_dir_protects_the_whole_dir(box):
     cr, scratch, _work, origin, _ = box
     parent = scratch / "ada-43e84a56"
