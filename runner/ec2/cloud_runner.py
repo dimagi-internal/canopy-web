@@ -5723,10 +5723,10 @@ def _lat_take(turn_id: str) -> dict | None:
 def _lat_emit(turn_id: str, emit):
     """`emit`, noting `first_text` at the first assistant text the session produced
     (before any gate holds it: the trace measures the model, not the release)."""
-    def wrapped(event: dict) -> None:
-        if isinstance(event, dict) and event.get("kind") == "assistant":
+    def wrapped(events) -> None:
+        if any(isinstance(e, dict) and e.get("kind") == "assistant" for e in events or ()):
             _lat_mark(turn_id, "first_text")
-        emit(event)
+        emit(events)
     return wrapped
 
 
@@ -5766,6 +5766,8 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     gate = _ConfinedToolsGate.for_turn(getattr(_TURN_ENV, "confined", None), emit)
     if gate is not None:
         emit = gate.emit
+    # Outermost, so `first_text` is when the model wrote the text, not when the gate
+    # releases it at the end of the turn.
     emit = _lat_emit(turn_id, emit)
     _lat_fact(turn_id, warm=bool(resume))
 

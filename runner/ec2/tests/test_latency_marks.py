@@ -12,17 +12,29 @@ def test_marks_are_first_write_wins_and_taken_once(cloud_runner):
     assert cloud_runner._lat_take("t1") is None
 
 
-def test_first_text_is_the_first_assistant_event_and_every_event_still_passes(cloud_runner):
+def test_first_text_is_the_first_assistant_event_and_every_batch_still_passes(cloud_runner):
+    """`emit` takes a batch of events, as the ACP loop and the confined-tools gate pass them."""
     seen = []
     emit = cloud_runner._lat_emit("t2", seen.append)
-    emit({"kind": "tool_start"})
+    emit([{"kind": "tool_start"}])
     assert "first_text" not in cloud_runner._LATENCY.get("t2", {})
-    emit({"kind": "assistant", "payload": {"text": "hi"}})
+    emit([{"kind": "tool_end"}, {"kind": "assistant", "payload": {"text": "hi"}}])
     at = cloud_runner._LATENCY["t2"]["first_text"]
-    emit({"kind": "assistant", "payload": {"text": "more"}})
+    emit([{"kind": "assistant", "payload": {"text": "more"}}])
     assert cloud_runner._LATENCY["t2"]["first_text"] == at
-    assert [e["kind"] for e in seen] == ["tool_start", "assistant", "assistant"]
+    assert [len(b) for b in seen] == [1, 2, 1]
     cloud_runner._lat_take("t2")
+
+
+def test_first_text_is_noted_before_the_confined_tools_gate_holds_it(cloud_runner):
+    """run_acp wraps the gate: the mark is when the model wrote the text, though the gate
+    holds it until the turn ends."""
+    released = []
+    gate = cloud_runner._ConfinedToolsGate(("mcp__x__*",), released.append)
+    emit = cloud_runner._lat_emit("t3", gate.emit)
+    emit([{"kind": "assistant", "payload": {"text": "held"}}])
+    assert released == [] and "first_text" in cloud_runner._LATENCY["t3"]
+    cloud_runner._lat_take("t3")
 
 
 def test_the_trace_is_bounded(cloud_runner):
