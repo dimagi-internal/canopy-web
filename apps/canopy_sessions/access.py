@@ -240,6 +240,8 @@ def visible_session_q(user, *, brain: bool = False) -> Q:
        agent's OWN login also reads its own work (`_own_work_q`: no creator,
        its agent) — read-only, no pull; never a conversation a person started
        with it, which has a creator.
+       4b. a CONTACT's conversation with an agent YOU RUN (`_contact_conversation_q`):
+       read-only, and a sensitive one stays sealed to its own people.
     5. you are a COACH of the session's person (`_coach_q`): they opted into coaching
        (a live `CoachingOptIn`, the person's own act, naming no agent), and you hold a
        `CoachingRole` covering the workspace the session lives in: an agent's own login or
@@ -289,6 +291,7 @@ def _own_legs_q(user) -> Q:
         | Q(participants__user=user)
         | _box_owner_q(user)
         | (Q(origin=Session.ORIGIN_RUNNER) & _agent_admin_q(user))
+        | _contact_conversation_q(user)
         | _own_work_q(user)
         | _coach_q(user)
         | _runner_admin_q(user)
@@ -630,6 +633,21 @@ def _agent_admin_q(user) -> Q:
             | Q(agent__isnull=False, agent__workspace_id__in=owned))
 
 
+def _contact_conversation_q(user) -> Q:
+    """Leg 4b: a CONTACT's conversation with an agent `user` administers (its owner, an
+    owner of its workspace, or an explicit `AgentAdmin`, as in leg 4).
+
+    The people operating an agent read what it says to the people outside the
+    workspace it talks to (a Connect Worker over a host site), so a wrong or missing
+    answer can be seen and fixed. Read-only: `role_for` gives a viewer, so nobody
+    types into a contact's conversation, shares it or adds people to it. A
+    SENSITIVE one stays sealed the usual way (`sensitivity.is_sensitive`): its
+    words reach only its own people, and an admin sees that it exists.
+    Contacts still read only their own (`contact_session_q`), and coaching,
+    the brain and `owns_words` still leave contacts' conversations out."""
+    return Q(contact__isnull=False, agent__isnull=False) & _agent_admin_q(user)
+
+
 def contact_session_q(contact) -> Q:
     """Sessions a CONTACT may read: their own, and only their own.
 
@@ -728,6 +746,9 @@ def role_for(user, session, *, brain: bool = False) -> str | None:
            .values_list("role", flat=True).first())
     if session.created_by_id == user.pk:
         derived = SessionParticipant.OWNER
+    elif session.contact_id is not None:
+        # A contact's conversation (leg 4b): the agent's admins read it, nobody drives it.
+        derived = SessionParticipant.VIEWER
     # An agent's own thread has no creator; the agent's admins stand in for one
     # (leg 4), so there is somebody who can share it.
     elif session.created_by_id is None and session.agent_id and session.agent.is_admin(user):
