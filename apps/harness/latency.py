@@ -53,6 +53,8 @@ SPANS = (
     ("site_to_canopy", "site_received", "enqueued"),     # the site's own handling, then the POST
     ("claim_wait", "enqueued", "claimed"),               # queued until a runner took it
     ("prepare", "claimed", "prompt_delivered"),          # session found/made, words typed and seen
+    ("prepare_sent", "claimed", "prompt_sent"),          # the same, for a runner that sees no delivery
+    ("model_answer", "prompt_sent", "reply_ready"),      # prompt in to answer out, the same way
     ("model_first_text", "prompt_delivered", "first_text"),
     ("answer", "prompt_delivered", "reply_ready"),       # the model's whole answer
     ("reply_to_finish", "reply_ready", "finished"),      # runner noticed, finished the turn

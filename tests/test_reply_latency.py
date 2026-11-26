@@ -108,6 +108,23 @@ def test_a_full_turn_is_traced_hop_by_hop(w):
     assert t["spans"]["prepare"] == pytest.approx(8, abs=0.5)
 
 
+def test_a_runner_that_sees_no_delivery_is_still_split_into_prep_and_model(w):
+    """The cloud runner's ACP session sends the prompt the moment it exists and cannot see
+    it land, so it reports `prompt_sent`: the trace still splits prep from the model."""
+    turn = _send(w, received_at=_ago(30).isoformat())
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING, claimed_at=_ago(25), started_at=_ago(24))
+    turn.refresh_from_db()
+    _say(turn, "Here is where you stand.")
+    runner_protocol.finish(turn, TurnFinishIn(status="done", latency={
+        "warm": False, "session_ready": _ago(21).isoformat(), "prompt_sent": _ago(21).isoformat(),
+        "first_text": _ago(8).isoformat(), "reply_ready": _ago(5).isoformat()}))
+    turn.refresh_from_db()
+    t = latency.trace(turn)
+    assert t["warm"] is False
+    assert t["spans"]["prepare_sent"] == pytest.approx(4, abs=0.5)
+    assert t["spans"]["model_answer"] == pytest.approx(16, abs=0.5)
+
+
 def test_a_failed_push_is_not_an_acknowledgement(w):
     turn = _send(w)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING)
