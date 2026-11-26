@@ -235,10 +235,11 @@ def test_someone_with_no_canopy_account_is_answered_as_a_contact(slack, installa
     # A full member of our own Slack: the email was provisioned by Dimagi.
     assert contact.auth_result == Contact.AUTH_SLACK_MEMBER
     assert (contact.email, contact.display_name) == ("alice@dimagi.com", "Alice A")
-    # Grants nothing: not a member, and no member can open the conversation.
+    # Grants nothing: not a member. The agent's admins (here the workspace
+    # owner) can read the conversation, and no one else.
     assert not WorkspaceMembership.objects.filter(workspace=ws, user__email="alice@dimagi.com").exists()
     owner = _owner(ws)
-    assert not Session.objects.filter(visible_session_q(owner)).exists()
+    assert list(Session.objects.filter(visible_session_q(owner))) == [Turn.objects.get().chat_session]
     # No canopy link in the status line — a contact could not open it.
     assert "/w/" not in slack.said("chat.postMessage")[0]["text"]
 
