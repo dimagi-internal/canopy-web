@@ -5689,6 +5689,47 @@ def _announce_session(turn_id: str, cli_session_id: str) -> None:
         _log(f"warn: session hook for {turn_id[:8]} failed: {exc}")
 
 
+# ── the runner's half of a turn's reply-latency trace (apps/harness/latency.py) ──
+# Noted as each moment happens and sent with the turn's finish (`latency`), as the
+# laptop runner's latency_marks does. In memory only and bounded: a turn that never
+# finishes here loses its marks and the trace falls back to canopy's own timestamps.
+_LATENCY: dict[str, dict] = {}
+_LATENCY_LOCK = threading.Lock()
+_LATENCY_MAX = 200
+
+
+def _lat_mark(turn_id: str, name: str) -> None:
+    """Note that `name` happened now (UTC). The first note wins."""
+    if not turn_id:
+        return
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    with _LATENCY_LOCK:
+        _LATENCY.setdefault(turn_id, {}).setdefault(name, now)
+        while len(_LATENCY) > _LATENCY_MAX:
+            _LATENCY.pop(next(iter(_LATENCY)))
+
+
+def _lat_fact(turn_id: str, **facts) -> None:
+    if turn_id:
+        with _LATENCY_LOCK:
+            _LATENCY.setdefault(turn_id, {}).update(facts)
+
+
+def _lat_take(turn_id: str) -> dict | None:
+    with _LATENCY_LOCK:
+        return _LATENCY.pop(turn_id, None) or None
+
+
+def _lat_emit(turn_id: str, emit):
+    """`emit`, noting `first_text` at the first assistant text the session produced
+    (before any gate holds it: the trace measures the model, not the release)."""
+    def wrapped(event: dict) -> None:
+        if isinstance(event, dict) and event.get("kind") == "assistant":
+            _lat_mark(turn_id, "first_text")
+        emit(event)
+    return wrapped
+
+
 def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             agent_slug: str | None = None, resume_session_id: str | None = None
             ) -> tuple[bool, str, str]:
@@ -5725,8 +5766,13 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     gate = _ConfinedToolsGate.for_turn(getattr(_TURN_ENV, "confined", None), emit)
     if gate is not None:
         emit = gate.emit
+    emit = _lat_emit(turn_id, emit)
+    _lat_fact(turn_id, warm=bool(resume))
 
     def on_session(session_id: str) -> None:
+        # ACP sends the prompt as soon as the session exists: both moments are this one.
+        _lat_mark(turn_id, "session_ready")
+        _lat_mark(turn_id, "prompt_sent")
         _announce_session(turn_id, session_id)
         _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
         agent = _acp_agent_for(turn_id)
@@ -5788,6 +5834,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         if fault := _transcript_fault(workdir, exc.session_id, started):
             _CREDENTIAL_FAULT[turn_id] = fault
         return False, f"runner error (acp): {exc.detail}", exc.session_id
+    _lat_mark(turn_id, "reply_ready")
     final_text = res.text
     _lifecycle(turn_id, "exited", ok=res.ok, executor="acp", session=res.session_id,
                stop_reason=res.stop_reason)
@@ -15657,6 +15704,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # what tells the server a FAILED turn did reach an agent, so it is
             # never re-run blind as "sessionless" (services.finish_turn).
             finish_body["session_key"] = cli_session_id
+        if latency := _lat_take(turn_id):
+            finish_body["latency"] = latency
         _FINISHING.add(turn_id)
         fstatus, _ = _post_finish(turn_id, finish_body)
         if _relay_turn_id() == turn_id:
