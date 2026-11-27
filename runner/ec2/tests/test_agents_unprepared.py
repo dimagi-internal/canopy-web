@@ -89,3 +89,25 @@ def test_prepare_hands_the_cli_the_turns_github_identity(cloud_runner, monkeypat
     # Only the CLI's own git calls get it, under a name of its own; never GH_TOKEN.
     assert got[cloud_runner.TURN_GITHUB_TOKEN_ENV] == "t"
     assert "GH_TOKEN" not in got and got.get("OTHER") != "x"
+
+
+def test_every_clone_outcome_is_a_health_check_not_only_a_log_line(cloud_runner, tmp_path, monkeypatch):
+    """A turn whose clone failed ends `done` with nothing to show; the box log is
+    readable only on the box, so the reason goes on the runner page."""
+    import types
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
+    repo = {cloud_runner.AGENT_REPO_ENV: "dimagi-internal/fizzy"}
+    cloud_runner._clone_agent_repo("fizzy", repo)
+    assert cloud_runner._HEALTH["clone.fizzy"]["status"] == "warn"
+    assert "no GitHub token" in cloud_runner._HEALTH["clone.fizzy"]["detail"]
+    out = ("Cloning into 'x'...\nremote: Repository not found.\n"
+           "fatal: repository 'https://github.com/dimagi-internal/fizzy.git/' not found\n")
+    monkeypatch.setattr(cloud_runner.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(returncode=128, stderr=out, stdout=""))
+    cloud_runner._clone_agent_repo("fizzy", {"GH_TOKEN": "t", **repo})
+    check = cloud_runner._HEALTH["clone.fizzy"]
+    assert check["status"] == "fail" and check["detail"].endswith("not found")
+    monkeypatch.setattr(cloud_runner.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(returncode=0, stderr="", stdout=""))
+    cloud_runner._clone_agent_repo("fizzy", {"GH_TOKEN": "t", **repo})
+    assert cloud_runner._HEALTH["clone.fizzy"]["status"] == "ok"

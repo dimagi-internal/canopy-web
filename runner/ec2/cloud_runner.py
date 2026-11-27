@@ -8748,7 +8748,16 @@ def _clone_agent_repo(slug: str, env: dict | None) -> None:
     `canopy agent prepare` runs next either way and says what it could not do."""
     env = env or {}
     repo, token = str(env.get(AGENT_REPO_ENV) or ""), str(env.get("GH_TOKEN") or "")
-    if not token or not _GITHUB_REPO.match(repo):
+    # Each outcome is a health check (`clone.<slug>`) as well as a log line: the log is
+    # on this box only, and a turn whose clone failed ends `done` with nothing to show,
+    # so the runner page is the one place the reason can be read.
+    if not token:
+        _set_check(f"clone.{slug}", "warn",
+                   "this turn brought no GitHub token, so its agent repo was not cloned — "
+                   "the agent's owner or an admin delegates one (settings → External accounts → GitHub)")
+        return
+    if not _GITHUB_REPO.match(repo):
+        _set_check(f"clone.{slug}", "warn", f"canopy-web named no plain GitHub repo for {slug} ({repo[:80]!r})")
         return
     dest = pathlib.Path(AGENT_ROOT) / slug
     try:
@@ -8757,10 +8766,22 @@ def _clone_agent_repo(slug: str, env: dict | None) -> None:
                            capture_output=True, text=True, timeout=300,
                            env={**_child_safe_env(), **env})
         if r.returncode != 0:
-            _log(f"warn: agent {slug}: clone of {repo} with the turn's GitHub identity failed: "
-                 f"{(r.stderr or r.stdout).strip().splitlines()[-1:] or ['?']}")
+            why = _git_reason(r.stderr or r.stdout)
+            _log(f"warn: agent {slug}: clone of {repo} with the turn's GitHub identity failed: {why}")
+            _set_check(f"clone.{slug}", "fail",
+                       f"clone of {repo} with the turn's GitHub identity failed: {why}")
+        else:
+            _set_check(f"clone.{slug}", "ok", f"cloned {repo} with the turn's GitHub identity")
     except Exception as exc:  # noqa: BLE001 — prepare still runs and reports
         _log(f"warn: agent {slug}: clone of {repo} did not run: {exc}")
+        _set_check(f"clone.{slug}", "fail", f"clone of {repo} did not run: {exc}")
+
+
+def _git_reason(text: str) -> str:
+    """git's reason, not its progress: the last fatal/error/remote line, else the last."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    told = [ln for ln in lines if ln.lower().startswith(("fatal:", "error:", "remote:"))]
+    return ((told or lines or ["(no output)"])[-1])[:300]
 
 
 #: How `prepare_agent` hands the canopy CLI a turn's GitHub token (its agent_prepare.py).
