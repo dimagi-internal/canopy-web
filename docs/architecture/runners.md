@@ -153,6 +153,10 @@ in `credential_process` shape; its module docstring is the spec. **It never vend
 canopy-web, which checks the agent and the live grant a person approved for it (`apps/agents/api_aws.py`,
 `apps/agents/aws_grants.py`). The canopy CLI asks `canopy aws credentials --role`; for a fenced role the agent
 first asks `canopy aws request --role <name> --reason "..."`, and a workspace owner approves it with a passkey.
+**A sealed grant never passes through canopy-web usable** (`apps/agents/aws_sealed.py`): the approver's browser
+makes the session with the role's own key and seals it to the machines that run the agent, and `canopy aws
+credentials` opens it with the box's key (`POST /api/agents/{slug}/aws-credentials/sealed`); a standing agent's
+box holds the role key sealed to it and asks STS itself. Set up and migration: `docs/runbooks/aws-sealed-keys.md`.
 
 ### The job broker (`canopy-job-broker`)
 

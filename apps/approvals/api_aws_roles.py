@@ -7,6 +7,7 @@ agent's workspace or a canopy superuser. The approved request is the grant `aws-
 from __future__ import annotations
 
 import datetime as dt
+from typing import Literal
 
 from django.db import transaction
 from django.http import HttpRequest
@@ -15,13 +16,14 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 from pydantic import Field
 
-from apps.agents import aws_grants
+from apps.agents import aws_grants, aws_sealed
 from apps.agents.gates import agent_for_read, agent_for_work
 from apps.agents.models import AgentAwsRoleRequest
 from apps.api.auth import session_auth
 from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.common.schemas import StrictModel
+from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 
 from . import cards, services
@@ -41,6 +43,10 @@ class AwsRoleRequestIn(StrictModel):
     minutes: int = Field(default=AgentAwsRoleRequest.DEFAULT_MINUTES, ge=AgentAwsRoleRequest.MIN_MINUTES,
                          le=AgentAwsRoleRequest.MAX_MINUTES,
                          description="How long the grant lasts once approved (15 to 480; default 60).")
+    delivery: Literal["custodial", "sealed"] = Field(
+        default="custodial", description="`sealed`: the approver's browser makes the keys from the role's sealed "
+                                         "key and seals them to this agent's machines, so canopy-web never holds "
+                                         "them (`POST aws-credentials/sealed`); needs the role's sealed key.")
 
 
 class AwsRoleRequestOut(StrictModel):
@@ -50,6 +56,9 @@ class AwsRoleRequestOut(StrictModel):
     reason: str
     minutes: int
     status: str = Field(description="pending | approved | declined | cancelled | expired | revoked")
+    delivery: str = "custodial"
+    #: A sealed grant: whether its approver's browser has handed over a live session, and until when.
+    sealed_session_expires_at: dt.datetime | None = None
     approval_id: int | None = None
     #: The approval's page, where an owner approves it with a passkey.
     approval_url: str = ""
@@ -70,6 +79,8 @@ def _out(row: AgentAwsRoleRequest) -> AwsRoleRequestOut:
     aws_grants.settle(row)
     return AwsRoleRequestOut(
         id=row.pk, agent=row.agent.slug, role=row.role, reason=row.reason, minutes=row.minutes, status=row.status,
+        delivery=row.delivery,
+        sealed_session_expires_at=row.sealed_session_expires_at if aws_sealed.session_ok(row) else None,
         approval_id=row.approval_id, approval_url=cards.page_url(row.approval) if row.approval_id else "",
         requested_by=_email(row.requested_by) or f"{row.agent.slug} (its own login)",
         approved_by=_email(row.approved_by), approved_at=row.approved_at, expires_at=row.expires_at,
@@ -108,7 +119,11 @@ def request_aws_role(request: HttpRequest, slug: str, payload: AwsRoleRequestIn)
     if agent.slug in standing:
         raise HttpError(422, f"{agent.slug} already gets {payload.role} with no approval "
                              "(settings.CANOPY_AWS_ROLE_AGENTS)")
-    pending = (AgentAwsRoleRequest.objects.filter(agent=agent, role=payload.role, status=AgentAwsRoleRequest.PENDING)
+    if payload.delivery == AgentAwsRoleRequest.SEALED and aws_sealed.holders_key(payload.role) is None:
+        raise HttpError(422, f"{payload.role} has no sealed key yet, so it can only be delivered by canopy-web "
+                             "(delivery custodial); a superuser registers one on the System page")
+    pending = (AgentAwsRoleRequest.objects.filter(agent=agent, role=payload.role, status=AgentAwsRoleRequest.PENDING,
+                                                  delivery=payload.delivery)
                .select_related("approval", "agent").first())
     if pending is not None and aws_grants.settle(pending).status == AgentAwsRoleRequest.PENDING:
         return Status(200, _out(pending))
@@ -117,7 +132,7 @@ def request_aws_role(request: HttpRequest, slug: str, payload: AwsRoleRequestIn)
         with transaction.atomic():
             row = AgentAwsRoleRequest.objects.create(
                 agent=agent, role=payload.role, reason=payload.reason.strip(), minutes=payload.minutes,
-                requested_by=None if own else request.user)
+                delivery=payload.delivery, requested_by=None if own else request.user)
             approval, _ = services.create(
                 kind=SLUG, params={"request": row.pk}, requested_by_agent=agent if own else None,
                 requested_by_user=None if own else request.user, reason=row.reason,
@@ -188,4 +203,98 @@ def revoke_aws_role_request(request: HttpRequest, slug: str, request_id: int) ->
     row.revoked_by = user
     row.revoked_at = now
     row.save(update_fields=["status", "revoked_by", "revoked_at"])
+    return _out(row)
+
+
+# --- sealed delivery: the approver's browser makes the session -------------------------------
+
+
+class AwsSealingOut(StrictModel):
+    """Everything the approver's browser needs to make a sealed grant's session: the role's key,
+    sealed to them; what to ask STS; and the agent's machines to seal the session to."""
+
+    grant: int
+    role: str
+    #: The role's approver key, sealed to you (open it with your vault key).
+    key_value_zk: str
+    key_binding: str
+    key_name: str
+    kv: int = 0
+    #: What to ask STS (`AssumeRole`), stamped with the agent.
+    sts: dict
+    #: The agent's machines and who vouched for each key (`ZkRecipientsOut`).
+    machines: dict
+    session_binding: str
+    session_name: str
+    #: The grant's end, once approved: a session must not outlast it.
+    grant_expires_at: dt.datetime | None = None
+
+
+class AwsSealedSessionIn(StrictModel):
+    #: The STS session `{"AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration"}` as JSON,
+    #: sealed in your browser to the agent's machines (binding `aws-grant:<id>`, `AWS_SESSION`, kv 0).
+    value_zk: str = Field(max_length=65536)
+    expires_at: dt.datetime
+
+
+def _sealed_grant(request: HttpRequest, slug: str, request_id: int) -> AgentAwsRoleRequest:
+    """The sealed request, for a person in a browser. Found by slug and id alone: whoever may make
+    its session holds the role's sealed key, so is a superuser (`aws_sealed.may_hold`), who need not
+    be a member of the agent's workspace; `_may_seal` decides, and anyone else gets 404."""
+    stepup.require_browser(request, "making a sealed AWS session")
+    stepup.require_a_person(request, "making a sealed AWS session")
+    row = (AgentAwsRoleRequest.objects.select_related("agent", "agent__workspace", "approval", "approved_by")
+           .filter(agent__slug=slug, pk=request_id).first())
+    if row is None or row.delivery != AgentAwsRoleRequest.SEALED or not aws_sealed.may_mint(request.user, row.role):
+        raise HttpError(404, f"sealed AWS role request {request_id} not found")
+    aws_grants.settle(row)
+    return row
+
+
+def _may_seal(user, row: AgentAwsRoleRequest) -> bool:
+    if not aws_sealed.may_mint(user, row.role):
+        return False
+    if row.status == AgentAwsRoleRequest.PENDING:
+        return row.approval_id is not None and services.may_approve(row.approval, user)
+    return row.status == AgentAwsRoleRequest.APPROVED and row.approved_by_id == user.pk
+
+
+@router.get("/{slug}/aws-role-requests/{request_id}/sealing", response=AwsSealingOut,
+            summary="What your browser needs to make a sealed grant's AWS session")
+# the grant's approver (or who may approve it) who holds the role's sealed key, in a browser
+@gate("own", "superuser", "self")
+def get_aws_sealing(request: HttpRequest, slug: str, request_id: int) -> AwsSealingOut:
+    """For whoever may approve this sealed request (or approved it) AND holds the role's sealed key:
+    the key sealed to you, what to ask STS, and the agent's machines with who vouched for each.
+    A browser only. 403 when you do not hold the role's key."""
+    row = _sealed_grant(request, slug, request_id)
+    if not _may_seal(request.user, row):
+        raise HttpError(403, "only an approver of this request who holds the role's sealed key can make its session")
+    key = aws_sealed.holders_key(row.role)
+    left = (row.expires_at - timezone.now()).total_seconds() if row.expires_at else row.minutes * 60
+    return AwsSealingOut(
+        grant=row.pk, role=row.role, key_value_zk=key.value_zk, key_binding=aws_sealed.key_binding(row.role),
+        key_name=aws_sealed.KEY_NAME,
+        sts=aws_sealed.sts_request(row.agent, row.role, caller=f"user-{request.user.pk}", seconds=int(left)),
+        machines=aws_sealed.agent_devices(row.agent), session_binding=aws_sealed.session_binding(row),
+        session_name=aws_sealed.SESSION_NAME, grant_expires_at=row.expires_at)
+
+
+@router.put("/{slug}/aws-role-requests/{request_id}/sealed-session", response=AwsRoleRequestOut,
+            summary="Hand over the AWS session your browser made, sealed to the agent's machines")
+@gate("own", "superuser", "self", setting=True, step_up="ciphertext sealed to the agent's machines, in the "
+      "approver's browser right after their per-request passkey approval; canopy-web cannot open it")
+def put_aws_sealed_session(request: HttpRequest, slug: str, request_id: int, payload: AwsSealedSessionIn):
+    """The person who approved this sealed grant stores the session their browser made, sealed only
+    to the machines that run the agent now. It must not outlast the grant; a later one replaces it.
+    409 when the grant is not live."""
+    row = _sealed_grant(request, slug, request_id)
+    if not (row.status == AgentAwsRoleRequest.APPROVED and row.approved_by_id == request.user.pk):
+        raise HttpError(403, "only the person who approved this grant hands over its session")
+    if not row.is_live():
+        raise HttpError(409, f"this grant is {row.status}, not live")
+    try:
+        aws_sealed.store_session(row, payload.value_zk, payload.expires_at)
+    except aws_sealed.SealedError as exc:
+        raise HttpError(422, str(exc)) from exc
     return _out(row)

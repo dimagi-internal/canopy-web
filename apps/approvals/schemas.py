@@ -87,6 +87,9 @@ class ApprovalCardOut(StrictModel):
     choices: list[ApprovalChoiceOut] = Field(default_factory=list, description=(
         "What the approver picks between when approving (send the `value` as `choice`), first offered "
         "first; empty when approving is one yes."))
+    client_step: dict[str, Any] | None = Field(default=None, description=(
+        "Work the request's page does in the approver's browser as they approve (`name`, plus the kind's "
+        "ids), e.g. `aws.sealed_session`: make a sealed AWS session. Null for most kinds."))
     requested_by: str
     reason: str
     evidence: list[ApprovalEvidenceOut]

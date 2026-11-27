@@ -326,6 +326,8 @@ from apps.agents.api_contributors import router as contributors_router  # noqa: 
 from apps.agents.credentials.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agents.api_aws import router as agent_aws_router  # noqa: E402
+from apps.agents.api_aws_sealed import keys_router as aws_sealed_keys_router  # noqa: E402
+from apps.agents.api_aws_sealed import router as agent_aws_sealed_router  # noqa: E402
 from apps.approvals.api_aws_roles import router as agent_aws_roles_router  # noqa: E402
 from apps.agents.api_engagement import router as engagement_router  # noqa: E402
 from apps.agents.api_fleet import router as fleet_tasks_router  # noqa: E402
@@ -519,6 +521,8 @@ api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the 
 api.add_router("/agent-runs", agent_run_docs_router)  # run documents (DDD runs), cross-agent
 api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
 api.add_router("/agents", agent_aws_router)  # at most an hour of a named AWS role (labs-read, labs-readwrite, labs-config)
+api.add_router("/agents", agent_aws_sealed_router)  # an agent's sealed AWS credentials, for its machine to open
+api.add_router("/aws", aws_sealed_keys_router)  # the role keys canopy-web carries sealed (superusers)
 api.add_router("/agents", agent_aws_roles_router)  # ask a person for a fenced AWS role; the grant aws-credentials reads
 # The mint's callback is NOT agent-scoped: Google requires every redirect URI
 # to be registered exactly, so one fixed path serves the whole fleet and the

@@ -69,8 +69,9 @@ def build(req: ApprovalRequest, *, viewer=None) -> dict:
         kind, params = kinds.parse(req.kind, req.params)
         label, needs, step_up = kind.label, kind.needs, kind.step_up
         choices = [{"value": v, "label": lbl} for v, lbl in kind.choices(params)] if req.is_pending else []
+        client_step = kind.client_step(params)
     except kinds.KindError:
-        label, needs, step_up, choices = req.kind, "", False, []
+        label, needs, step_up, choices, client_step = req.kind, "", False, [], None
     sent = {}
     for d in req.deliveries.select_related("user"):
         sent.setdefault(who(d.user), set()).add(d.channel)
@@ -82,6 +83,7 @@ def build(req: ApprovalRequest, *, viewer=None) -> dict:
         "id": req.pk, "key": req.key, "kind": req.kind, "kind_label": label, "needs": needs,
         "title": req.title, "summary": req.summary, "status": req.status, "workspace": req.workspace_id,
         "url": url(req), "page_url": page_url(req), "step_up": step_up, "choices": choices,
+        "client_step": client_step,
         "requested_by": requested_by(req), "reason": req.reason, "evidence": req.evidence,
         "plan": req.plan, "if_declined": req.if_declined, "source_url": req.source_url,
         "created_at": req.created_at, "expires_at": req.expires_at,

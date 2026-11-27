@@ -13,7 +13,7 @@ import datetime as dt
 
 from django.utils import timezone
 
-from apps.agents import aws_grants
+from apps.agents import aws_grants, aws_sealed
 from apps.agents.models import Agent, AgentAwsRoleRequest
 from apps.common.schemas import StrictModel
 from apps.workspaces import permissions as perms
@@ -64,6 +64,10 @@ class AgentAwsRole(Kind):
         arn = aws_grants.roles().get(row.role, "")
         what = aws_grants.summary(row.role) or "(canopy has no summary for this role)"
         lasts = duration_words(row.minutes)
+        sealed = row.delivery == AgentAwsRoleRequest.SEALED
+        how = ("Your browser makes the keys with the role's sealed key, after your passkey touch, and seals them "
+               f"to {name}'s machines: canopy-web never holds a usable key"
+               if sealed else "canopy-web makes the keys with its own AWS role")
         return Described(
             workspace=agent.workspace_id,
             title=f"Let {name} take the AWS role {row.role} for {lasts}",
@@ -71,7 +75,10 @@ class AgentAwsRole(Kind):
             plan=[f"The agent {name} ({agent.workspace_id}) may take the AWS role {row.role}"
                   + (f" ({arn})" if arn else ""),
                   f"What {row.role} can do: {what}",
-                  f"For {lasts} from your approval; each set of keys lasts at most an hour and never past that",
+                  (f"For {lasts} from your approval; your browser makes one set of keys that never outlasts it"
+                   if sealed else
+                   f"For {lasts} from your approval; each set of keys lasts at most an hour and never past that"),
+                  how,
                   f"AWS records every call as canopy-agent-{agent.slug}",
                   "You or an owner of the workspace can revoke it at any time; keys already handed out "
                   "last until their own expiry",
@@ -86,7 +93,17 @@ class AgentAwsRole(Kind):
             return False
         if d.about_email and (user.email or "").lower() == d.about_email:
             return False
-        return bool(user.is_superuser) or perms.can(user, d.workspace, perms.OWN)
+        if not (bool(user.is_superuser) or perms.can(user, d.workspace, perms.OWN)):
+            return False
+        row = _row(p.request)
+        # A sealed grant is useless unless its approver's browser can make the session.
+        return row.delivery != AgentAwsRoleRequest.SEALED or aws_sealed.may_mint(user, row.role)
+
+    def client_step(self, p: Params) -> dict | None:
+        row = _row(p.request)
+        if row.delivery != AgentAwsRoleRequest.SEALED:
+            return None
+        return {"name": "aws.sealed_session", "agent": row.agent.slug, "request": row.pk}
 
     def execute(self, user, p: Params, request) -> dict:
         row = AgentAwsRoleRequest.objects.select_for_update().filter(pk=p.request).first()

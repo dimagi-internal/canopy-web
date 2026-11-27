@@ -89,6 +89,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'When an application outside canopy needs approval to ask people for access to their memory.',
   },
   {
+    path: '/aws-keys',
+    group: 'AWS access for agents (administrators)',
+    flat: 'global: the labs AWS roles every workspace\'s agents use are one account\'s, not a workspace\'s (superusers)',
+    title: 'Sealed AWS keys',
+    use: 'When you set up or replace the key a labs AWS role is reached with, so canopy-web only carries it sealed.',
+  },
+  {
     path: '/home',
     flat: 'personal/global: what is waiting on you across every workspace you are in — read once per organisation and shown side by side',
     title: 'Home',

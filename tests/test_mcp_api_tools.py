@@ -121,6 +121,8 @@ CREDENTIAL_ROUTES_ON_MCP: dict[str, str] = {
     ), "a passkey ceremony's start for the person's own act-as grant, in a browser session only "
        "(`stepup.require_browser`): a token's call is refused, and the answer is a WebAuthn "
        "challenge, never a credential"),
+    "agent_aws_sealed_credentials": "ciphertext sealed to the agent's machines (`aws_sealed`): opening it "
+                                    "needs a machine's device key, which no tool holds",
     "begin_approve_approval": "a passkey ceremony's start for one approval request, in a browser session "
                               "only (`stepup.require_browser`): a token's call is refused, and the answer "
                               "is a WebAuthn challenge, never a credential",

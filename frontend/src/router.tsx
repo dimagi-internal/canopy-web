@@ -61,6 +61,7 @@ import { PeopleMePage, PersonPageView } from './pages/PeopleMePage'
 import { SettingsLayout } from './pages/SettingsLayout'
 import { MemberPage } from './pages/MemberPage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
+import { AwsSealedKeysPage } from './pages/AwsSealedKeysPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { KnowledgeBasePage } from './pages/projects/KnowledgeBasePage'
 import { McpServersPage } from './pages/projects/McpServersPage'
@@ -334,6 +335,8 @@ export const routeTable: RouteObject[] = [
       { path: '/me', element: <Navigate to="/settings/profile" replace /> },
       { path: '/people/:personId/page', element: <PersonPageView /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },
+      // /aws-keys — the labs roles' own AWS keys, sealed in a superuser's browser (global, not a workspace's).
+      { path: '/aws-keys', element: <AwsSealedKeysPage /> },
       // What is waiting on you, across every workspace — the app's front page.
       { path: '/home', element: <HomePage /> },
       // What the runner's menu bar opens: it knows no workspace.

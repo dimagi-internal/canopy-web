@@ -83,6 +83,12 @@ class Kind:
         `execute(..., choice=)`; `services.decide` refuses any other value."""
         return []
 
+    def client_step(self, p) -> dict | None:
+        """Work the approval page does in the approver's browser before approving (`name` plus the
+        kind's own ids), for a kind whose approval needs something only the browser can do — making
+        a sealed AWS session (`agent.aws_role`, delivery sealed). None for most kinds."""
+        return None
+
     def lapsed(self, p) -> str | None:
         """Why a pending request can no longer be approved (what it asks for is gone or over), or None.
         `services.expire_due` closes a lapsed request as expired."""
