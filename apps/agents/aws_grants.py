@@ -52,8 +52,10 @@ def settle(row: AgentAwsRoleRequest, now=None) -> AgentAwsRoleRequest:
 
 
 def live_grant(agent, role: str, now=None) -> AgentAwsRoleRequest | None:
-    """The agent's approved, unrevoked grant for `role` that ends last, if one is live now."""
+    """The agent's approved, unrevoked CUSTODIAL grant for `role` that ends last, if one is live
+    now. A sealed grant is never vended by canopy-web's task role (`aws_sealed.live_sealed_grant`)."""
     now = now or timezone.now()
     return (AgentAwsRoleRequest.objects.filter(agent=agent, role=role, status=AgentAwsRoleRequest.APPROVED,
+                                               delivery=AgentAwsRoleRequest.CUSTODIAL,
                                                revoked_at__isnull=True, expires_at__gt=now)
             .order_by("-expires_at").first())

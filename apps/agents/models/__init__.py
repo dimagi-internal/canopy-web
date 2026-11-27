@@ -20,7 +20,7 @@ from .agent import (
     PreferredAgent,
     SenderTrust,
 )
-from .aws import AgentAwsRoleRequest
+from .aws import AgentAwsRoleRequest, AwsSealedKey
 from .definition import AgentDefinitionRevision, AgentGitObject, AgentGitRef
 from .project_files import ProjectFilesRevision, ProjectGitObject, ProjectGitRef
 from .kb import (
@@ -75,6 +75,7 @@ __all__ = [
     "Agent",
     "AgentAdmin",
     "AgentAwsRoleRequest",
+    "AwsSealedKey",
     "AgentBootstrapReport",
     "AgentCredential",
     "AgentCredentialAlert",

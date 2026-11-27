@@ -54,6 +54,11 @@ any other agent gets it only while it holds a LIVE GRANT (`AgentAwsRoleRequest`,
 canopy-web is the ONLY source of every role; a cloud runner's box broker vends none, because it
 cannot verify which agent is asking and so cannot honour an approval.
 
+Sealed delivery (`aws_sealed.py`) runs beside this route: a grant filed `delivery: sealed` is never
+vended here (`aws_grants.live_grant` reads custodial grants only); its session is made in the
+approver's browser with the role's own key and reaches the agent sealed to its machines
+(`POST /api/agents/{slug}/aws-credentials/sealed`). Retiring this route: `docs/runbooks/aws-sealed-keys.md`.
+
 Who. The agent's own canopy login (what a turn and a laptop agent session hold), or a
 member who may work the agent (`agent.work`), with a TOKEN: a browser session is refused,
 because these keys belong in a CLI's credential cache, never on a page. Never an MCP

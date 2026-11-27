@@ -8675,6 +8675,119 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/aws-credentials/sealed": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * This agent's sealed AWS credentials for a role, for its machine to open
+         * @description What this agent's machine can open for `role`: its standing key (`kind: key`, with what to
+         *     ask STS), or the session an approver sealed to it for its live sealed grant (`kind: session`).
+         *     404 `no_sealed_source` when neither exists (use `POST aws-credentials`); 409 `session_pending`
+         *     while a sealed grant waits for its approver's browser to hand the session over.
+         */
+        readonly post: operations["agent_aws_sealed_credentials"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/aws/sealed-keys": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Each AWS role and its sealed keys
+         * @description Every role canopy vends, the agents standing for it, and the sealed keys registered for it
+         *     (ids and who holds them; never a value canopy-web could use).
+         */
+        readonly get: operations["list_aws_sealed_keys"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/aws/sealed-keys/holders": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who a role's approver key may be sealed to (public keys)
+         * @description canopy superusers with a vault key, each with its public key. This list is canopy-web's
+         *     claim: check each key against one you trust before sealing to it.
+         */
+        readonly get: operations["list_aws_sealed_key_holders"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/aws/sealed-keys/machines/{slug}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The machines that run a standing agent, with who vouched for each key
+         * @description The agent's device keys and their endorsements (`ZkRecipientsOut`): seal only to keys
+         *     endorsed by someone you trust.
+         */
+        readonly get: operations["list_aws_sealed_key_machines"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/aws/sealed-keys/{role}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Register a role's own AWS key, sealed in your browser
+         * @description Store the role's key as ciphertext: sealed to the approvers (superusers with a vault key),
+         *     or to the machines that run an agent standing for the role. A browser only, after a passkey
+         *     step-up; canopy-web checks who it is sealed to and never opens it. Replaces the one before.
+         */
+        readonly put: operations["put_aws_sealed_key"];
+        readonly post?: never;
+        /**
+         * Forget a role's sealed key
+         * @description Delete the approvers' copy (or `agent`'s). Deactivate the key in IAM as well: its holders
+         *     could have kept a copy.
+         */
+        readonly delete: operations["delete_aws_sealed_key"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/aws-role-requests": {
         readonly parameters: {
             readonly query?: never;
@@ -8723,6 +8836,50 @@ export interface paths {
          *     by those people or whoever asked. 409 for one already closed.
          */
         readonly delete: operations["revoke_aws_role_request"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/aws-role-requests/{request_id}/sealing": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What your browser needs to make a sealed grant's AWS session
+         * @description For whoever may approve this sealed request (or approved it) AND holds the role's sealed key:
+         *     the key sealed to you, what to ask STS, and the agent's machines with who vouched for each.
+         *     A browser only. 403 when you do not hold the role's key.
+         */
+        readonly get: operations["get_aws_sealing"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/aws-role-requests/{request_id}/sealed-session": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Hand over the AWS session your browser made, sealed to the agent's machines
+         * @description The person who approved this sealed grant stores the session their browser made, sealed only
+         *     to the machines that run the agent now. It must not outlast the grant; a later one replaces it.
+         *     409 when the grant is not live.
+         */
+        readonly put: operations["put_aws_sealed_session"];
+        readonly post?: never;
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -37691,6 +37848,120 @@ export interface components {
             /** Role */
             readonly role: string;
         };
+        /** AwsSealedCredentialsOut */
+        readonly AwsSealedCredentialsOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "key" | "session";
+            /** Value Zk */
+            readonly value_zk: string;
+            /** Binding */
+            readonly binding: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /** Sts */
+            readonly sts?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /** Grant */
+            readonly grant?: number | null;
+        };
+        /** AwsSealedCredentialsIn */
+        readonly AwsSealedCredentialsIn: {
+            /** Role */
+            readonly role: string;
+        };
+        /** AwsSealedKeyOut */
+        readonly AwsSealedKeyOut: {
+            /** Role */
+            readonly role: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /** Access Key Id */
+            readonly access_key_id: string;
+            /**
+             * Holders
+             * @default []
+             */
+            readonly holders: readonly string[];
+            /**
+             * Machines
+             * @default 0
+             */
+            readonly machines: number;
+            /**
+             * Created By
+             * @default
+             */
+            readonly created_by: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** AwsSealedRoleOut */
+        readonly AwsSealedRoleOut: {
+            /** Role */
+            readonly role: string;
+            /** Role Arn */
+            readonly role_arn: string;
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+            /**
+             * Standing
+             * @default []
+             */
+            readonly standing: readonly string[];
+            /**
+             * Keys
+             * @default []
+             */
+            readonly keys: readonly components["schemas"]["AwsSealedKeyOut"][];
+        };
+        /** AwsSealedHolderOut */
+        readonly AwsSealedHolderOut: {
+            /** User Id */
+            readonly user_id: string;
+            /** Email */
+            readonly email: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Jkt */
+            readonly jkt: string;
+        };
+        /** AwsSealedKeyIn */
+        readonly AwsSealedKeyIn: {
+            /**
+             * Access Key Id
+             * @description The key's id (not secret), so people can match it to its IAM user.
+             */
+            readonly access_key_id: string;
+            /** Value Zk */
+            readonly value_zk: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+        };
         /** AwsRoleRequestOut */
         readonly AwsRoleRequestOut: {
             /** Id */
@@ -37708,6 +37979,13 @@ export interface components {
              * @description pending | approved | declined | cancelled | expired | revoked
              */
             readonly status: string;
+            /**
+             * Delivery
+             * @default custodial
+             */
+            readonly delivery: string;
+            /** Sealed Session Expires At */
+            readonly sealed_session_expires_at?: string | null;
             /** Approval Id */
             readonly approval_id?: number | null;
             /**
@@ -37760,6 +38038,59 @@ export interface components {
              * @default 60
              */
             readonly minutes: number;
+            /**
+             * Delivery
+             * @description `sealed`: the approver's browser makes the keys from the role's sealed key and seals them to this agent's machines, so canopy-web never holds them (`POST aws-credentials/sealed`); needs the role's sealed key.
+             * @default custodial
+             * @enum {string}
+             */
+            readonly delivery: "custodial" | "sealed";
+        };
+        /**
+         * AwsSealingOut
+         * @description Everything the approver's browser needs to make a sealed grant's session: the role's key,
+         *     sealed to them; what to ask STS; and the agent's machines to seal the session to.
+         */
+        readonly AwsSealingOut: {
+            /** Grant */
+            readonly grant: number;
+            /** Role */
+            readonly role: string;
+            /** Key Value Zk */
+            readonly key_value_zk: string;
+            /** Key Binding */
+            readonly key_binding: string;
+            /** Key Name */
+            readonly key_name: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /** Sts */
+            readonly sts: {
+                readonly [key: string]: unknown;
+            };
+            /** Machines */
+            readonly machines: {
+                readonly [key: string]: unknown;
+            };
+            /** Session Binding */
+            readonly session_binding: string;
+            /** Session Name */
+            readonly session_name: string;
+            /** Grant Expires At */
+            readonly grant_expires_at?: string | null;
+        };
+        /** AwsSealedSessionIn */
+        readonly AwsSealedSessionIn: {
+            /** Value Zk */
+            readonly value_zk: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
         };
         /** ScheduleOut */
         readonly ScheduleOut: {
@@ -49936,6 +50267,13 @@ export interface components {
              * @description What the approver picks between when approving (send the `value` as `choice`), first offered first; empty when approving is one yes.
              */
             readonly choices?: readonly components["schemas"]["ApprovalChoiceOut"][];
+            /**
+             * Client Step
+             * @description Work the request's page does in the approver's browser as they approve (`name`, plus the kind's ids), e.g. `aws.sealed_session`: make a sealed AWS session. Null for most kinds.
+             */
+            readonly client_step?: {
+                readonly [key: string]: unknown;
+            } | null;
             /** Requested By */
             readonly requested_by: string;
             /** Reason */
@@ -68752,6 +69090,148 @@ export interface operations {
             };
         };
     };
+    readonly agent_aws_sealed_credentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AwsSealedCredentialsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsSealedCredentialsOut"];
+                };
+            };
+        };
+    };
+    readonly list_aws_sealed_keys: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AwsSealedRoleOut"][];
+                };
+            };
+        };
+    };
+    readonly list_aws_sealed_key_holders: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AwsSealedHolderOut"][];
+                };
+            };
+        };
+    };
+    readonly list_aws_sealed_key_machines: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly put_aws_sealed_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly role: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AwsSealedKeyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsSealedKeyOut"];
+                };
+            };
+        };
+    };
+    readonly delete_aws_sealed_key: {
+        readonly parameters: {
+            readonly query?: {
+                readonly agent?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly role: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     readonly list_aws_role_requests: {
         readonly parameters: {
             readonly query?: {
@@ -68831,6 +69311,56 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsRoleRequestOut"];
+                };
+            };
+        };
+    };
+    readonly get_aws_sealing: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsSealingOut"];
+                };
+            };
+        };
+    };
+    readonly put_aws_sealed_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AwsSealedSessionIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {

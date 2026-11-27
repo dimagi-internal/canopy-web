@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
 import { approveWithPasskey, decideApproval, getApproval, type ApprovalCard } from '@/api/approvals'
 import { openInBrowser, PASSKEY_IN_BROWSER, passkeysWorkHere, useWhileAway } from '@/auth/passkeyHere'
+import { AwsSealedApprove } from '@/components/approvals/AwsSealedApprove'
 
 const OUTCOME: Record<ApprovalCard['status'], string> = {
   pending: 'Waiting',
@@ -78,6 +79,10 @@ export function ApprovalPage(): JSX.Element | null {
   if (!approvalId) return null
   if (error && !card) return <p className="max-w-2xl text-sm text-destructive">{error}</p>
   if (!card) return <div className="h-40 max-w-2xl animate-pulse rounded-lg bg-muted" />
+
+  // A kind whose approval needs work only this browser can do (a sealed AWS session).
+  const sealedStep = card.client_step?.name === 'aws.sealed_session'
+    ? { agent: String(card.client_step.agent), request: Number(card.client_step.request) } : null
 
   const decide = async (decision: 'approve' | 'decline', choice = '') => {
     setBusy(true)
@@ -190,7 +195,9 @@ export function ApprovalPage(): JSX.Element | null {
             </p>
           )}
           <div className="mt-3 flex flex-wrap gap-2">
-            {card.step_up && !passkeysWorkHere() ? (
+            {sealedStep && passkeysWorkHere() ? (
+              <AwsSealedApprove card={card} step={sealedStep} comment={comment.trim()} onCard={setCard} />
+            ) : card.step_up && !passkeysWorkHere() ? (
               <Button
                 variant={inBrowser || chosen === 'decline' ? 'outline' : 'default'}
                 disabled={!card.can_decide}
@@ -239,6 +246,11 @@ export function ApprovalPage(): JSX.Element | null {
           <b>{OUTCOME[card.status]}</b> — {card.outcome}
           {card.decided?.comment && <span className="block text-muted-foreground">“{card.decided.comment}”</span>}
           {card.status === 'failed' && <p className="mt-1 text-destructive">{card.error}</p>}
+          {card.status === 'done' && sealedStep && passkeysWorkHere() && (
+            <div className="mt-3">
+              <AwsSealedApprove card={card} step={sealedStep} comment="" renew onCard={setCard} />
+            </div>
+          )}
           {error && <p className="mt-2 text-destructive">{error}</p>}
           <ol className="mt-3 space-y-0.5 text-[12px] text-muted-foreground" data-testid="approval-history">
             {card.history.map((h, i) => (

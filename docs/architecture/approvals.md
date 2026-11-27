@@ -59,7 +59,11 @@ its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalP
   owner of the agent's workspace or a canopy superuser may approve it, never an agent's login and never
   an agent's admin as such (`kinds/agent_aws_role.py::AgentAwsRole.may_approve`). Approving makes a grant
   that `aws-credentials` vends under until it ends or is revoked; the rules are
-  `apps/agents/api_aws.py`'s module docstring.
+  `apps/agents/api_aws.py`'s module docstring. A request filed with `delivery: sealed` (`aws_sealed.py`)
+  may be approved only by someone who also holds the role's sealed key (`may_approve` asks
+  `aws_sealed.may_mint`); its card's `client_step` (`Kind.client_step`, `aws.sealed_session`) has
+  the page make the session in the approver's browser before the passkey approval and hand it
+  over sealed to the agent's machines (`components/approvals/AwsSealedApprove.tsx`).
 - **A passkey kind offers no Approve anywhere but its page.** The card says `step_up` and carries
   `page_url` (`cards.py::build`); in Approve's place the Slack DM, the alert and the email offer a
   link to the request's page (`cards.STEP_UP_APPROVE`), the push opens that page, and the page asks

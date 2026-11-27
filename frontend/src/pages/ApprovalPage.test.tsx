@@ -11,6 +11,11 @@ vi.mock('@/api/approvals', () => ({
   decideApproval: (id: number, d: string, c: string) => decide(id, d, c),
   approveWithPasskey: (id: number, c: string, choice?: string) => withPasskey(id, c, choice),
 }))
+vi.mock('@/components/approvals/AwsSealedApprove', () => ({
+  AwsSealedApprove: ({ step, renew }: { step: { agent: string; request: number }; renew?: boolean }) => (
+    <div data-testid="aws-sealed-approve">{`${step.agent}:${step.request}:${renew ? 'renew' : 'approve'}`}</div>
+  ),
+}))
 const here = { passkeys: true }
 const opened = vi.fn()
 vi.mock('@/auth/passkeyHere', () => ({
@@ -175,5 +180,19 @@ describe('ApprovalPage', () => {
     expect(screen.queryByTestId('approval-approve')).toBeNull()
     fireEvent.click(screen.getByTestId('approval-choose-write'))
     await waitFor(() => expect(withPasskey).toHaveBeenCalledWith(7, '', 'write'))
+  })
+
+  it('a sealed AWS grant is approved by the browser making its keys, and can make new ones once done', async () => {
+    const step = { name: 'aws.sealed_session', agent: 'ace', request: 5 }
+    get.mockResolvedValue({ ...CARD, kind: 'agent.aws_role', step_up: true, client_step: step })
+    open()
+    expect((await screen.findByTestId('aws-sealed-approve')).textContent).toBe('ace:5:approve')
+    expect(screen.queryByTestId('approval-approve')).toBeNull()
+    expect(screen.getByTestId('approval-decline')).toBeTruthy()
+    cleanup()
+    get.mockResolvedValue({ ...CARD, kind: 'agent.aws_role', step_up: true, client_step: step, status: 'done',
+                            can_decide: false })
+    open()
+    expect((await screen.findByTestId('aws-sealed-approve')).textContent).toBe('ace:5:renew')
   })
 })
