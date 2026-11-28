@@ -836,7 +836,7 @@ async def _listing(ctx: SiteContext, client) -> list:
     from apps.mcp_apps_host import mcp_apps
 
     tools = await client.list_tools()
-    _remember_visibility(ctx, tools)
+    _remember_visibility(ctx, tools, mcp_apps.model_visible)
     if ctx.app_id is not None and not ctx.surface:
         try:
             await sync_to_async(mcp_apps.record_tools, thread_sensitive=True)(
@@ -887,14 +887,10 @@ INDEX_FRESH = timedelta(minutes=10)
 _VISIBILITY: dict[str, tuple[float, dict[str, bool]]] = {}
 
 
-def _remember_visibility(ctx: SiteContext, tools) -> None:
-    from apps.mcp_apps_host import mcp_apps
-
+def _remember_visibility(ctx: SiteContext, tools, visible) -> None:
     if not ctx.surface:
         return
-    import time
-
-    seen = {t.name: mcp_apps.model_visible(getattr(t, "meta", None) or {}) for t in tools}
+    seen = {t.name: visible(getattr(t, "meta", None) or {}) for t in tools}
     at, known = _VISIBILITY.get(ctx.resource, (0.0, {}))
     if time.monotonic() - at >= INDEX_FRESH.total_seconds():
         known = {}
@@ -902,8 +898,6 @@ def _remember_visibility(ctx: SiteContext, tools) -> None:
 
 
 def _known_visibility(ctx: SiteContext, name: str) -> bool | None:
-    import time
-
     at, known = _VISIBILITY.get(ctx.resource, (0.0, {}))
     if not ctx.surface or time.monotonic() - at >= INDEX_FRESH.total_seconds():
         return None
