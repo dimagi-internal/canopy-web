@@ -729,7 +729,8 @@ class AgentAccessRowOut(StrictModel):
     access: Literal["full", "confined", "none"]
     profiles: list[str] = []
     # An editor line that says `manual_only` (docs/architecture/access.md): they reach the whole
-    # agent, but every turn they start runs manual — outbound needs an admin.
+    # agent, but every turn they start runs manual and its outbound waits for an admin (not
+    # their own yes, which is enough on an ordinary editor line).
     manual_only: bool = False
     # May ask for turn_mode=auto on a dispatch: the agent's owner and admins.
     may_request_auto: bool = False

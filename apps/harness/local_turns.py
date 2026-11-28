@@ -196,10 +196,10 @@ def mode_for(agent, user, requested: str = "") -> tuple[str, str]:
         if agent.is_admin(user):
             return AUTO, f"direct turn: auto requested by {email} (admin of {agent.slug})"
         return MANUAL, (f"direct turn: auto withheld — {email} is not an admin of {agent.slug}; "
-                        "outbound needs an admin")
+                        "manual — outbound waits for their own explicit yes")
     if agent.is_admin(user):
         return MANUAL, f"direct turn: {email} (admin of {agent.slug}) — manual; ask for auto to act unreviewed"
-    return MANUAL, f"direct turn: {email} — manual; outbound needs an admin of {agent.slug}"
+    return MANUAL, f"direct turn: {email} — manual; outbound waits for their own explicit yes"
 
 
 def _key(agent, claude_session_id: str) -> str:

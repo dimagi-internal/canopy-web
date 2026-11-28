@@ -236,7 +236,11 @@ drill results (`logs.read`), but not start one.
 
 ## Turn mode
 
-`manual` (the default): every outbound or irreversible action needs the agent's owner or an agent admin first. `auto`:
+`manual` (the default): every outbound or irreversible action needs an explicit yes first, from whoever drives the
+agent on that turn. A verified asker holding `write` gives it for their own sends, publishing and deploys (their own
+yes in the conversation; a yes relayed from someone else is not one). Anyone else's outbound waits for the owner or an
+agent admin, and so does a `write` asker's whose every write line is `manual_only` (the owner choosing review for that
+person). The agent is told which in its caller context (canopy `hooks/caller_context.py`). `auto`:
 the agent acts and reports. Decided at claim, top rung first, in `apps/harness/turn_mode.py` (its module docstring is
 the ladder), and carried on the Turn Context's `review`: a dispatch's requested mode (`auto` only from an agent
 admin), the `manual_only` cap of an editor line, an actor routing rule (an `auto` naming a person needs a verified
