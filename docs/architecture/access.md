@@ -117,6 +117,11 @@ the table does not make obvious:
   an agent admin (`Agent.is_admin` answers yes for the agent's owner, a workspace owner or an `AgentAdmin`, and no
   while acting under a role cap).
 * An **owner** holds the keys and is an agent admin of every agent in the workspace.
+* **No role reads a member's sessions by itself**, owner, admin and superuser included. Only a member in **learning
+  mode** (their own switch, or an owner's for them there) is read: by their coaches, the owners and admins of the
+  session's workspace (`perms.LEARNING_READ`) and the admins of the agent it was with, read-only, never a sensitive
+  session (`canopy_sessions/access.py::_learning_mode_q`, [access-sessions-and-people.md](access-sessions-and-people.md)
+  § Learning mode).
 * A **superuser** has an owner's keys here and below **without the owner's email**: `services.owner_user_ids`
   and `mail_recipients` leave superusers out unless nobody else would be told. It is the workspace-level sibling of
   the system superuser (`User.is_superuser`), which holds the same switches for the whole fleet and no workspace access.

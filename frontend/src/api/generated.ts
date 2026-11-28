@@ -9187,6 +9187,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/coaching/workspaces/{slug}/learning-mode/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who in this workspace is in learning mode (owners)
+         * @description Owner-only. Every person in this workspace or below, whether they are in learning mode here (their coaches,
+         *     this workspace's owners and admins and the admins of the agents they talk to may read their sessions,
+         *     read-only), where, and who turned it on and when.
+         */
+        readonly get: operations["list_learning_mode"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/coaching/workspaces/{slug}/learning-mode/{user_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Turn a member's learning mode on or off (owners)
+         * @description Owner-only, for a person in this workspace or below (a parent for their kids). It acts in every workspace of
+         *     theirs you own, and only there: turning it on never widens what they agreed to anywhere else (refused, 422, when
+         *     their learning consent reaches a workspace you do not own and does not include it yet), and turning it off
+         *     where it reaches further closes it only in yours. The person is told, sees on their settings page that you did
+         *     it, and may turn it off again; so may you. Each change is on their audit.
+         */
+        readonly put: operations["set_member_learning_mode"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/projects/{ref}/team/": {
         readonly parameters: {
             readonly query?: never;
@@ -20362,6 +20408,37 @@ export interface paths {
          * @description Deprecated: coaching is no longer opted into per agent. Same as `DELETE /me/session-reviewers/`.
          */
         readonly delete: operations["remove_my_session_reviewer_by_agent"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/me/learning-mode/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your learning mode: on or off, who turned it on, and exactly who may read your sessions
+         * @description Whether you are in learning mode: coaching agents and admins may read and analyze your sessions, read-only,
+         *     never a sensitive one. Says who turned it on (you, or an owner of one of your workspaces) and when, the
+         *     workspaces where it holds, and the plain list of who reads: your designated coaches, the owners and admins of
+         *     each of those workspaces, and the admins of each agent you talk to there. Only you see this.
+         */
+        readonly get: operations["get_my_learning_mode"];
+        /**
+         * Turn your learning mode on or off
+         * @description Your act. On: your coaches, the owners and admins of your workspaces and the admins of the agents you talk to
+         *     may read your sessions (the ones you started and those on your own machines), read-only, never a sensitive one,
+         *     never asking your machine for more; it holds wherever your learning consent reaches, and lifts any owner's "off"
+         *     there. Off: at once, every such reader's next read is "not found". On your audit. The same yes as the
+         *     `individual` learning class (Settings, Learning).
+         */
+        readonly put: operations["set_my_learning_mode"];
+        readonly post?: never;
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -38683,6 +38760,50 @@ export interface components {
              */
             readonly email: string;
         };
+        /** MemberLearningModeOut */
+        readonly MemberLearningModeOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * On
+             * @description Whether learning mode holds for them anywhere in this workspace or below.
+             */
+            readonly on: boolean;
+            /**
+             * Workspaces
+             * @description Where, in this workspace or below.
+             */
+            readonly workspaces: readonly string[];
+            /** Set At */
+            readonly set_at?: string | null;
+            /**
+             * Set By
+             * @description Who turned it on (a name), when canopy recorded it.
+             * @default
+             */
+            readonly set_by: string;
+        };
+        /** MemberLearningModeChangeOut */
+        readonly MemberLearningModeChangeOut: {
+            readonly member: components["schemas"]["MemberLearningModeOut"];
+            /**
+             * Changed
+             * @description The workspaces it was turned on or off in by this call; empty when nothing changed.
+             */
+            readonly changed: readonly string[];
+        };
+        /** LearningModeIn */
+        readonly LearningModeIn: {
+            /**
+             * On
+             * @description True turns learning mode on, false turns it off.
+             */
+            readonly on: boolean;
+        };
         /** ContributorBriefOut */
         readonly ContributorBriefOut: {
             /** Id */
@@ -54265,6 +54386,90 @@ export interface components {
              * @description DEPRECATED and ignored: opting in names no agent. Coaching is canopy's; who coaches you is shown in `coaches`.
              */
             readonly agent?: string | null;
+        };
+        /** LearningModeAgentReadersOut */
+        readonly LearningModeAgentReadersOut: {
+            /**
+             * Agent
+             * @description The agent's slug.
+             */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * People
+             * @description Its admins: its owner, the owners of its workspace and anyone made its admin.
+             */
+            readonly people: readonly components["schemas"]["LearningModePersonOut"][];
+        };
+        /** LearningModeOut */
+        readonly LearningModeOut: {
+            /**
+             * On
+             * @description Whether you are in learning mode.
+             */
+            readonly on: boolean;
+            /**
+             * Set At
+             * @description When it was turned on.
+             */
+            readonly set_at?: string | null;
+            /** @description Who turned it on: you, or an owner of one of your workspaces. Null when it is off, or it was turned on before canopy recorded who. */
+            readonly set_by?: components["schemas"]["LearningModeSetByOut"] | null;
+            /**
+             * Workspaces
+             * @description Your workspaces where it holds now (your learning consent's workspaces, less what is turned off there).
+             */
+            readonly workspaces: readonly string[];
+            /** @description Exactly who may read your sessions because of it. */
+            readonly readers: components["schemas"]["LearningModeReadersOut"];
+        };
+        /** LearningModePersonOut */
+        readonly LearningModePersonOut: {
+            /** Name */
+            readonly name: string;
+            /** Email */
+            readonly email: string;
+        };
+        /** LearningModeReadersOut */
+        readonly LearningModeReadersOut: {
+            /**
+             * Coaches
+             * @description The coaches designated for your workspaces (agents read only inside a running turn).
+             */
+            readonly coaches: readonly components["schemas"]["CoachOut"][];
+            /**
+             * Workspace Admins
+             * @description Per workspace where learning mode holds: who may read your sessions there.
+             */
+            readonly workspace_admins: readonly components["schemas"]["LearningModeWorkspaceReadersOut"][];
+            /**
+             * Agent Admins
+             * @description Per agent you talk to there: who may read your sessions with that agent.
+             */
+            readonly agent_admins: readonly components["schemas"]["LearningModeAgentReadersOut"][];
+        };
+        /** LearningModeSetByOut */
+        readonly LearningModeSetByOut: {
+            /** Name */
+            readonly name: string;
+            /** Email */
+            readonly email: string;
+            /**
+             * Is You
+             * @description Whether you turned it on yourself.
+             */
+            readonly is_you: boolean;
+        };
+        /** LearningModeWorkspaceReadersOut */
+        readonly LearningModeWorkspaceReadersOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * People
+             * @description Its owners and admins (an ancestor's too).
+             */
+            readonly people: readonly components["schemas"]["LearningModePersonOut"][];
         };
         /** SessionReviewAskLiveOut */
         readonly SessionReviewAskLiveOut: {
@@ -69956,6 +70161,100 @@ export interface operations {
             };
         };
     };
+    readonly list_learning_mode: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MemberLearningModeOut"][];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly set_member_learning_mode: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LearningModeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemberLearningModeChangeOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     readonly project_team: {
         readonly parameters: {
             readonly query?: never;
@@ -83409,6 +83708,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionReviewersOut"];
+                };
+            };
+        };
+    };
+    readonly get_my_learning_mode: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningModeOut"];
+                };
+            };
+        };
+    };
+    readonly set_my_learning_mode: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LearningModeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningModeOut"];
                 };
             };
         };

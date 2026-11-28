@@ -571,7 +571,8 @@ def opt_people_in(request: HttpRequest, payload: LearningOptInIn) -> list[dict]:
     for pk in sorted(chosen, key=lambda k: people[k].email):
         u = people[pk]
         try:
-            row, added = consent.admin_opt_in(u, classes=payload.classes, managed=managed, by=actor.label)
+            row, added = consent.admin_opt_in(u, classes=payload.classes, managed=managed, by=actor.label,
+                                              by_user=actor.person)
         except consent.RefusedError as e:
             raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
         except consent.OptInRefusedError as e:

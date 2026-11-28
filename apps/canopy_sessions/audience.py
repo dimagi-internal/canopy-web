@@ -145,6 +145,23 @@ def _asked_reviewers(session) -> dict[int, str]:
     return {a.agent_id: (a.agent.name or a.agent.slug) for a in asks}
 
 
+def _learning_readers(session) -> set[int]:
+    """Leg 8: when the session's person is in learning mode (`_grantor`), the owners and admins of its workspace
+    (here or above, `perms.LEARNING_READ`) and the admins of the agent it was with. Never an agent's login."""
+    from apps.agents.models import Agent  # noqa: PLC0415 — as `_grantor`'s lazy imports
+    from apps.workspaces import permissions as perms  # noqa: PLC0415 — as `_grantor`'s lazy imports
+
+    if _grantor(session) is None:
+        return set()
+    ids = perms.user_ids_with(session.workspace_id, perms.LEARNING_READ)
+    if session.agent_id:
+        agent = session.agent
+        ids |= set(AgentAdmin.objects.filter(agent=agent).values_list("user_id", flat=True))
+        ids |= {agent.owner_id} if agent.owner_id else set()
+        ids |= perms.user_ids_with(agent.workspace_id, perms.OWN)
+    return ids - set(Agent.objects.exclude(user_id=None).values_list("user_id", flat=True))
+
+
 def _runner_admins(session) -> set[int]:
     """Leg 6: admins of the box a discovered session is bound to."""
     b = _binding(session) if _discovered(session) else None
@@ -177,6 +194,7 @@ def pieces(session) -> dict:
         "asked_reviewers": asked,
         "runner_admins": within(_runner_admins(session)),
         "project_readers": within(_project_readers(session)),
+        "learning_readers": within(_learning_readers(session)),
     }
 
 
@@ -185,7 +203,7 @@ def readers(session) -> set[int]:
     session (the panel) has no member readers beyond these."""
     p = pieces(session)
     out = p["creator"] | p["participants"] | p["box_owner"] | p["agent_admins"] | p["own_login"]
-    out |= set(p["coaches"]) | p["runner_admins"] | p["project_readers"]
+    out |= set(p["coaches"]) | p["runner_admins"] | p["project_readers"] | p["learning_readers"]
     return out
 
 
@@ -245,6 +263,8 @@ def summary(session, viewer) -> dict:
         extras.append(", ".join(sorted(set(p["coaches"].values()))) + " may review (coaching)")
     for name in sorted(set(p["asked_reviewers"].values())):
         extras.append(f"{name} may review this one session (asked from its page)")
+    if p["learning_readers"] - p["creator"] - p["box_owner"]:
+        extras.append("Its workspace's owners and admins, and the agent's admins, may read it (learning mode)")
     if p["runner_admins"] - p["box_owner"]:
         extras.append("This machine's admins can read it, to move it")
     if p["project_readers"] - set(p["participants"]) - p["creator"]:

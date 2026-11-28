@@ -18,6 +18,7 @@ import { listWorkspaces } from '@/api/workspaces'
 import { useAuth } from '@/auth/AuthProvider'
 import { scopedPath } from '@/lib/scopedLinks'
 import { Td, Th, Tr } from '@/components/DataTable'
+import { LearningModeCard } from './LearningModeCard'
 
 /** Settings → Learning: what canopy may learn from your sessions, by class; who sees what it produces; the
  *  sessions you took out (and letting one back in); who manages you; and what was read of your words. Every change is yours alone
@@ -94,11 +95,13 @@ export function LearningPanel() {
 
   return (
     <div className="space-y-5">
+      <LearningModeCard />
       <section className="rounded-xl border border-border bg-card p-5 space-y-3">
         <h2 className="text-sm font-semibold text-foreground">What canopy may learn from your sessions</h2>
         <p className="text-xs text-muted-foreground">
-          Each class is your own yes. Nobody can turn one on for you, and turning one off takes effect at once,
-          including for what was already derived from your sessions.
+          Each class is your own yes. Only learning mode (individual) can also be turned on or off for you, by an
+          owner of one of your workspaces, there; turning one off takes effect at once, including for what was
+          already derived from your sessions.
         </p>
         <p className="text-xs text-muted-foreground">
           <Link className="underline" to="/brain">See what canopy learning holds now, and what it found</Link>

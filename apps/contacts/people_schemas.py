@@ -563,3 +563,68 @@ class MemoryPageOut(StrictModel):
 class MemoryPageAuditOut(StrictModel):
     events: list[dict[str, Any]] = Field(description="Audit events, as /api/hcp/v1/audit shows them.")
     nextCursor: str | None = None
+
+
+# ---- learning mode (apps/contacts/learning_mode.py) ---------------------------------------------------------
+
+class LearningModeIn(StrictModel):
+    on: bool = Field(description="True turns learning mode on, false turns it off.")
+
+
+class LearningModePersonOut(StrictModel):
+    name: str
+    email: str
+
+
+class LearningModeSetByOut(StrictModel):
+    name: str
+    email: str
+    is_you: bool = Field(description="Whether you turned it on yourself.")
+
+
+class LearningModeWorkspaceReadersOut(StrictModel):
+    workspace: str
+    people: list[LearningModePersonOut] = Field(description="Its owners and admins (an ancestor's too).")
+
+
+class LearningModeAgentReadersOut(StrictModel):
+    agent: str = Field(description="The agent's slug.")
+    name: str
+    people: list[LearningModePersonOut] = Field(
+        description="Its admins: its owner, the owners of its workspace and anyone made its admin.")
+
+
+class LearningModeReadersOut(StrictModel):
+    coaches: list[CoachOut] = Field(description="The coaches designated for your workspaces (agents read only "
+                                                "inside a running turn).")
+    workspace_admins: list[LearningModeWorkspaceReadersOut] = Field(
+        description="Per workspace where learning mode holds: who may read your sessions there.")
+    agent_admins: list[LearningModeAgentReadersOut] = Field(
+        description="Per agent you talk to there: who may read your sessions with that agent.")
+
+
+class LearningModeOut(StrictModel):
+    on: bool = Field(description="Whether you are in learning mode.")
+    set_at: dt.datetime | None = Field(None, description="When it was turned on.")
+    set_by: LearningModeSetByOut | None = Field(
+        None, description="Who turned it on: you, or an owner of one of your workspaces. Null when it is off, or "
+                          "it was turned on before canopy recorded who.")
+    workspaces: list[str] = Field(description="Your workspaces where it holds now (your learning consent's "
+                                              "workspaces, less what is turned off there).")
+    readers: LearningModeReadersOut = Field(description="Exactly who may read your sessions because of it.")
+
+
+class MemberLearningModeOut(StrictModel):
+    user_id: int
+    email: str
+    name: str
+    on: bool = Field(description="Whether learning mode holds for them anywhere in this workspace or below.")
+    workspaces: list[str] = Field(description="Where, in this workspace or below.")
+    set_at: dt.datetime | None = None
+    set_by: str = Field("", description="Who turned it on (a name), when canopy recorded it.")
+
+
+class MemberLearningModeChangeOut(StrictModel):
+    member: MemberLearningModeOut
+    changed: list[str] = Field(description="The workspaces it was turned on or off in by this call; empty when "
+                                           "nothing changed.")

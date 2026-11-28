@@ -23,6 +23,7 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import refusals
 from apps.api.route_gates import gate
+from apps.contacts.people_schemas import LearningModeIn, MemberLearningModeChangeOut, MemberLearningModeOut
 from apps.events import activity
 from apps.harness import turn_asker
 from apps.workspaces import permissions as perms
@@ -178,3 +179,57 @@ def remove_coach(request: HttpRequest, slug: str, role_id: int):
         raise HttpError(404, "no such coach in this workspace")
     coaching.remove(role, by=request.user)
     return Status(204, None)
+
+
+# ---- learning mode, for a workspace's owners (apps/contacts/learning_mode.py) -----------------------------------
+
+def _owner_as_themself(request: HttpRequest, slug: str):
+    """An owner of `slug` (inherited ownership counts), as themselves: never an agent's login, and never a token
+    that speaks for a turn (a caller token reads as its asker; it must not change who reads them)."""
+    from apps.contacts import people  # noqa: PLC0415 — contacts imports this app
+    from apps.tokens import kinds  # noqa: PLC0415 — as the line above
+
+    m = require_role(request.user, slug, perms.OWN)
+    if not people.is_human_account(request.user) or kinds.speaks_for_a_turn(request):
+        raise HttpError(403, "only a workspace owner, as themselves, may change someone's learning mode")
+    return m
+
+
+@router.get("/workspaces/{slug}/learning-mode/", response={200: list[MemberLearningModeOut], **refusals(403, 404)},
+            summary="Who in this workspace is in learning mode (owners)")
+@gate("own")
+def list_learning_mode(request: HttpRequest, slug: str) -> list[dict]:
+    """Owner-only. Every person in this workspace or below, whether they are in learning mode here (their coaches,
+    this workspace's owners and admins and the admins of the agents they talk to may read their sessions,
+    read-only), where, and who turned it on and when."""
+    from apps.contacts import learning_mode  # noqa: PLC0415 — contacts imports this app
+
+    _owner_as_themself(request, slug)
+    return learning_mode.members_state(slug)
+
+
+@router.put("/workspaces/{slug}/learning-mode/{user_id}/",
+            response={200: MemberLearningModeChangeOut, **refusals(403, 404, 422)},
+            summary="Turn a member's learning mode on or off (owners)")
+@gate("own", setting=True)
+def set_member_learning_mode(request: HttpRequest, slug: str, user_id: int, payload: LearningModeIn) -> dict:
+    """Owner-only, for a person in this workspace or below (a parent for their kids). It acts in every workspace of
+    theirs you own, and only there: turning it on never widens what they agreed to anywhere else (refused, 422, when
+    their learning consent reaches a workspace you do not own and does not include it yet), and turning it off
+    where it reaches further closes it only in yours. The person is told, sees on their settings page that you did
+    it, and may turn it off again; so may you. Each change is on their audit."""
+    from apps.contacts import learning_mode, people  # noqa: PLC0415 — contacts imports this app
+
+    _owner_as_themself(request, slug)
+    member = get_user_model().objects.filter(pk=user_id, is_active=True).first()
+    if member is None or not people.is_human_account(member):
+        raise HttpError(404, "no such person in this workspace")
+    tree = {slug} | wsvc.descendant_slugs({slug})
+    if not set(wsvc.user_workspace_slugs(member)) & tree:
+        raise HttpError(404, "no such person in this workspace")
+    try:
+        changed = learning_mode.set_for(member, on=payload.on, owner=request.user, workspace=slug)
+    except learning_mode.Refused as e:
+        raise HttpError(422, str(e)) from e
+    row = next(r for r in learning_mode.members_state(slug) if r["user_id"] == member.pk)
+    return {"member": row, "changed": changed}

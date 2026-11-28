@@ -62,37 +62,42 @@ def coaches_for(user) -> list[dict]:
     return out
 
 
-def opt_in(person: Person, *, user) -> CoachingOptIn:
-    """Opt `user` into coaching. Doing it again is a no-op."""
+def opt_in(person: Person, *, user, by=None) -> CoachingOptIn:
+    """Turn learning mode (coaching) on for `user`: their own act, or `by`'s, an owner acting for them
+    (`learning_mode.set_for`). Doing it again is a no-op."""
+    by = by or user
     with transaction.atomic():
         current = live(user).first()
         if current is not None:
             return current
-        row = CoachingOptIn.objects.create(user=user)
-        _sharing_changed(user, granted=True)
-        hcp.audit(person, "sessionReviewer.granted", actor=hcp.user_actor(user),
-                  purpose="opt in to coaching: canopy's coaches may review your sessions, read-only")
+        row = CoachingOptIn.objects.create(user=user, set_by=by)
+        _sharing_changed(user, granted=True, by=by)
+        hcp.audit(person, "sessionReviewer.granted", actor=hcp.user_actor(by),
+                  purpose="turn learning mode on: canopy's coaches and the admins where you work may read "
+                          "your sessions, read-only" + ("" if by == user else f" (by {by.email})"))
         brain_consent.mirror_coaching(user, on=True)
     return row
 
 
-def opt_out(person: Person, *, user) -> bool:
-    """Opt `user` out. False when they were not opted in."""
+def opt_out(person: Person, *, user, by=None) -> bool:
+    """Turn learning mode off for `user` (theirs, or `by`'s for them). False when it was not on."""
+    by = by or user
     with transaction.atomic():
-        n = live(user).update(revoked_at=timezone.now())
+        n = live(user).update(revoked_at=timezone.now(), revoked_by=by)
         if n:
-            _sharing_changed(user, granted=False)
-            hcp.audit(person, "sessionReviewer.revoked", actor=hcp.user_actor(user),
-                      purpose="opt out of coaching: no coach may review your sessions")
+            _sharing_changed(user, granted=False, by=by)
+            hcp.audit(person, "sessionReviewer.revoked", actor=hcp.user_actor(by),
+                      purpose="turn learning mode off: nobody may read your sessions for learning"
+                              + ("" if by == user else f" (by {by.email})"))
             brain_consent.mirror_coaching(user, on=False)
     return bool(n)
 
 
-def _sharing_changed(user, *, granted: bool) -> None:
+def _sharing_changed(user, *, granted: bool, by=None) -> None:
     """Coaching of a person began or ended: one event in each workspace whose coaches reach them
     (`canopy_sessions.lifecycle`)."""
     for ws in sorted({c["workspace"] for c in coaches_for(user)}):
-        lifecycle.record(lifecycle.SHARING_CHANGED, None, by=user, workspace_id=ws,
+        lifecycle.record(lifecycle.SHARING_CHANGED, None, by=by or user, workspace_id=ws,
                          change={"field": "coaching", "user_id": user.pk, "before": not granted,
                                  "after": granted})
 
