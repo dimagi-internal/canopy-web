@@ -93,6 +93,17 @@ describe('/ide closing the open session', () => {
     expect(screen.getByTestId('ide-note').textContent).toContain('Deleting “b” on box…')
   })
 
+  it('folds the session list away and brings it back, keeping the chat open', async () => {
+    await open('/ide/a')
+    fireEvent.click(screen.getByTestId('ide-rail-hide'))
+    expect(screen.queryByTestId('ide-rail')).toBeNull()
+    expect(screen.getByTestId('pane')).toBeTruthy()
+    expect(JSON.parse(store.get('canopy.ide.v1') ?? '{}').railHidden).toBe(true)
+    expect(screen.getByTestId('ide-rail-show').textContent).toContain('Sessions')
+    fireEvent.click(screen.getByTestId('ide-rail-show'))
+    expect(screen.getByTestId('ide-row-a')).toBeTruthy()
+  })
+
   it('opens the session below when the delete finishes on the server', async () => {
     chat.closeSession.mockResolvedValue({ ok: true, closing: false, reason: '' })
     await open('/ide/a')
