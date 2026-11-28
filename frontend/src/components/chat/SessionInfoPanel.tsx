@@ -285,6 +285,7 @@ function TurnRow({
           <Row label="Client" value={str(t.provenance?.client)} />
           <Row label="Mode" value={t.turn_mode ? `${t.turn_mode}${t.turn_mode_basis ? ` (${t.turn_mode_basis})` : ""}` : ""} />
           <Row label="Runner" value={t.claimed_by_name ?? ""} />
+          <Row label="Plugins loaded" value={t.claimed_by_name ? loadedPluginsText(t.loaded_plugins) : ""} testId="session-info-turn-plugins" />
           <Row label="Claude session" value={t.session_id} mono copy />
           <Row label="Claimed" value={when(t.claimed_at)} />
           <Row label="Finished" value={when(t.finished_at)} />
@@ -303,6 +304,15 @@ function TurnRow({
       )}
     </li>
   );
+}
+
+/** {"canopy@canopy": {version, sha}} → "canopy@canopy 0.2.920 (a1b2c3d4)", one per line.
+ *  A turn its runner sent none for reads "not recorded": nothing is inferred from the runner. */
+export function loadedPluginsText(v: unknown): string {
+  if (!v || typeof v !== "object" || !Object.keys(v).length) return "not recorded";
+  return Object.entries(v as Record<string, { version?: string; sha?: string }>)
+    .map(([key, p]) => `${key} ${p?.version || "?"}${p?.sha ? ` (${p.sha.slice(0, 8)})` : ""}`)
+    .join("\n");
 }
 
 function when(iso: string | null | undefined): string {

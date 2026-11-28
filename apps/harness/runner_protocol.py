@@ -136,6 +136,27 @@ def _record_latency(turn: Turn, raw) -> None:
         latency.mark(turn, facts, **marks)
 
 
+#: At most this many plugins are kept per turn; longer strings are cut.
+LOADED_PLUGINS_MAX = 40
+
+
+def _record_loaded_plugins(turn: Turn, raw) -> None:
+    """Keep the plugin versions the runner says the turn loaded. First write wins: a
+    re-sent finish, or a later report, never rewrites what the turn ran with."""
+    if not isinstance(raw, dict) or not raw or turn.loaded_plugins:
+        return
+    clean: dict = {}
+    for key, facts in list(raw.items())[:LOADED_PLUGINS_MAX]:
+        if not isinstance(key, str) or not key or not isinstance(facts, dict):
+            continue
+        clean[key[:120]] = {"version": str(facts.get("version") or "")[:40],
+                            "sha": str(facts.get("sha") or "")[:40]}
+    if not clean:
+        return
+    if Turn.objects.filter(pk=turn.pk, loaded_plugins={}).update(loaded_plugins=clean):
+        turn.loaded_plugins = clean
+
+
 def finish(turn: Turn, payload: TurnFinishIn) -> Turn:
     """Finish a turn the calling runner claimed — THE call both channels make.
 
@@ -153,6 +174,7 @@ def finish(turn: Turn, payload: TurnFinishIn) -> Turn:
     # session key: the finish is the runner's one report of its own timings, and the
     # reply push that finishing starts reads them.
     _record_latency(turn, payload.latency)
+    _record_loaded_plugins(turn, payload.loaded_plugins)
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent finish
     # Read the state BEFORE finishing: a non-terminal result is ambiguous. It

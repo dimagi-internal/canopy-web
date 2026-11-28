@@ -158,6 +158,9 @@ class TurnOut(Schema):
     # user_agent, request_id, mcp_tool, parent (raw), clicked_by. The client ip
     # is recorded but not served.
     provenance: dict = {}
+    # The plugin versions the turn ran with, `{plugin key: {"version", "sha"}}`, as its
+    # runner read them off its plugin cache before Claude started. {} = not recorded.
+    loaded_plugins: dict = {}
     parent_turn_id: uuid.UUID | None = None
     parent_session_id: uuid.UUID | None = None
     parent_task: str = ""
@@ -520,6 +523,10 @@ class TurnFinishIn(Schema):
     # ISO times) plus `warm`: whether the session already existed. Optional; an older
     # runner sends none and its turns are traced from canopy's own timestamps.
     latency: dict | None = None
+    # The plugins the turn loaded, `{plugin key: {"version", "sha"}}`, read off the box's
+    # plugin cache after the claim installed the agent's clone. Optional; an older runner
+    # sends none and the turn's `loaded_plugins` stays {} (not recorded).
+    loaded_plugins: dict | None = None
 
     _legacy_key = model_validator(mode="after")(adopt_legacy_session_key)
 

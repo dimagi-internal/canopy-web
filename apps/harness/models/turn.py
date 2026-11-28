@@ -262,6 +262,11 @@ class Turn(models.Model):
     # `warm` / `runner_kind` (`apps/harness/latency.py` names the marks and who
     # writes each). First write wins; a turn with none simply was not traced.
     latency = models.JSONField(default=dict, blank=True)
+    # WHICH PLUGIN VERSIONS this turn loaded: `{plugin key: {"version", "sha"}}`, read by a
+    # cloud runner off its plugin cache once the claim installed the agent's pulled clone and
+    # before Claude started, and sent with the finish (`runner_protocol._record_loaded_plugins`).
+    # First write wins. {} = not recorded (an older runner, a laptop, a job): never inferred.
+    loaded_plugins = models.JSONField(default=dict, blank=True)
     # The turn / session / emdash task / Claude session this turn was started
     # FROM — from the X-Canopy-Parent-* headers, a `parent` object in the
     # payload, a confined session's caller token, or set by canopy itself (a
