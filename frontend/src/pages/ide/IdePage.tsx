@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
-import { ChevronDown, Menu, MoreHorizontal } from 'lucide-react'
+import { ChevronDown, ChevronUp, Menu, MoreHorizontal } from 'lucide-react'
 import { WorkbenchRail, WorkbenchShell } from 'canopy-ui'
 import {
   Dialog,
@@ -423,6 +423,17 @@ export function IdePage() {
         >
           {live ? '●' : '○'}
         </span>
+        {/* Phones stack the list above the chat; folding it gives the chat the screen. */}
+        <button
+          type="button"
+          onClick={() => setRailHidden(true)}
+          title="Hide the session list"
+          aria-label="Hide the session list"
+          data-testid="ide-rail-hide"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground md:hidden"
+        >
+          <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+        </button>
       </div>
 
       <div className="flex items-center gap-1">
@@ -560,7 +571,12 @@ export function IdePage() {
   return (
     <WorkbenchShell>
       {!railHidden && (
-      <div className="relative flex min-h-0 shrink-0" style={{ width: railWidth }} data-testid="ide-rail">
+      <div
+        // The dragged width is the desktop rail's; on a phone the list spans the screen.
+        className="relative flex min-h-0 w-full shrink-0 md:w-[var(--ide-rail-w)]"
+        style={{ '--ide-rail-w': `${railWidth}px` } as CSSProperties}
+        data-testid="ide-rail"
+      >
       <WorkbenchRail width="md:w-full" className="min-w-0 flex-1" header={header}>
         <IdeTree
           id={id}
@@ -598,7 +614,7 @@ export function IdePage() {
         data-testid="ide-rail-resize"
         onPointerDown={startDrag}
         onDoubleClick={() => setRailWidth(RAIL_DEFAULT)}
-        className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-primary/30 active:bg-primary/40"
+        className="absolute inset-y-0 -right-1 z-10 hidden w-2 cursor-col-resize hover:bg-primary/30 active:bg-primary/40 md:block"
       />
       </div>
       )}
@@ -609,9 +625,13 @@ export function IdePage() {
           title="Show the session list (⌘B)"
           aria-label="Show the session list"
           data-testid="ide-rail-show"
-          className="flex w-5 shrink-0 items-start justify-center border-r border-border pt-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="flex w-full shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground md:w-5 md:items-start md:justify-center md:border-b-0 md:border-r md:px-0 md:pb-0 md:pt-2 md:text-[11px]"
         >
-          ›
+          <span className="hidden md:inline">›</span>
+          {/* Phone: a bar across the top of the chat, where the list was. */}
+          <ChevronDown className="h-3.5 w-3.5 md:hidden" aria-hidden />
+          <span className="font-semibold text-foreground md:hidden">Sessions</span>
+          <span className="tabular-nums md:hidden">{shown.length}</span>
         </button>
       )}
       <div className="ide-dense min-h-0 min-w-0 flex-1">
