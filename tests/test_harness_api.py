@@ -141,6 +141,61 @@ def test_start_and_finish(client, agent):
     assert finished.status_code == 200 and finished.json()["status"] == "done"
 
 
+def _claimed_turn(client, agent) -> str:
+    rid = _pair(client)
+    assert _hb(client, rid).status_code == 200
+    RunnerAssignment.objects.create(agent=agent, runner_id=rid, rank=0)
+    tid = client.post(
+        "/api/harness/turns/",
+        {"agent_slug": "echo", "origin": "manual", "idempotency_key": "k1"},
+        content_type="application/json",
+    ).json()["id"]
+    assert client.post(f"/api/harness/runners/{rid}/claim").status_code == 200
+    return tid
+
+
+def test_the_finish_records_which_plugin_versions_the_turn_loaded(client, agent):
+    """A cloud runner reads its plugin cache after the claim installed the agent's clone and
+    sends it with the finish; the turn keeps it and serves it, first write wins."""
+    tid = _claimed_turn(client, agent)
+    loaded = {"canopy@canopy": {"version": "0.2.920", "sha": "a" * 40},
+              "echo@echo": {"version": "0.4.1", "sha": "b" * 40}}
+    first = client.post(f"/api/harness/turns/{tid}/finish",
+                        {"status": "done", "loaded_plugins": loaded},
+                        content_type="application/json")
+    assert first.status_code == 200, first.content
+    assert first.json()["loaded_plugins"] == loaded
+    again = client.post(f"/api/harness/turns/{tid}/finish",
+                        {"status": "done", "loaded_plugins": {"canopy@canopy": {"version": "9.9.9"}}},
+                        content_type="application/json")
+    assert again.status_code == 200
+    assert client.get(f"/api/harness/turns/{tid}").json()["loaded_plugins"] == loaded
+
+
+def test_a_turn_whose_runner_sent_no_plugins_reads_not_recorded(client, agent):
+    """An older runner (or a laptop) sends none: {} — never inferred from the runner."""
+    tid = _claimed_turn(client, agent)
+    fin = client.post(f"/api/harness/turns/{tid}/finish", {"status": "done"},
+                      content_type="application/json")
+    assert fin.status_code == 200 and fin.json()["loaded_plugins"] == {}
+
+
+def test_loaded_plugins_are_cleaned_and_bounded(client, agent):
+    from apps.harness import runner_protocol
+    from apps.harness.models import Turn
+
+    tid = _claimed_turn(client, agent)
+    raw = {f"p{i}@m": {"version": "1." + "0" * 80, "sha": "c" * 99, "extra": "x"}
+           for i in range(runner_protocol.LOADED_PLUGINS_MAX + 5)}
+    raw["bad"] = "not a dict"
+    client.post(f"/api/harness/turns/{tid}/finish", {"status": "done", "loaded_plugins": raw},
+                content_type="application/json")
+    kept = Turn.objects.get(pk=tid).loaded_plugins
+    assert len(kept) == runner_protocol.LOADED_PLUGINS_MAX
+    assert all(set(v) == {"version", "sha"} and len(v["version"]) <= 40 and len(v["sha"]) <= 40
+               for v in kept.values())
+
+
 def test_finish_with_cancelled_status_is_accepted(client, agent):
     # C1: the runner's own cancel_turn interrupt calls client.finish(...,
     # status="cancelled") — the finish route must accept it, not 422 (which

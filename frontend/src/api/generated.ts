@@ -27020,6 +27020,13 @@ export interface components {
             readonly provenance: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Loaded Plugins
+             * @default {}
+             */
+            readonly loaded_plugins: {
+                readonly [key: string]: unknown;
+            };
             /** Parent Turn Id */
             readonly parent_turn_id?: string | null;
             /** Parent Session Id */
@@ -47618,6 +47625,13 @@ export interface components {
             readonly provenance: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Loaded Plugins
+             * @default {}
+             */
+            readonly loaded_plugins: {
+                readonly [key: string]: unknown;
+            };
             /** Parent Turn Id */
             readonly parent_turn_id?: string | null;
             /** Parent Session Id */
@@ -48802,6 +48816,10 @@ export interface components {
             readonly emdash_task_id: string;
             /** Latency */
             readonly latency?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Loaded Plugins */
+            readonly loaded_plugins?: {
                 readonly [key: string]: unknown;
             } | null;
         };

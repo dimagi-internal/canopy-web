@@ -190,11 +190,18 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 | `claude.credentials` | 0 credentials (fail) or 1 (warn: a usage cap stops every agent here) |
 | `claude.version` | `claude --version` does not run |
 | `canopy.cli` | the canopy CLI did not run (fail) or is behind the marketplace plugin (warn) — Refresh |
+| `plugins` | an installed plugin still lags the clone it is installed from `PLUGIN_REFRESH_GRACE_SECONDS` after that clone moved (the reason is in `~/.claude/canopy/fleet-update.log`), or the installed canopy plugin is older than canopy's release (warn). Ok or not, the detail names each installed version and which were compared with their clone, e.g. `canopy 0.2.920 · ace 0.13.2204 · nova 1.2.0 (the rest current with their clones; nova not compared: no clone)` |
 | `disk` | root volume ≥ 80% (warn) / ≥ 90% (fail) — the runner sweeps scratch and prunes caches on its own at its next idle moment; a fail that stays is not scratch: grow `VolumeSize` (see "Disk") |
 | `scratch` | the disk sweep kept an old dir in `/tmp` or `WORK_DIR` because it holds work that exists nowhere else (uncommitted, or commits on no remote) — push or discard it; nothing else needs doing (see "Disk") |
 | `clones` | an agent's (or project's) clone cannot fetch its origin and is older than `CLONE_STALE_SECONDS` (30 min): new chat sessions are cut from it and run STALE skills/CLAUDE.md. A private repo needs the agent's GitHub delegation (the runner fetches with it in its own git process, never in a confined turn's env) |
 | `github.<slug>` | the agent's owner has lent no GitHub token, or it is expired / cannot open a PR on the agent's repo — the OWNER sets it at the agent's Settings → External accounts → GitHub; checked at boot, so Refresh (or wait for the next bootstrap) to re-check |
 | `env.<slug>` | the agent's `~/.<slug>/.env` could not be resolved from its Canopy vault when a turn was claimed (the CLI's reason in the detail) — turns run on the last good values, which may be stale. Fix the vault; the next claim after `AGENT_ENV_TTL_SECONDS` (300) retries |
+
+Which plugin versions a turn actually ran with is on the turn, not the runner: after the claim
+installs the agent's pulled clone and before Claude starts, the runner reads its plugin cache
+and sends `{plugin key: {version, sha}}` with the turn's finish, kept as `Turn.loaded_plugins`
+(first write wins; `{}` means not recorded — an older runner or a laptop — and is never
+inferred). It is on `TurnOut` and the turn's row in the session info panel.
 
 Per-agent results (mailbox, secrets from the Canopy vault — `env_ok`, with the CLI's own
 reason in `detail`) stay on `GET /api/agents/{slug}/readiness`. A readiness

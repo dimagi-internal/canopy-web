@@ -118,6 +118,125 @@ def test_unreadable_registry_reports_nothing(box):
     assert "plugins" not in mod._HEALTH
 
 
+# ── what is installed, named even when all is well ──────────────────────────
+
+
+def _install_many(home, entries, markets):
+    plugins = home / ".claude" / "plugins"
+    (plugins / "installed_plugins.json").write_text(json.dumps(
+        {"version": 2, "plugins": {k: [v] for k, v in entries.items()}}))
+    (plugins / "known_marketplaces.json").write_text(json.dumps(
+        {m: {"installLocation": str(loc)} for m, loc in markets.items()}))
+
+
+def test_an_ok_check_names_each_installed_version(box, monkeypatch):
+    mod, home, clone, install = box
+    monkeypatch.setitem(mod._CANOPY_RELEASE, "v", "")
+    sha = _commit(clone, "a", NOW - 3 * DAY)
+    install(sha, version="0.13.2204")
+    mod._plugins_check(now=NOW, home=home)
+    c = _check(mod)
+    assert c["status"] == "ok"
+    assert c["detail"] == "ace 0.13.2204 (each current with its clone)"
+
+
+def test_plugins_it_could_not_compare_are_named_with_why(box, tmp_path, monkeypatch):
+    mod, home, clone, _ = box
+    monkeypatch.setitem(mod._CANOPY_RELEASE, "v", "")
+    sha = _commit(clone, "a", NOW - 3 * DAY)
+    _install_many(home, {
+        "canopy@canopy": {"version": "0.2.920", "gitCommitSha": sha},
+        "ace@ace": {"version": "0.13.2204", "gitCommitSha": sha},
+        "nova@nova": {"version": "1.2.0", "gitCommitSha": "f" * 40},
+        "bare@bare": {"version": "0.1.0"},
+    }, {"canopy": clone, "ace": clone, "nova": tmp_path / "nowhere"})
+    mod._plugins_check(now=NOW, home=home)
+    c = _check(mod)
+    assert c["status"] == "ok"
+    assert c["detail"].startswith("canopy 0.2.920 · ace 0.13.2204 · bare 0.1.0 · nova 1.2.0 (")
+    assert "the rest current with their clones" in c["detail"]
+    assert "nova not compared: no clone" in c["detail"]
+    assert "bare not compared: no installed sha" in c["detail"]
+
+
+def test_a_plugin_installed_ahead_of_its_clone_is_named_not_compared(box):
+    mod, home, clone, install = box
+    _commit(clone, "marketplace", NOW - 30 * DAY)
+    install("0123456789abcdef0123456789abcdef01234567")
+    mod._plugins_check(now=NOW, home=home)
+    assert "ace not compared: its sha is not in its clone's history" in _check(mod)["detail"]
+
+
+def test_the_list_of_what_is_installed_is_bounded(box, tmp_path):
+    mod, home, _, _ = box
+    many = {f"plugin-{i:03}@m{i}": {"version": f"{i}.0.0"} for i in range(200)}
+    _install_many(home, many, {})
+    mod._plugins_check(now=NOW, home=home)
+    d = _check(mod)["detail"]
+    assert len(d) <= mod.PLUGINS_SUMMARY_CHARS
+    assert "more" in d
+
+
+def test_a_canopy_plugin_older_than_canopys_release_is_amber(box, monkeypatch):
+    """Its clone may be just as old, so the clone alone reads consistent: canopy's release
+    (the heartbeat's expected_canopy_version) is the honest yardstick, as for the CLI."""
+    mod, home, clone, _ = box
+    sha = _commit(clone, "a", NOW - 3 * DAY)
+    _install_many(home, {"canopy@canopy": {"version": "0.2.900", "gitCommitSha": sha}},
+                  {"canopy": clone})
+    monkeypatch.setitem(mod._CANOPY_RELEASE, "v", "0.2.920")
+    mod._plugins_check(now=NOW, home=home)
+    c = _check(mod)
+    assert c["status"] == "warn"
+    assert c["detail"].startswith(
+        "canopy plugin 0.2.900, but canopy's release is 0.2.920: this runner refreshes when idle")
+    assert "Installed: canopy 0.2.900" in c["detail"]
+
+
+@pytest.mark.parametrize("release, version", [("", "0.2.900"), ("0.2.920", "0.2.920"),
+                                              ("0.2.920", "0.2.921"), ("0.2.920", "")])
+def test_canopy_at_or_past_its_release_or_unknown_is_never_stale(box, monkeypatch, release, version):
+    mod, home, clone, _ = box
+    sha = _commit(clone, "a", NOW - 3 * DAY)
+    _install_many(home, {"canopy@canopy": {"version": version, "gitCommitSha": sha}},
+                  {"canopy": clone})
+    monkeypatch.setitem(mod._CANOPY_RELEASE, "v", release)
+    mod._plugins_check(now=NOW, home=home)
+    assert _check(mod)["status"] == "ok"
+
+
+# ── which plugins a turn loaded ─────────────────────────────────────────────
+
+
+def test_a_turn_notes_the_installed_plugins_and_its_finish_carries_them(box):
+    mod, home, _, _ = box
+    _install_many(home, {
+        "canopy@canopy": {"version": "0.2.920", "gitCommitSha": "a" * 40, "installPath": "/x"},
+        "ace@ace": {"version": "0.13.2204", "gitCommitSha": "b" * 40},
+    }, {})
+    mod._note_loaded_plugins("t1", home=home)
+    _install_many(home, {"canopy@canopy": {"version": "9.9.9"}}, {})
+    mod._note_loaded_plugins("t1", home=home)          # the first note wins
+    assert mod._loaded_plugins_take("t1") == {
+        "ace@ace": {"version": "0.13.2204", "sha": "b" * 40},
+        "canopy@canopy": {"version": "0.2.920", "sha": "a" * 40},
+    }
+    assert mod._loaded_plugins_take("t1") is None
+
+
+def test_a_lean_turn_notes_only_the_plugins_it_keeps(box):
+    mod, home, _, _ = box
+    _install_many(home, {"canopy@canopy": {"version": "0.2.920"}, "ace@ace": {"version": "1"}}, {})
+    mod._note_loaded_plugins("t2", lean=True, home=home)
+    assert list(mod._loaded_plugins_take("t2")) == ["canopy@canopy"]
+
+
+def test_an_unreadable_registry_notes_nothing_to_send(box):
+    mod, home, _, _ = box
+    mod._note_loaded_plugins("t3", home=home)
+    assert mod._loaded_plugins_take("t3") is None
+
+
 # ── the claim installs what it pulled ───────────────────────────────────────
 
 

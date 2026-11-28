@@ -1566,16 +1566,56 @@ def _clone_moved_at(loc: str) -> float:
     return 0.0
 
 
+#: The longest the `plugins` check's list of what is installed may run (the check's detail is
+#: cut at 2000 characters, and the list rides in front of any warning).
+PLUGINS_SUMMARY_CHARS = 600
+
+
+def _plugin_name(key: str) -> str:
+    """`canopy@canopy` reads `canopy`: the marketplace half only matters when it differs."""
+    name, _, market = key.partition("@")
+    return name if not market or market == name else key
+
+
+def _plugins_summary(versions: list[str], current: list[str], skipped: dict[str, list[str]],
+                     installing: list[str]) -> str:
+    """One line naming what is installed and how far each was compared, at most
+    PLUGINS_SUMMARY_CHARS: "canopy 0.2.920 · bailey 0.3.41 (each current with its clone)"."""
+    shown, more = [], 0
+    for v in versions:
+        if sum(len(x) + 3 for x in shown) + len(v) > PLUGINS_SUMMARY_CHARS // 2:
+            more += 1
+        else:
+            shown.append(v)
+    line = " · ".join(shown) + (f" · +{more} more" if more else "")
+    notes = []
+    if current:
+        notes.append("the rest current with their clones" if (skipped or installing)
+                     else "each current with its clone")
+    if installing:
+        notes.append(f"{', '.join(installing)} installing what {'its' if len(installing) == 1 else 'their'} "
+                     "clone just pulled")
+    for why, names in skipped.items():
+        notes.append(f"{', '.join(names)} not compared: {why}")
+    if notes:
+        line += f" ({'; '.join(notes)})"
+    return line if len(line) <= PLUGINS_SUMMARY_CHARS else line[:PLUGINS_SUMMARY_CHARS - 1] + "…"
+
+
 def _plugins_check(now: float | None = None, home: pathlib.Path | None = None) -> None:
-    """The `plugins` health check: amber when an installed plugin still lags the clone it is
-    installed from PLUGIN_REFRESH_GRACE_SECONDS after that clone last moved.
+    """The `plugins` health check: names what is installed (version, and whether it was compared
+    with its clone), and goes amber when an installed plugin still lags the clone it is installed
+    from PLUGIN_REFRESH_GRACE_SECONDS after that clone last moved, or when the installed canopy
+    plugin is older than canopy's release (`_CANOPY_RELEASE`, as `_canopy_cli_check` judges the CLI).
 
     Turns load the plugin CACHE (installed_plugins.json's installPath), never the clone. A claim
     pulls the agent's clone and installs it (`_refresh_agent_plugin`), and `canopy agent
     prepare` does the same for the plugins an agent requires, so a lag that outlives the grace
     is a failed install, whose reason canopy's updater writes to ~/.claude/canopy/fleet-update.log.
     A plugin whose installed sha is not in its clone's history (a marketplace that points at
-    another repo, or one installed ahead of it) is not judged: there is nothing honest to compare."""
+    another repo, or one installed ahead of it) is not judged, nor one with no sha or no clone:
+    there is nothing honest to compare. The detail says which, so none vanishes from it. A clone
+    is only as fresh as its last pull, which is why canopy itself is also held to its release."""
     now = time.time() if now is None else now
     plugins = (pathlib.Path.home() if home is None else home) / ".claude" / "plugins"
     try:
@@ -1591,44 +1631,74 @@ def _plugins_check(now: float | None = None, home: pathlib.Path | None = None) -
         except (OSError, subprocess.SubprocessError):
             return None
 
-    behind = []
-    for key, entries in sorted(installed.items()):
+    behind, versions, current, installing = [], [], [], []
+    skipped: dict[str, list[str]] = {}
+    canopy_version = ""
+    for key, entries in sorted(installed.items(), key=lambda kv: (kv[0] != "canopy@canopy", kv[0])):
         entry = entries[0] if isinstance(entries, list) and entries else {}
+        if not isinstance(entry, dict):
+            entry = {}
+        name, version = _plugin_name(key), str(entry.get("version") or "?")
+        versions.append(f"{name} {version}")
+        if key == "canopy@canopy":
+            canopy_version = str(entry.get("version") or "")
         sha = str(entry.get("gitCommitSha") or "")
         loc = str((markets.get(key.rpartition("@")[2]) or {}).get("installLocation") or "")
-        if not sha or not loc or not (pathlib.Path(loc) / ".git").exists():
+        if not sha:
+            skipped.setdefault("no installed sha", []).append(name)
+            continue
+        if not loc or not (pathlib.Path(loc) / ".git").exists():
+            skipped.setdefault("no clone", []).append(name)
             continue
         if _is_stored_clone(pathlib.Path(loc)):
             # A stored agent's clone is reset to the live revision, and one materialized
             # from an archive holds a single orphan commit, so ancestry says nothing:
             # behind means "not HEAD".
             head = git(loc, "rev-parse", "HEAD")
-            if head is None or head.returncode != 0 or head.stdout.strip() == sha:
+            if head is None or head.returncode != 0:
+                skipped.setdefault("its clone did not read", []).append(name)
+                continue
+            if head.stdout.strip() == sha:
+                current.append(name)
                 continue
             waited = now - _clone_moved_at(loc)
             if waited > PLUGIN_REFRESH_GRACE_SECONDS:
-                behind.append(f"{key} {entry.get('version') or '?'} is not the revision synced to "
+                behind.append(f"{key} {version} is not the revision synced to "
                               f"{loc}, which moved {_ago(waited)} ago")
+            else:
+                installing.append(name)
             continue
         anc = git(loc, "merge-base", "--is-ancestor", sha, "HEAD")
         if anc is None or anc.returncode != 0:
-            continue                          # unknown here, or installed ahead of the clone
+            # unknown here, or installed ahead of the clone
+            skipped.setdefault("its sha is not in its clone's history", []).append(name)
+            continue
         missing = git(loc, "rev-list", "--count", f"{sha}..HEAD")
         n = int(missing.stdout.strip() or 0) if missing and missing.returncode == 0 \
             and missing.stdout.strip().isdigit() else 0
         if not n:
+            current.append(name)
             continue
         waited = now - _clone_moved_at(loc)
         if waited > PLUGIN_REFRESH_GRACE_SECONDS:
-            behind.append(f"{key} {entry.get('version') or '?'} is {n} commit{'s' if n != 1 else ''} "
+            behind.append(f"{key} {version} is {n} commit{'s' if n != 1 else ''} "
                           f"behind {loc}, which moved {_ago(waited)} ago")
+        else:
+            installing.append(name)
+    summary = _plugins_summary(versions, current, skipped, installing)
+    warnings = []
+    release = _CANOPY_RELEASE["v"]
+    if release and () < _version_tuple(canopy_version) < _version_tuple(release):
+        warnings.append(f"canopy plugin {canopy_version}, but canopy's release is {release}: "
+                        "this runner refreshes when idle")
     if behind:
-        _set_check("plugins", "warn",
-                   "turns load the installed plugin, not the clone, so they run old skills and "
-                   "rails — " + "; ".join(behind) + ". Why the install failed is in "
-                   "~/.claude/canopy/fleet-update.log and this runner's log.")
+        warnings.append("turns load the installed plugin, not the clone, so they run old skills and "
+                        "rails — " + "; ".join(behind) + ". Why the install failed is in "
+                        "~/.claude/canopy/fleet-update.log and this runner's log")
+    if warnings:
+        _set_check("plugins", "warn", ". ".join(warnings) + f". Installed: {summary}")
     else:
-        _set_check("plugins", "ok", "")
+        _set_check("plugins", "ok", summary)
 
 
 def _ago(seconds: float) -> str:
@@ -5955,6 +6025,58 @@ def _lat_fact(turn_id: str, **facts) -> None:
 def _lat_take(turn_id: str) -> dict | None:
     with _LATENCY_LOCK:
         return _LATENCY.pop(turn_id, None) or None
+
+
+# ── which plugin versions a turn loaded ─────────────────────────────────────
+# Read off installed_plugins.json once the claim has installed the agent's pulled clone
+# (`_refresh_agent_plugin`, in `_turn_cwd`) and before Claude starts, and sent with the
+# turn's finish (`loaded_plugins`, stored on `Turn.loaded_plugins`). The start report
+# (`POST /turns/{id}/start`) goes out at claim, before that install, so it cannot carry it.
+_LOADED_PLUGINS: dict[str, dict] = {}
+_LOADED_PLUGINS_MAX = 200
+#: At most this many plugins are reported per turn (a box holds a handful).
+LOADED_PLUGINS_CAP = 40
+
+
+def _loaded_plugins(home: pathlib.Path | None = None,
+                    only: frozenset[str] | None = None) -> dict[str, dict]:
+    """{plugin key: {"version", "sha"}} for the plugins installed now; {} if unreadable.
+    `only` limits it to the plugins the turn keeps (a lean page turn turns the rest off)."""
+    try:
+        d = json.loads(((home or pathlib.Path.home()) / ".claude" / "plugins" /
+                        "installed_plugins.json").read_text())
+        plugins = d.get("plugins") or {}
+        items = sorted(plugins.items())
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+    out: dict[str, dict] = {}
+    for key, entries in items:
+        if only is not None and key not in only:
+            continue
+        entry = entries[0] if isinstance(entries, list) and entries else {}
+        if not isinstance(entry, dict):
+            entry = {}
+        out[str(key)[:120]] = {"version": str(entry.get("version") or "")[:40],
+                               "sha": str(entry.get("gitCommitSha") or "")[:40]}
+        if len(out) >= LOADED_PLUGINS_CAP:
+            break
+    return out
+
+
+def _note_loaded_plugins(turn_id: str, lean: bool = False,
+                         home: pathlib.Path | None = None) -> None:
+    if not turn_id:
+        return
+    plugins = _loaded_plugins(home, LEAN_KEEP_PLUGINS if lean else None)
+    with _LATENCY_LOCK:
+        _LOADED_PLUGINS.setdefault(turn_id, plugins)
+        while len(_LOADED_PLUGINS) > _LOADED_PLUGINS_MAX:
+            _LOADED_PLUGINS.pop(next(iter(_LOADED_PLUGINS)))
+
+
+def _loaded_plugins_take(turn_id: str) -> dict | None:
+    with _LATENCY_LOCK:
+        return _LOADED_PLUGINS.pop(turn_id, None) or None
 
 
 def _lat_emit(turn_id: str, emit):
@@ -15710,6 +15832,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         try:
             prep_started = time.time()
             cwd = None if job else _turn_cwd(turn, turn_id, env=_agent_env(slug))
+            if not job:
+                # After the claim installed the pulled clone, before Claude starts.
+                _note_loaded_plugins(turn_id, lean=bool(_TURN_ENV.lean))
             if _TURN_ENV.lean:
                 _lifecycle(turn_id, "prepared", lean=True, secs=round(time.time() - prep_started, 2))
         except StoredAgentError as exc:
@@ -15966,6 +16091,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             finish_body["session_key"] = cli_session_id
         if latency := _lat_take(turn_id):
             finish_body["latency"] = latency
+        if loaded := _loaded_plugins_take(turn_id):
+            finish_body["loaded_plugins"] = loaded
         _FINISHING.add(turn_id)
         fstatus, _ = _post_finish(turn_id, finish_body)
         if _relay_turn_id() == turn_id:

@@ -11,7 +11,7 @@ vi.mock('@/api/chat', () => ({
   getTurnContext: (...a: unknown[]) => getTurnContext(...a),
 }))
 
-const { SessionInfoPanel, credentialText, originText, githubIdentityText } = await import('./SessionInfoPanel')
+const { SessionInfoPanel, credentialText, originText, githubIdentityText, loadedPluginsText } = await import('./SessionInfoPanel')
 
 const TURN = {
   id: 't-1',
@@ -149,6 +149,19 @@ describe('SessionInfoPanel', () => {
     getSessionInfo.mockRejectedValue(new Error('session not found'))
     render(<SessionInfoPanel sessionId="s1" />)
     expect(await screen.findByText('session not found')).toBeTruthy()
+  })
+})
+
+describe('loadedPluginsText', () => {
+  it('names each plugin the turn loaded, with a short sha', () => {
+    expect(loadedPluginsText({
+      'canopy@canopy': { version: '0.2.920', sha: 'a1b2c3d4e5f6' },
+      'ace@ace': { version: '0.13.2204', sha: '' },
+    })).toBe('canopy@canopy 0.2.920 (a1b2c3d4)\nace@ace 0.13.2204')
+  })
+  it('reads "not recorded" when the runner sent none, never a guess', () => {
+    expect(loadedPluginsText({})).toBe('not recorded')
+    expect(loadedPluginsText(undefined)).toBe('not recorded')
   })
 })
 
