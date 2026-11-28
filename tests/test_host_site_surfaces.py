@@ -296,6 +296,65 @@ def test_a_contacts_call_goes_to_its_surfaces_resource_bound_to_that_contact(w, 
     assert w["app"].host_mcp_resource == sg.RESOURCE, "the site's own resource is never the target"
 
 
+@pytest.fixture()
+def listings(monkeypatch):
+    """Every `tools/list` the gateway makes to the host, by surface."""
+    from apps.host_grants import host_gateway
+
+    host_gateway._VISIBILITY.clear()
+    made: list[str] = []
+    real = host_gateway._listing
+
+    async def spy(ctx, client):
+        made.append(ctx.surface)
+        return await real(ctx, client)
+
+    monkeypatch.setattr(host_gateway, "_listing", spy)
+    return made
+
+
+def test_a_second_call_on_a_surface_does_not_list_its_tools_again(w, host, listings):
+    """A surface has no MCP Apps index, so its call used to re-list before EVERY call: one more
+    signed round trip to the host per `site_call`. What the listing said is kept per resource."""
+    with _as_contact(w):
+        sg.call(host, "site_call", {"tool": "worker_profile", "arguments": {}})
+        sg.call(host, "site_call", {"tool": "worker_profile", "arguments": {}})
+    assert host.calls == ["worker_profile", "worker_profile"]
+    assert listings == ["workers"]
+
+
+def test_site_tools_spares_the_next_calls_listing(w, host, listings):
+    with _as_contact(w):
+        sg.call(host, "site_tools", {})
+        sg.call(host, "site_call", {"tool": "worker_profile", "arguments": {}})
+    assert host.calls == ["worker_profile"] and listings == ["workers"]
+
+
+def test_a_kept_listing_goes_stale_and_is_listed_again(w, host, listings, monkeypatch):
+    import time
+
+    from apps.host_grants import host_gateway
+
+    with _as_contact(w):
+        sg.call(host, "site_call", {"tool": "worker_profile", "arguments": {}})
+        later = time.monotonic() + host_gateway.INDEX_FRESH.total_seconds() + 1
+        monkeypatch.setattr(time, "monotonic", lambda: later)
+        sg.call(host, "site_call", {"tool": "worker_profile", "arguments": {}})
+    assert listings == ["workers", "workers"]
+
+
+def test_a_tool_the_host_hid_stays_refused_from_the_kept_listing(w, host, listings):
+    from apps.host_grants import host_gateway
+
+    with _as_contact(w):
+        sg.call(host, "site_tools", {})
+        at, _ = host_gateway._VISIBILITY[WORKERS_RESOURCE]
+        host_gateway._VISIBILITY[WORKERS_RESOURCE] = (at, {"worker_profile": False})
+        with pytest.raises(Exception, match="only for the page's own view"):
+            sg.call(host, "site_call", {"tool": "worker_profile", "arguments": {}})
+    assert host.calls == []
+
+
 def test_a_surfaces_tools_stay_out_of_the_sites_index(w, host):
     with _as_contact(w):
         sg.call(host, "site_tools", {})
