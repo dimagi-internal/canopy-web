@@ -166,6 +166,11 @@ def list_turns(
     since: dt.datetime | None = None,
     runner: str | None = None,
 ):
+    """Turns the caller may see, newest first (at most `limit`, capped at 200; page back with
+    `before`). Everyone who sees a turn sees that it ran; its prompt and result are blanked
+    (`content_hidden`) unless the caller may read its log. A person's private chat with an
+    agent is listed only to the chat's own people and to that agent's own login, which sees
+    each turn content-blanked, with `content_hidden_reason` naming where it reads the words."""
     # Paging: the list is newest first and clamped to 200, so a window longer than
     # 200 turns is read by passing the last row's `created_at` back as `?before=`.
     # `?since=` bounds the window from below; `?runner=` (a runner's name) keeps the
@@ -175,7 +180,7 @@ def list_turns(
     # `conduct`, `canopy agent health` — ask this per agent, unpinned). Without
     # it the read rule applies (`visible_turns_qs`).
     pinned = getattr(request, "workspace_slug", None)
-    qs = None if (agent and not pinned) else visible_turns_qs(request)
+    qs = None if (agent and not pinned) else visible_turns_qs(request, own_chats=True)
     if agent:
         # Resolve the TARGET before filtering. The tenant filter below would
         # otherwise express a permission denial as an empty list — 200 [] — which
@@ -194,7 +199,7 @@ def list_turns(
         target = agent_for_read(request, agent)
         if qs is None:
             qs = visible_turns_qs(
-                request, slugs=wsvc.tree_scope(request.user, target.workspace_id))
+                request, slugs=wsvc.tree_scope(request.user, target.workspace_id), own_chats=True)
         # An email or Slack thread targets a SESSION, not the agent (enqueue_turn
         # converts it — the XOR check constraint allows only one), so the agent
         # sits on `chat_session.agent`. Filtering on `agent` alone would drop every
@@ -242,7 +247,7 @@ def list_sessions(request: HttpRequest):
 def get_turn(request: HttpRequest, turn_id: uuid.UUID):
     from . import turn_access
 
-    return turn_access.redact([turn_or_404(request, turn_id)], request.user)[0]
+    return turn_access.redact([turn_or_404(request, turn_id, own_chat_ok=True)], request.user)[0]
 
 
 @router.get("/turns/{turn_id}/latency", response=dict,
@@ -363,7 +368,7 @@ def post_turn_live_text(request: HttpRequest, turn_id: uuid.UUID, payload: LiveT
 def read_turn_events(request: HttpRequest, turn_id: uuid.UUID, after: int = 0):
     # A sensitive turn's ledger is stored as metadata only (no words, no results), so
     # it reads as a log: troubleshooting needs it, and it holds nothing to protect.
-    turn = turn_or_404(request, turn_id)
+    turn = turn_or_404(request, turn_id, own_chat_ok=True)
     if sensitivity.is_sensitive(turn):
         if not turn_access.can_read_turn_log(request.user, turn):
             raise HttpError(404, "turn not found")

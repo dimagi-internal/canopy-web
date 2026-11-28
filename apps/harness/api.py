@@ -110,13 +110,18 @@ def runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
     return runner
 
 
-def turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *, own_turn_ok: bool = False) -> Turn:
+def turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *, own_turn_ok: bool = False,
+                own_chat_ok: bool = False) -> Turn:
     """`_tenant_turn_or_404`, then `site ∩ user`: a host site acting for its
     visitor sees only its own agents' turns (apps/embedding/delegation.py). Same
-    uniform 404, so a site cannot learn another agent's turn exists."""
+    uniform 404, so a site cannot learn another agent's turn exists.
+
+    `own_chat_ok`: a person's chat turn with the caller's own agent resolves for that
+    agent's login (`turn_access.is_agents_own_chat`), for a route that then serves no
+    words to it (the redacted detail, or a content route's 403)."""
     from apps.embedding import delegation
 
-    turn = _tenant_turn_or_404(request, turn_id, own_turn_ok=own_turn_ok)
+    turn = _tenant_turn_or_404(request, turn_id, own_turn_ok=own_turn_ok, own_chat_ok=own_chat_ok)
     offered = delegation.offered_for(request)
     if offered is not None and delegation.turn_agent_id(turn) not in offered:
         raise HttpError(404, "turn not found")
@@ -130,12 +135,14 @@ def turn_content_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     but not read is a 403 that says why."""
     from . import turn_access
 
-    turn = turn_or_404(request, turn_id)
+    turn = turn_or_404(request, turn_id, own_chat_ok=True)
     if not turn_access.can_read_turn_content(request.user, turn):
         # The caller already sees THAT the turn exists (tenant membership passed above),
         # so say why its content is closed to them. A private CHAT stays a 404: the
-        # chat's own ACL hides the conversation, existence included.
-        if turn.chat_session_id and not turn_access.can_read_turn_log(request.user, turn):
+        # chat's own ACL hides the conversation, existence included — except from the
+        # agent the chat is with, whose own login is told where its words are read.
+        if (turn.chat_session_id and not turn_access.can_read_turn_log(request.user, turn)
+                and not turn_access.is_agents_own_chat(request.user, turn)):
             raise HttpError(404, "turn not found")
         raise HttpError(403, turn_access.refusal_reason(request.user, turn))
     return turn
@@ -213,7 +220,7 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
 
 def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *,
-                        own_turn_ok: bool = False) -> Turn:
+                        own_turn_ok: bool = False, own_chat_ok: bool = False) -> Turn:
     """Resolve a turn, gated by its tenant.
 
     An AGENT turn derives its tenant one hop away, via agent.workspace (spec
@@ -265,7 +272,8 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *,
             # it cannot read (`turn_access.can_read_caller_context`).
             from . import turn_access  # noqa: PLC0415 — as this module's other turn_access imports
 
-            if not (own_turn_ok and turn_access.is_own_running_turn(request.user, turn)):
+            if not ((own_turn_ok and turn_access.is_own_running_turn(request.user, turn))
+                    or (own_chat_ok and turn_access.is_agents_own_chat(request.user, turn))):
                 raise HttpError(404, "turn not found")
         return turn
 

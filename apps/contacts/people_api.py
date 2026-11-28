@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from django.contrib.auth import get_user_model
 from django.http import HttpRequest
 from django.utils.dateparse import parse_datetime
 from ninja import Router
@@ -104,8 +105,29 @@ def _workspace(request: HttpRequest, explicit: str | None):
 def _person_in(person_id: int, workspace) -> Person:
     person = Person.objects.select_related("user").filter(pk=person_id).first()
     if person is None or not people.known_in(person, workspace.pk):
-        raise _not_found()
+        raise _user_id_given(person_id, workspace) or _not_found()
     return person
+
+
+def _user_id_given(person_id: int, workspace) -> ProblemError | None:
+    """The 404 for an id that names no person here but IS the user id of a member here.
+
+    Users and persons are two id spaces, and the members and access lists show user ids, so
+    callers pass one here. This never resolves it: the route takes a person id, and the 404
+    says which person that member is. Only a member of the workspace the caller asked in is
+    named, which its members list already shows; anyone else gets the plain 404."""
+    member = get_user_model().objects.filter(pk=person_id).first()
+    if member is None or not wsvc.is_member(member, workspace.pk):
+        return None
+    person = Person.objects.filter(user=member).first()
+    where = (f"that member is person {person.pk}: call this route with {person.pk}" if person is not None
+             else "that member has no person record yet, so canopy holds nothing about them")
+    return ProblemError(
+        404, "Person not found", type_=TYPE_NOT_FOUND,
+        detail=(f"{person_id} is a user id (the members and access lists show user ids), not a "
+                f"person id; this route takes a person id, and {where}. "
+                "GET /api/people/lookup/?email= also finds a person by address."),
+        members={"person_id": person.pk if person is not None else None, "user_id": member.pk})
 
 
 def _iso(value) -> str | None:
@@ -665,7 +687,11 @@ def list_person_conversations(request: HttpRequest, person_id: int, agent: str,
     Only for that agent's OWN login, or an admin of that agent — "an agent may
     recall conversations it was party to". It widens no other visibility: not
     another agent, not a workspace member, and an admin who is not the agent's
-    login sees only the turns the turn ACL already lets them read.
+    login sees only the turns the turn ACL already lets them read. For the agent's
+    login, a listed chat turn opens at GET /api/harness/turns/{id} content-blanked:
+    this route is where its words are read.
+    `person_id` is a person id, not the user id the members list shows; a user id
+    of a member is a 404 that names their person id.
     A request it cannot act on (no workspace named, a value of the wrong form)
     is a 400 naming what is wrong."""
     from apps.agents.models import Agent

@@ -26,6 +26,19 @@ def agents_own_thread_q():
              chat_session__agent__isnull=False)
 
 
+def agents_own_chat_q(user):
+    """Chat turns in a conversation with an agent whose own login `user` is
+    (`turn_access.is_agents_own_chat`), inside the reach the request is held to. The login
+    sees THAT they ran; their content stays blanked by `turn_access.redact`."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    q = Q(chat_session__agent__user=user)
+    reach = session_access.reach_of(user)
+    if reach is not None:
+        q &= Q(chat_session__in=Session.objects.filter(reach.q).values("pk"))
+    return q
+
+
 def visible_sessions(request: HttpRequest):
     """Chat sessions the caller may read — the chat ACL, as a subquery, for
     every harness listing that would otherwise show a session turn's prompt or
@@ -41,7 +54,7 @@ def site_turn_q(request: HttpRequest):
     return Q(agent_id__in=offered) | Q(agent__isnull=True, chat_session__agent_id__in=offered)
 
 
-def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
+def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None, own_chats: bool = False):
     """Every turn this caller may see LISTED — the exact tenant + site filter
     `list_turns` applies, newest first. Shared so a derived view over turns (the
     huddles API) can never show a turn `/api/harness/turns/` would not. Content
@@ -54,7 +67,10 @@ def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
     tree gets a 422 rather than a list mixing organisations.
 
     `slugs` overrides the scope outright, for a by-id view that has already
-    resolved its subject's tree (`huddles.get_huddle`, `threads.get_thread`)."""
+    resolved its subject's tree (`huddles.get_huddle`, `threads.get_thread`).
+
+    `own_chats` adds the chats people had with the caller's own agent (`agents_own_chat_q`),
+    for `list_turns`, which redacts every row; a derived view leaves it off."""
     if slugs is None:
         slugs = wsvc.request_workspace_slugs(request)
     qs = Turn.objects.select_related(
@@ -85,11 +101,14 @@ def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
     # gating each target kind on its own workspace source, with no
     # null-workspace escape hatch anywhere in this list — unlike claim_next_turn, which keeps one for agent turns
     # specifically as a documented, claim-routing-only exception.
+    chat_leg = Q(chat_session__in=visible_sessions(request)) | agents_own_thread_q()
+    if own_chats:
+        chat_leg |= agents_own_chat_q(request.user)
     qs = qs.filter(
         (Q(agent__isnull=False) & Q(agent__workspace_id__in=slugs))
         | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
         | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs)
-           & (Q(chat_session__in=visible_sessions(request)) | agents_own_thread_q()))
+           & chat_leg)
     )
     site_q = site_turn_q(request)
     if site_q is not None:
