@@ -217,10 +217,25 @@ def test_the_session_is_recorded_while_the_turn_runs(run, monkeypatch):
 
 def test_finish_carries_the_session_key(run, monkeypatch):
     mod, timeline = run
+    monkeypatch.setattr(mod, "_loaded_plugins", lambda home=None, only=None: {})
     monkeypatch.setattr(mod, "execute_prompt", _execute_that_starts_a_session(mod, timeline))
     mod._run_turn("r-1", _agent_turn())
     finish = [b for p, b in timeline if p == f"/turns/{TID}/finish"]
     assert finish == [{"status": "done", "result_note": "Nothing to do.", "session_key": "cli-1"}]
+
+
+def test_finish_carries_the_plugins_read_before_the_agent_started(run, monkeypatch):
+    """Read once the claim installed the pulled clone (`_turn_cwd`), before Claude runs."""
+    mod, timeline = run
+    loaded = {"canopy@canopy": {"version": "0.2.920", "sha": "a" * 40}}
+    monkeypatch.setattr(mod, "_loaded_plugins",
+                        lambda home=None, only=None: timeline.append(("<plugins read>", None)) or loaded)
+    monkeypatch.setattr(mod, "execute_prompt", _execute_that_starts_a_session(mod, timeline))
+    mod._run_turn("r-1", _agent_turn())
+    paths = [p for p, _ in timeline]
+    assert paths.index("<plugins read>") < paths.index("<agent working>")
+    finish = [b for p, b in timeline if p == f"/turns/{TID}/finish"]
+    assert finish[0]["loaded_plugins"] == loaded
 
 
 def test_a_failed_turn_that_reached_an_agent_says_so(run, monkeypatch):
