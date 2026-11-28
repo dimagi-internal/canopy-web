@@ -27,6 +27,12 @@ A request held to a reach (`access.reach_of`) reads only turns inside it, whiche
 would otherwise pass (`access.turn_in_reach`), and a turn naming its chat only in `origin_ref` is
 that chat's for it. For everyone else such a turn is still judged by the legs above.
 
+A person's chat WITH an agent is listed to that agent's own login (`is_agents_own_chat`): it is
+the other party to the conversation, so it sees THAT each turn ran, never its words through
+these routes. The chat ACL still keeps it out of the conversation, and it recalls what the
+person said through the people API (`people_api.list_person_conversations`); the blanked row
+says so (`content_hidden_reason`), and the content routes answer 403 with that reason.
+
 A SENSITIVE turn's content is nobody's through these routes (`harness.sensitivity`):
 its words belong to its conversation, which its own people read on the chat page,
 and every route here is a log a review or another AI could read.
@@ -98,9 +104,31 @@ def is_own_running_turn(user, turn) -> bool:
     return running is not None and running.pk == turn.pk
 
 
+#: Why the agent's own login sees its chat turns only blanked, and where it reads them.
+OWN_CHAT_REASON = ("this turn is a person's private chat with this agent: the agent's own login "
+                   "sees that it ran, but its words are not served by the turn log routes. Read "
+                   "what the person said with GET /api/people/{person_id}/conversations/?agent=<slug> "
+                   "(MCP list_person_conversations), the agent's recall of its own conversations")
+
+
+def is_agents_own_chat(user, turn) -> bool:
+    """`turn` is in a chat with an agent whose own login `user` is, inside the reach the request
+    is held to (if any). Existence only: it widens no read of the words."""
+    if not (turn.chat_session_id and getattr(user, "is_authenticated", False)):
+        return False
+    agent = turn.chat_session.agent
+    if agent is None or agent.user_id is None or agent.user_id != user.pk:
+        return False
+    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — sessions import the harness
+
+    return session_access.turn_in_reach(user, turn)
+
+
 def refusal_reason(user, turn) -> str:
     """Why `user` may not read this turn's content, and who could — for a 403 body.
     Names roles, never people or content."""
+    if is_agents_own_chat(user, turn):
+        return OWN_CHAT_REASON
     if sensitivity.is_sensitive(turn) and can_read_turn_log(user, turn):
         return ("this turn's content is sensitive: its words belong to its own conversation, "
                 "and no log route (including an admin's) serves them")
@@ -185,9 +213,12 @@ def redact(turns, user):
         for sid in chat_ids:
             memo[("chat", sid)] = sid in readable
     for t in turns:
+        t.content_hidden_reason = ""
         if can_read_turn_content(user, t, memo):
             t.content_hidden = False
             continue
+        if is_agents_own_chat(user, t):
+            t.content_hidden_reason = OWN_CHAT_REASON
         for field, empty in REDACTED_FIELDS.items():
             setattr(t, field, type(empty)())
         if _personal_project(t, memo) is not None:

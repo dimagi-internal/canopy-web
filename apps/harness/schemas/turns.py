@@ -191,6 +191,9 @@ class TurnOut(Schema):
     # True when `prompt`, `origin_ref` and `result_note` were blanked because
     # the caller may not read this turn's content (apps/harness/turn_access.py).
     content_hidden: bool = False
+    # Set when the hidden content can be read elsewhere by this caller (a person's chat
+    # with the caller's own agent: `turn_access.OWN_CHAT_REASON`). Empty otherwise.
+    content_hidden_reason: str = ""
     created_at: dt.datetime
     claimed_at: dt.datetime | None
     started_at: dt.datetime | None

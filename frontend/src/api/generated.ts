@@ -16232,7 +16232,14 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List Turns */
+        /**
+         * List Turns
+         * @description Turns the caller may see, newest first (at most `limit`, capped at 200; page back with
+         *     `before`). Everyone who sees a turn sees that it ran; its prompt and result are blanked
+         *     (`content_hidden`) unless the caller may read its log. A person's private chat with an
+         *     agent is listed only to the chat's own people and to that agent's own login, which sees
+         *     each turn content-blanked, with `content_hidden_reason` naming where it reads the words.
+         */
         readonly get: operations["harness_list_turns"];
         readonly put?: never;
         /**
@@ -20097,7 +20104,11 @@ export interface paths {
          *     Only for that agent's OWN login, or an admin of that agent — "an agent may
          *     recall conversations it was party to". It widens no other visibility: not
          *     another agent, not a workspace member, and an admin who is not the agent's
-         *     login sees only the turns the turn ACL already lets them read.
+         *     login sees only the turns the turn ACL already lets them read. For the agent's
+         *     login, a listed chat turn opens at GET /api/harness/turns/{id} content-blanked:
+         *     this route is where its words are read.
+         *     `person_id` is a person id, not the user id the members list shows; a user id
+         *     of a member is a 404 that names their person id.
          *     A request it cannot act on (no workspace named, a value of the wrong form)
          *     is a 400 naming what is wrong.
          */
@@ -26981,6 +26992,11 @@ export interface components {
              * @default false
              */
             readonly content_hidden: boolean;
+            /**
+             * Content Hidden Reason
+             * @default
+             */
+            readonly content_hidden_reason: string;
             /**
              * Created At
              * Format: date-time
@@ -47530,6 +47546,11 @@ export interface components {
              * @default false
              */
             readonly content_hidden: boolean;
+            /**
+             * Content Hidden Reason
+             * @default
+             */
+            readonly content_hidden_reason: string;
             /**
              * Created At
              * Format: date-time
