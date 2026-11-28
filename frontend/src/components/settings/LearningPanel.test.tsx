@@ -22,6 +22,7 @@ vi.mock('@/api/learning', () => ({
   getMyDisclosure,
   listReporting,
 }))
+vi.mock('./LearningModeCard', () => ({ LearningModeCard: () => null }))
 vi.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ status: 'authenticated', user: { user_id: 1 } }) }))
 vi.mock('@/api/workspaces', () => ({ listWorkspaces: vi.fn().mockResolvedValue([{ slug: 'dimagi' }]) }))
 

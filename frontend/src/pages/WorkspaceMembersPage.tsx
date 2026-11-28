@@ -21,6 +21,7 @@ import {
 import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import { roleOptions } from '@/components/people/roles'
 import { WorkspaceAgentDefaults } from '@/components/agents/WorkspaceAgentDefaults'
+import { MemberLearningModeSection } from '@/components/people/MemberLearningMode'
 import { scopedPath } from '@/lib/scopedLinks'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
 import { emailOutcomeText, inviteExpiryLabel, isInviteOutstanding, isInvitePending, type EmailStatus } from './workspaceInvites'
@@ -386,6 +387,8 @@ export function WorkspaceMembersPage(): JSX.Element | null {
           </Table>
         )}
       </div>
+
+      {slug && roleAllows(myRole, 'own') && <MemberLearningModeSection slug={slug} />}
 
       <div className="rounded-lg border border-border bg-card p-5" data-testid="workspace-role-help">
         <h2 className="mb-2 text-sm font-semibold text-foreground">What each role can do</h2>

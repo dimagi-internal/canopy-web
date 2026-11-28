@@ -327,20 +327,30 @@ class SessionReviewGrant(models.Model):
 
 
 class CoachingOptIn(models.Model):
-    """A person's consent to COACHING in canopy: "have canopy's coaches review how I work".
+    """A person's LEARNING MODE: "canopy's coaches, and the admins of where I work, may read and
+    analyze my sessions" (`apps/contacts/learning_mode.py`). The `individual` learning class is the
+    same yes (`brain.consent` keeps the two equal), and its workspaces and standing rules say where
+    it holds (`brain.eligibility.coaching_allows`).
 
-    Deliberately names no agent. Who coaches is a separate, evolving fact (`CoachingRole`):
-    today Trellis and Ada, tomorrow a division's director and their agents. A person opts in
-    to the program; the program says who is coaching them now, and the person sees that list
-    before and after. Only the person makes or ends it (`apps/contacts/session_reviewers.py`,
-    from `/api/people/me/coaching/`), each act on their audit. Revoking sets `revoked_at` and
-    every coach's next read drops. Read-only: it never lets a coach write, share or send into a
-    conversation (`access.role_for` gives it a viewer at most)."""
+    Deliberately names no agent and no reader. Who reads is derived, live: the designated coaches
+    (`CoachingRole`, `access._coach_q`), the owners and admins of the session's workspace and the
+    admins of the agent it was with (`access._learning_mode_q`); the person is shown that list.
+    The person turns it on or off, or an owner of a workspace they are in does it for them there
+    (`learning_mode.set_for`, the person is told); `set_by` and `created_at` say who and when,
+    `revoked_by` who ended it. Every change is on the person's audit. Revoking sets `revoked_at`
+    and every reader's next read drops. Read-only: it never lets anyone write, share, pull or send
+    into a conversation (`access.role_for` gives a viewer at most), and never opens a sensitive one."""
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
                              related_name="coaching_opt_ins")
+    #: Who turned it on: the person, or an owner acting for them. Null on a row older than the field.
+    set_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                               related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    #: Who turned it off.
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
 
     class Meta:
         db_table = "canopy_sessions_coaching_opt_in"

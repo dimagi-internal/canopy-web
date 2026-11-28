@@ -210,14 +210,16 @@ def test_the_grantor_and_everyone_else_are_unchanged(w):
     assert lili.get(f"/api/canopy-sessions/{w['chat']['lili'].pk}").status_code == 200
     assert lili.get(f"/api/canopy-sessions/{w['chat']['bo'].pk}").status_code == 404
     assert access.can_read(w["bo"], w["chat"]["bo"])
-    # The agent's owner administers the coaching agent but holds no coaching role of their own: no read.
-    assert not access.can_read(w["owner"], w["chat"]["bo"])
-    # Designated a coach for the workspace, they read the people who opted in, and only them.
-    from apps.canopy_sessions.models import CoachingRole
-
-    CoachingRole.objects.create(workspace=w["ws"], user=w["owner"])
+    # The workspace's owner reads the people in learning mode (leg 8), and only them: never col, who is not.
     assert access.can_read(w["owner"], w["chat"]["bo"]) and access.can_read(w["owner"], w["chat"]["lili"])
     assert not access.can_read(w["owner"], w["chat"]["col"])
+    # An editor holds no coaching role and administers nothing: no read. Designated a coach, they read the people
+    # who opted in, and only them.
+    from apps.canopy_sessions.models import CoachingRole
+
+    assert not access.can_read(w["col"], w["chat"]["bo"])
+    CoachingRole.objects.create(workspace=w["ws"], user=w["col"])
+    assert access.can_read(w["col"], w["chat"]["bo"]) and access.can_read(w["col"], w["chat"]["lili"])
 
 
 def test_a_revoked_grant_ends_it_inside_the_turn(w):

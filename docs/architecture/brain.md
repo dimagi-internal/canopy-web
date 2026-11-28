@@ -89,6 +89,9 @@ with no consent gets one covering only their workspaces the admin manages (no ne
 workspace the admin does not manage is refused for that person. Each change is on the person's own log naming who
 made it, and the act is a `SettingChange`.
 
+**Learning mode is the `individual` class**, one consent (`access-sessions-and-people.md` § Learning mode); an owner
+may set it for a member in the workspaces they own only (`consent.owner_individual_on`, `consent.owner_individual_off`).
+
 **Managing a workspace's learning is not a person's own choice, and an admin agent may do it.** One rule,
 `actor.of` (`apps/brain/actor.py`), answers every management route: "Learning reads", a learner's switch, operator, entry
 and scope (and becoming accountable for a learner nobody answers for, which makes the PERSON accountable, never the

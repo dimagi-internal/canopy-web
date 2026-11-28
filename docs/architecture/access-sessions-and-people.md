@@ -9,9 +9,10 @@ Who can see a chat session, who is in one, how Slack threads map onto sessions, 
 A session is visible to the people who were **in the conversation where it
 happened**, plus whoever they explicitly add — never to someone merely for being
 in the same workspace. Multiplayer is always an explicit choice (a participant
-row, added by the session's owner). Agents get no implicit access: an agent's own
+row, added by the session's owner). No workspace role reads a member's sessions unless that
+member is in learning mode (§ Learning mode). Agents get no implicit access: an agent's own
 login reads a session only if it was made a participant, it is running a live
-turn in it (`access.own_turn_session`), the person granted it review (a coach), or
+turn in it (`access.own_turn_session`), the person is in learning mode and it is their coach, or
 the person asked it to review that one session, read through a pinned token (below). Canopy only operates on what a machine has already **sent**; it asks a
 machine for more (live streaming, history) only when its owner, or someone they
 explicitly added, asks (`access.may_pull`). Adding someone is the session owner's
@@ -34,6 +35,7 @@ their own people (`tenancy-sensitive-conversations.md` § Sensitive conversation
 | **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
 | **Coaching** | + the coaches of the person (`CoachingOptIn` + `CoachingRole`: an agent's login in a running turn, or a person designated for the workspace and below, as themselves), read-only, in a turn asked by them or by the agent's admin, or dispatched for that one person, never a sensitive one, never one whose words its person deleted, never one someone in it took out of learning, only in the workspaces the person's learning consent covers (`access._coach_q`) | no — it reads what is already uploaded |
 | **A project's sessions** (the brain's leg 7, only where the session's workspace has "Learning reads" on) | + every person (never an agent's login) who may read the project a session is `core`-tied to, read-only, secrets scrubbed, never a pull, when everyone in it agreed to project learning (`brain.readers.project_q`); only on the surfaces that scrub (`access.visible_session_q` `brain=True`), never turn content, attachments or the socket → [brain.md](brain.md) | no |
+| **Learning mode** (the person's own switch, or an owner's for them) | + the owners and admins of the workspace the session lives in, an ancestor's too (`perms.LEARNING_READ`), and the admins of the agent it was with (`Agent.is_admin`'s sense), each as themselves (the app, a step-up, their own token), read-only, never a sensitive one, never a contact's, never one whose words its person deleted or someone took out of learning, only where the person's learning consent allows coaching (`access._learning_mode_q`, leg 8); never an agent's login, which reads only as a coach | no — it reads what is already uploaded |
 | **One session, asked from its page** | + the coach the person asked (`SessionReviewAsk`), as the person, with a token pinned to that session, only inside the chat the ask opened, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
 
 **Every session says who can see it.** `GET /api/canopy-sessions/{id}` carries `audience`
@@ -117,6 +119,30 @@ back into that chat, which is the person's own. It can read the agent's own repo
 is what stays open, and no canopy check covers it.
 
 **The `individual` learning class is the same opt-in** (`docs/architecture/brain.md`): `LearningConsent` mirrors `CoachingOptIn` both ways, and this leg still reads `CoachingOptIn`.
+
+## Learning mode
+
+One per-person switch (`apps/contacts/learning_mode.py`): a person in learning mode has agreed that coaching agents and
+admins may read and analyze their sessions. Its record is `CoachingOptIn` (who set it, `set_by`; when; who ended it,
+`revoked_by`), and it is the same yes as the brain's `individual` class, so there is one consent, not two. Where it holds
+is the person's learning consent (`brain.eligibility.coaching_allows`).
+
+* **No workspace role reads a member's sessions by itself.** Learning mode is what opens leg 5 (coaches) and leg 8
+  (the session workspace's owners and admins, the agent's admins) of `access.visible_session_q`. A workspace admin reads
+  nobody who is not in it, and an agent's admin reads only the person's sessions with that agent.
+* **Who turns it on or off:** the person (`PUT /api/people/me/learning-mode/`, `set_my_learning_mode`), or an OWNER of
+  a workspace they are in (`PUT /api/coaching/workspaces/{slug}/learning-mode/{user_id}/`, `set_member_learning_mode`),
+  who acts only in the workspaces of that person they own: on never widens what the person agreed to elsewhere
+  (`brain.consent.owner_individual_on`, refused when their consent reaches further and lacks the class), off where it
+  reaches further is a deny rule per owned workspace (`brain.consent.owner_rule`). Either may undo the other; the person
+  turning it on lifts an owner's "off". An agent's login and a token that speaks for a turn change nobody's.
+* **The person is told and sees it:** an owner's change pushes to the person's browsers (`learning_mode._tell`), each change
+  is on their own audit and the event logs, and `GET /api/people/me/learning-mode/` (Settings → Learning) says whether it
+  is on, who turned it on and when, the workspaces it holds in, and the plain list of readers (`learning_mode.readers`).
+  Owners list their members' state with `GET /api/coaching/workspaces/{slug}/learning-mode/` (`list_learning_mode`), shown
+  on the members page.
+* **Never** a write, a share, a pull from a machine, a sensitive session, or a person not in learning mode.
+  `tests/test_learning_mode.py`.
 
 **Nothing a grant reads, reads this.** It enrols no one in the weekly pass, uploads no other session
 and appears on no roster: `is_coached`, `full_upload_session_ids`, `session_reviewers.live`,

@@ -128,7 +128,9 @@ def test_the_audience_names_the_coaches_of_a_person_who_opted_in():
     setattr(people["coach"], turn_asker.STANDING_ATTR,
             turn_asker.AnsweringTo("t", person_id=people["mate"].pk, operator=False))
     readers = audience.readers(chat)
-    assert people["viewer"].pk in readers and people["owner"].pk not in readers
+    assert people["viewer"].pk in readers
+    assert people["owner"].pk in readers          # the workspace's owner: mate is in learning mode (leg 8)
+    assert people["box_admin"].pk not in readers
     for who, user in people.items():
         assert (user.pk in readers) is access.can_read(user, chat, brain=True), who
     extras = audience.summary(chat, people["mate"])["extras"]

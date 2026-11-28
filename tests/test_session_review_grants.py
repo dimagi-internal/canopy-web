@@ -211,8 +211,10 @@ def test_a_coach_designated_above_covers_the_workspaces_below(w):
     theirs = Session.objects.create(workspace=division, created_by=nik, title="nik's chat")
     CoachingOptIn.objects.create(user=nik)
     md = User.objects.create_user("md", "md@dimagi.com", "pw")
-    # The tenant gate is unchanged: an owner of a workspace is in the ones below it; an editor is not.
-    WorkspaceMembership.objects.create(user=md, workspace=w["ws"], role=WorkspaceMembership.OWNER)
+    # The tenant gate is unchanged: md is in both. An editor, so only the coach role reads (an owner or admin
+    # would read a learning-mode person anyway: `access._learning_mode_q`).
+    WorkspaceMembership.objects.create(user=md, workspace=w["ws"], role=WorkspaceMembership.EDITOR)
+    WorkspaceMembership.objects.create(user=md, workspace=division, role=WorkspaceMembership.EDITOR)
     CoachingRole.objects.create(workspace=w["ws"], user=md)              # designated for dimagi and below
     assert access.can_read(md, theirs)
     CoachingRole.objects.filter(user=md).update(workspace=division)      # the role's own scope still counts

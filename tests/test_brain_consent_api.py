@@ -184,7 +184,7 @@ def test_no_learning_route_is_an_mcp_tool():
     schema = api.get_openapi_schema()
     seen = 0
     for path, item in schema["paths"].items():
-        if "/me/learning" not in path:
+        if "/api/me/learning" not in path:   # the brain's consent routes (`/api/people/me/learning-mode/` is coaching's)
             continue
         for method, op in item.items():
             if isinstance(op, dict):

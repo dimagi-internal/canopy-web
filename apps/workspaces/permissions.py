@@ -98,6 +98,12 @@ PROJECTS_DECIDE = "projects.decide"
 #: this; only they set it.
 BRAIN_MANAGE = "brain.manage"
 
+#: Read the sessions of a member who is in LEARNING MODE (their own act, or an owner's for
+#: them), in this workspace and below: read-only, never a sensitive one, never a pull
+#: (`canopy_sessions.access._learning_mode_q`). Admin, beside `logs.read`: the same tier
+#: already reads every turn's content here. Nobody's sessions are read without learning mode.
+LEARNING_READ = "learning.read"
+
 # --- owner: the keys --------------------------------------------------------------
 
 #: Delete the workspace, nest or detach it, the shared vault, the Slack app
@@ -126,6 +132,7 @@ MINIMUM_ROLE: dict[str, str] = {
     ADMISSION_MANAGE: _M.ADMIN,
     PROJECTS_DECIDE: _M.ADMIN,
     BRAIN_MANAGE: _M.ADMIN,
+    LEARNING_READ: _M.ADMIN,
     OWN: _M.OWNER,
     CONTROL: _M.OWNER,
 }
@@ -194,6 +201,14 @@ def slugs_with(user, permission: str, within: set[str] | None = None) -> set[str
     roles = services.member_roles(user)
     candidates = within if within is not None else set(roles)
     return {s for s in candidates if role_allows(roles.get(s), permission)}
+
+
+def user_ids_with(workspace, permission: str) -> set[int]:
+    """Everyone who holds `permission` in `workspace` (a `Workspace` or slug), inherited roles
+    included (`services.effective_memberships`): the listing counterpart of `can`."""
+    from . import services  # noqa: PLC0415 — services imports this module
+
+    return {m.user_id for m in services.effective_memberships(workspace) if role_allows(m.role, permission)}
 
 
 def request_slugs_with(request, permission: str) -> set[str]:

@@ -416,16 +416,19 @@ def test_a_person_designated_as_coach_reads_the_people_who_opted_in_and_no_more(
                                     metadata={"runner_requirements": ["sensitive_data"]})
     deleted = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB,
                                      content_deleted_at=timezone.now())
-    # The owner owns the workspace and administers the coaching agent, yet reads nothing of mate's.
+    # The owner owns the workspace and administers the coaching agent, yet reads nothing of mate's until
+    # mate is in learning mode (then leg 8 lets the workspace's owners and admins read, not a coach role).
     assert access.can_read(people["owner"], mate_chat) is False
     opt = CoachingOptIn.objects.create(user=people["mate"])
-    assert access.can_read(people["owner"], mate_chat) is False           # opted in, but no coach role yet
+    assert access.can_read(people["owner"], mate_chat) is True            # learning mode: the workspace's owner
+    assert access.can_read(people["owner"], sealed) is False
+    assert access.can_read(people["viewer"], mate_chat) is False          # no coach role yet
     role = CoachingRole.objects.create(workspace=ws, user=people["viewer"], granted_by=people["owner"])
     assert access.can_read(people["viewer"], mate_chat) is True
     assert access.role_for(people["viewer"], mate_chat) == SessionParticipant.VIEWER
     assert access.can_write(people["viewer"], mate_chat) is False and access.may_pull(people["viewer"], mate_chat) is False
     assert access.can_read(people["viewer"], sealed) is False and access.can_read(people["viewer"], deleted) is False
-    for who in ("box_admin", "hal_login", "outsider", "owner"):
+    for who in ("box_admin", "hal_login", "outsider"):
         assert access.can_read(people[who], mate_chat) is False, who
     assert access.can_read(people["viewer"], s["agent_thread"]) is False  # not a person's session
     # Opting out ends it at once; so does removing the role.

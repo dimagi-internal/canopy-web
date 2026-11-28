@@ -1,16 +1,18 @@
 """A person's agreement to canopy learning: the only code that writes `LearningConsent` and
 `SourceExclusion`.
 
-Every act here is the person's own, except `admin_opt_in`: a workspace's owner or admin (a person, or an admin
-agent working for one; `api_manage.opt_people_in`) may ADD classes to a member's consent there. Taking a class away,
-narrowing, revoking and withdrawing a session stay the person's alone. The person's routes (`api.py`) refuse an agent's
-login, a turn's token, a runner and a site's token before calling in (`tests/test_brain_consent_api.py`). Each change is on the
-person's own audit (`learning.*`, `hcp.audit`) and, ids only, in the event log of every
-workspace they are in.
+Every act here is the person's own, with two exceptions. A workspace's owner or admin (a person, or an admin agent
+working for one; `api_manage.opt_people_in`) may ADD classes to a member's consent there (`admin_opt_in`). And an
+OWNER of a workspace a person is in may turn that person's learning mode (the `individual` class) on or off in the
+workspaces they own, and only there (`owner_individual_on`, `owner_individual_off`, from
+`apps/contacts/learning_mode.py`): off where the consent reaches further is a deny rule per owned workspace
+(`owner_rule`). Every other narrowing, revoking and withdrawing a session stay the person's alone. The person's routes
+(`api.py`) refuse an agent's login, a turn's token, a runner and a site's token before calling in
+(`tests/test_brain_consent_api.py`). Each change is on the person's own audit (`learning.*`, `hcp.audit`) and, ids
+only, in the event log of every workspace they are in.
 
-`CoachingOptIn` is the `individual` class's older home and is still read by coaching's session
-ACL; the two are kept the same in both directions (`mirror_coaching`, `_sync_coaching`) until
-coaching reads this table."""
+`CoachingOptIn` is learning mode's record (who set it, when) and the `individual` class is the same yes; the two are
+kept the same in both directions (`mirror_coaching`, `_sync_coaching`), so there is one consent, not two."""
 from __future__ import annotations
 
 import logging
@@ -195,7 +197,7 @@ class OptInRefusedError(ValueError):
 
 
 @transaction.atomic
-def admin_opt_in(user, *, classes, managed: set[str], by: str) -> tuple[LearningConsent, list[str]]:
+def admin_opt_in(user, *, classes, managed: set[str], by: str, by_user=None) -> tuple[LearningConsent, list[str]]:
     """Add `classes` to `user`'s consent on an admin's word (`by`, as the audit names them). Only ever adds: a class
     the person has is kept, their scope, rules and directives are untouched. `managed` is the set of workspaces the
     admin manages learning in: a person with no consent gets one covering only their workspaces in it (no new ones),
@@ -230,7 +232,7 @@ def admin_opt_in(user, *, classes, managed: set[str], by: str) -> tuple[Learning
                     ids={"class": cls, "by": by})
     if PROJECT in row.classes:
         _look_again(user)
-    _sync_coaching(user, on=INDIVIDUAL in row.classes)
+    _sync_coaching(user, on=INDIVIDUAL in row.classes, by=by_user)
     return row, added
 
 
@@ -255,14 +257,112 @@ def _look_again(user) -> None:
     due_again(pk__in=cascade.sources_of(user))
 
 
-def _sync_coaching(user, *, on: bool) -> None:
-    """Keep `CoachingOptIn` the same as the `individual` class (coaching's ACL still reads it)."""
+def _sync_coaching(user, *, on: bool, by=None) -> None:
+    """Keep `CoachingOptIn` (learning mode) the same as the `individual` class (the session ACL reads it).
+    `by` is who acted, when it was not the person (an owner, `learning_mode.set_for`)."""
     from apps.contacts import session_reviewers  # noqa: PLC0415 — cycle: contacts.session_reviewers -> consent
 
     if on == session_reviewers.live(user).exists():
         return
     person = _person(user)
-    (session_reviewers.opt_in if on else session_reviewers.opt_out)(person, user=user)
+    (session_reviewers.opt_in if on else session_reviewers.opt_out)(person, user=user, by=by)
+
+
+# ---- learning mode, on an owner's word ------------------------------------------------------------
+
+def owner_rule(ws: str) -> dict:
+    """The standing rule an owner's "off here" writes: no coaching or learning-mode read of `ws`."""
+    return {"class": INDIVIDUAL, "workspace": ws}
+
+
+def _covered(row, mine: set[str]) -> set[str]:
+    """The person's workspaces their `individual` class reaches now (consent scope, less denying rules)."""
+    from .eligibility import coaching_allows  # noqa: PLC0415 — eligibility imports this module's models
+
+    return {ws for ws in mine if coaching_allows(row, ws)}
+
+
+@transaction.atomic
+def owner_individual_on(user, *, managed: set[str], by_user) -> list[str]:
+    """An owner turns learning mode (`individual`) on for `user` in the workspaces they own (`managed`). Never
+    widens it anywhere else: the owner-off rules for `managed` go, and a person with no `individual` class gets it
+    through `admin_opt_in` (refused, `OptInRefusedError`, when their consent reaches a workspace the owner does
+    not own). Returns the workspaces where it is on now, among `managed`."""
+    mine = set(wsvc.user_workspace_slugs(user))
+    row = live(user)
+    if row is None or INDIVIDUAL not in row.classes:
+        row, _added = admin_opt_in(user, classes={INDIVIDUAL}, managed=managed, by=by_user.email, by_user=by_user)
+    lifted = [r for r in (row.standing_rules or []) if r in [owner_rule(ws) for ws in managed]]
+    if lifted:
+        row.standing_rules = [r for r in row.standing_rules if r not in lifted]
+        row.save(update_fields=["standing_rules"])
+        for r in lifted:
+            _record(user, CLASS_ADDED, purpose=f"learning mode turned on in {r['workspace']} by {by_user.email}",
+                    detail=INDIVIDUAL, ids={"class": INDIVIDUAL, "by": by_user.email, "workspace": r["workspace"]},
+                    workspaces=[r["workspace"]])
+    _sync_coaching(user, on=True, by=by_user)
+    return sorted(_covered(row, mine) & managed)
+
+
+@transaction.atomic
+def owner_individual_off(user, *, managed: set[str], by_user) -> list[str]:
+    """An owner turns learning mode off for `user` in the workspaces they own (`managed`). When every workspace it
+    reaches is one of those, the `individual` class goes (and the coaching opt-in with it); otherwise a deny rule
+    per owned workspace (`owner_rule`) closes it there and leaves the person's other workspaces as they were.
+    Either way the removal cascade runs. Returns the workspaces it was turned off in."""
+    from apps.contacts import session_reviewers  # noqa: PLC0415 — cycle: contacts.session_reviewers -> consent
+
+    mine = set(wsvc.user_workspace_slugs(user))
+    row = live(user)
+    if row is None or INDIVIDUAL not in row.classes:
+        if session_reviewers.live(user).exists() and mine <= managed:   # an opt-in with no consent row
+            _sync_coaching(user, on=False, by=by_user)
+            return sorted(mine & managed)
+        return []
+    reached = _covered(row, mine)
+    closing = reached & managed
+    if not closing:
+        return []
+    if reached <= managed:
+        rest = [c for c in row.classes if c != INDIVIDUAL]
+        if rest:
+            row.classes = rest
+            row.save(update_fields=["classes"])
+            _record(user, CLASS_REMOVED, purpose=f"learning mode turned off by {by_user.email}", detail=INDIVIDUAL,
+                    ids={"class": INDIVIDUAL, "by": by_user.email})
+        else:
+            row.revoked_at = timezone.now()
+            row.save(update_fields=["revoked_at"])
+            _record(user, REVOKED, purpose=f"learning mode turned off by {by_user.email}",
+                    ids={"by": by_user.email})
+        _sync_coaching(user, on=False, by=by_user)
+    else:
+        row.standing_rules = [*(row.standing_rules or []), *(owner_rule(ws) for ws in sorted(closing))]
+        row.save(update_fields=["standing_rules"])
+        for ws in sorted(closing):
+            _record(user, CLASS_REMOVED, purpose=f"learning mode turned off in {ws} by {by_user.email}",
+                    detail=INDIVIDUAL, ids={"class": INDIVIDUAL, "by": by_user.email, "workspace": ws},
+                    workspaces=[ws])
+    cascade.after_commit(cascade.sources_of(user))
+    return sorted(closing)
+
+
+@transaction.atomic
+def self_individual_on(user) -> None:
+    """The person turns learning mode on: the `individual` class, and no owner-off rule left closing it."""
+    from apps.contacts import session_reviewers  # noqa: PLC0415 — cycle: contacts.session_reviewers -> consent
+
+    session_reviewers.opt_in(_person(user), user=user)
+    row = live(user)
+    if row is None:
+        return
+    kept = [r for r in (row.standing_rules or [])
+            if not (isinstance(r, dict) and set(r) == {"class", "workspace"} and r.get("class") == INDIVIDUAL)]
+    if kept != list(row.standing_rules or []):
+        row.standing_rules = kept
+        row.save(update_fields=["standing_rules"])
+        _record(user, CLASS_ADDED, purpose="turn learning mode on in every workspace your consent covers",
+                detail=INDIVIDUAL, ids={"class": INDIVIDUAL})
 
 
 @transaction.atomic

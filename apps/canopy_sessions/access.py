@@ -14,13 +14,15 @@ someone merely for being in the same workspace:
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of six legs** (`visible_session_q`): you created it; you were
+* **Then one of the legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
-  run; you are an agent's own login and its person let that agent review
-  their sessions (`CoachingOptIn` + `CoachingRole`, read-only, never a sensitive one); or
+  run; its person is in LEARNING MODE (`CoachingOptIn`) and you are one of their
+  coaches (`CoachingRole`, leg 5) or an owner or admin of the workspace it lives in
+  or of the agent it was with (leg 8) — read-only, never a sensitive one; or
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
-  can be emptied — `may_move`).
+  can be emptied — `may_move`). A workspace role reads nobody's sessions by
+  itself: only a person in learning mode is read.
 * **Reach** — a request made with an agent turn's caller token reads as the asker, but
   only as far as `turn_reach` says: that conversation and sessions with that agent, and
   for a one-session review only that conversation and that session (`limit_reach`).
@@ -217,7 +219,7 @@ def visible_session_q(user, *, brain: bool = False) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Six ways in, and a seventh that is the brain's (`_brain_project_q`, inert until its rollout gate):
+    Eight ways in, the seventh the brain's (`_brain_project_q`, inert until its rollout gate):
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -262,9 +264,16 @@ def visible_session_q(user, *, brain: bool = False) -> Q:
        (`_runner_admin_q`). READ-ONLY (`role_for` gives a viewer) and no pull
        (`may_pull`): it exists so the person trusted with a box can see what is
        on it and move it off (`may_move`, `transfer-all`), not to work in it.
+    8. its person is in LEARNING MODE (`_learning_mode_q`: a live `CoachingOptIn`, their act or an
+       owner's for them, held to where their learning consent allows coaching) and you are, as
+       yourself, an owner or admin of the workspace it lives in (`perms.LEARNING_READ`, inherited
+       from above) or an admin of the agent it was with (`Agent.is_admin`'s sense). The same "their
+       sessions" as leg 5 (`sessions_of_q`), the same exclusions (never sensitive, never a contact's,
+       never deleted words, never one taken out of learning), read-only and never a pull. Never an
+       agent's login: an agent reads a learning-mode person only as a coach (leg 5).
 
     **Leg 7 is opt-in, per surface (`brain=True`).** Every other caller (turn content, attachments,
-    the chat socket, exports, Slack, people, push, a turn's reach) reads legs 1 to 6 only, so a
+    the chat socket, exports, Slack, people, push, a turn's reach) reads every leg but 7, so a
     surface added later fails closed. Only a surface that serves no words, or runs them through
     `transcript_read.brain_redacted` (scrubbed and recorded), passes `brain=True`: the session list
     and search, `GET /{id}`, its scroll-back and human inputs, and the brain's own project listing.
@@ -283,7 +292,7 @@ def visible_session_q(user, *, brain: bool = False) -> Q:
 
 
 def _own_legs_q(user) -> Q:
-    """Legs 1 to 6: the sessions of people, boxes, agents and review grants. The brain's project leg
+    """Legs 1 to 6 and 8: the sessions of people, boxes, agents, coaching and learning mode. The brain's project leg
     (`_brain_project_q`) is the seventh and is kept apart, so `read_through_brain_only` can ask whether
     it was the ONLY way in."""
     return (
@@ -295,6 +304,7 @@ def _own_legs_q(user) -> Q:
         | _own_work_q(user)
         | _coach_q(user)
         | _runner_admin_q(user)
+        | _learning_mode_q(user)
     )
 
 
@@ -600,6 +610,35 @@ def _grantors_sessions_q(grantor_ids, scope) -> Q:
     return q
 
 
+def _learning_mode_q(user) -> Q:
+    """Leg 8: the sessions of people in learning mode, for the owners and admins of the workspace each lives in
+    (here or above: `perms.LEARNING_READ`) and the admins of the agent each was with (`_agent_admin_q`). Only
+    people in a workspace `user` is in; each person held to where their learning consent allows coaching
+    (`_grantors_sessions_q`). Empty for an agent's login, and for anyone who administers nothing."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
+    from apps.workspaces import permissions as perms  # noqa: PLC0415 — as `_agent_admin_q`
+    from apps.workspaces.models import WorkspaceMembership  # noqa: PLC0415 — as `review_grantors`
+
+    if Agent.objects.filter(user=user).exists():
+        return Q(pk__in=[])
+    tenant = _tenant_slugs(user)
+    admin_of = perms.slugs_with(user, perms.LEARNING_READ, within=tenant)
+    runs_agents = Agent.objects.filter(Q(owner=user) | Q(admin_grants__user=user)).exists()
+    if not admin_of and not runs_agents:
+        return Q(pk__in=[])
+    in_tenant = WorkspaceMembership.objects.filter(workspace_id__in=tenant).values("user_id")
+    ids = list(CoachingOptIn.objects.filter(revoked_at__isnull=True, user_id__in=in_tenant)
+               .values_list("user_id", flat=True))
+    if not ids:
+        return Q(pk__in=[])
+    q = _grantors_sessions_q(ids, admin_of) if admin_of else Q(pk__in=[])
+    q |= _grantors_sessions_q(ids, tenant) & Q(agent__isnull=False) & _agent_admin_q(user)
+    return (q & Q(contact__isnull=True, content_deleted_at__isnull=True) & _not_sensitive_q()
+            & ~Q(pk__in=removed_from_learning()))
+
+
 def removed_from_learning():
     """Sessions someone in them took out of learning (`brain.consent.exclude`): unavailable to every
     learning read, coaching included, for as long as the exclusion stands."""
@@ -675,7 +714,7 @@ def _tenant_slugs(user) -> set:
 
 
 def readable_sessions(user, *, workspace_slugs=None, brain: bool = False):
-    """Every session `user` may read — the tenant gate AND the six legs, and the brain's
+    """Every session `user` may read — the tenant gate AND the legs, and the brain's
     project leg too with `brain=True` (`visible_session_q`: only a surface that scrubs).
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
@@ -717,7 +756,7 @@ def readable_ids(user, session_ids, *, brain: bool = False) -> set:
 
 
 def can_read(user, session, *, brain: bool = False) -> bool:
-    """Whether `user` may read `session`'s words as they are: legs 1 to 6. With `brain=True`, the
+    """Whether `user` may read `session`'s words as they are: every leg but 7. With `brain=True`, the
     brain's project leg too, for a surface that serves the words scrubbed (`visible_session_q`)."""
     if session is None or not getattr(user, "is_authenticated", False):
         return False

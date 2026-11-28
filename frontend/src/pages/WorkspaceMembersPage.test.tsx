@@ -50,6 +50,10 @@ vi.mock('@/auth/AuthProvider', () => ({
   }),
 }))
 
+vi.mock('@/components/people/MemberLearningMode', () => ({
+  MemberLearningModeSection: () => <div data-testid="learning-mode-stub" />,
+}))
+
 vi.mock('@/components/agents/WorkspaceAgentDefaults', () => ({
   WorkspaceAgentDefaults: ({ workspace }: { workspace: string }) => (
     <div data-testid="agent-defaults-stub">{workspace}</div>

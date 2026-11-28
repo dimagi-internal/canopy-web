@@ -30,7 +30,7 @@ from apps.embedding import defaults as agent_defaults
 from apps.tokens import kinds
 from apps.workspaces import services as wsvc
 
-from . import hcp, people, session_review_asks, session_reviewers, viewers
+from . import hcp, learning_mode, people, session_review_asks, session_reviewers, viewers
 from . import services as contact_services
 from .models import MemoryCollection, Person, PersonAccess, PersonAddress, PersonFact, PersonGrant
 from .people_schemas import (
@@ -40,6 +40,8 @@ from .people_schemas import (
     DefaultAgentIn,
     DefaultAgentOut,
     GrantCollectionIn,
+    LearningModeIn,
+    LearningModeOut,
     MemoryCollectionIn,
     MemoryCollectionOut,
     MemoryCollectionsOut,
@@ -1088,6 +1090,30 @@ def remove_my_session_reviewer(request: HttpRequest) -> dict:
 def remove_my_session_reviewer_by_agent(request: HttpRequest, agent_slug: str) -> dict:
     """Deprecated: coaching is no longer opted into per agent. Same as `DELETE /me/session-reviewers/`."""
     return remove_my_session_reviewer(request)
+
+
+@router.get("/me/learning-mode/", response=LearningModeOut,
+            summary="Your learning mode: on or off, who turned it on, and exactly who may read your sessions")
+@gate("self")  # only the person: never an agent's login or a caller token
+def get_my_learning_mode(request: HttpRequest) -> dict:
+    """Whether you are in learning mode: coaching agents and admins may read and analyze your sessions, read-only,
+    never a sensitive one. Says who turned it on (you, or an owner of one of your workspaces) and when, the
+    workspaces where it holds, and the plain list of who reads: your designated coaches, the owners and admins of
+    each of those workspaces, and the admins of each agent you talk to there. Only you see this."""
+    _the_person_themself(request)
+    return learning_mode.state(request.user)
+
+
+@router.put("/me/learning-mode/", response=LearningModeOut, summary="Turn your learning mode on or off")
+@gate("self", setting=True)  # who may read your sessions
+def set_my_learning_mode(request: HttpRequest, payload: LearningModeIn) -> dict:
+    """Your act. On: your coaches, the owners and admins of your workspaces and the admins of the agents you talk to
+    may read your sessions (the ones you started and those on your own machines), read-only, never a sensitive one,
+    never asking your machine for more; it holds wherever your learning consent reaches, and lifts any owner's "off"
+    there. Off: at once, every such reader's next read is "not found". On your audit. The same yes as the
+    `individual` learning class (Settings, Learning)."""
+    _the_person_themself(request)
+    return learning_mode.set_mine(request.user, on=payload.on)
 
 
 def _session_for_review(request: HttpRequest, session_id: uuid.UUID):
