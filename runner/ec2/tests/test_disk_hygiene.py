@@ -28,8 +28,10 @@ def _prune():
     mod = importlib.util.module_from_spec(spec)
     sys.modules["prune_caches"] = mod
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    # Never prune the test machine's real uv cache.
+    # Never prune the test machine's real uv / pre-commit caches.
+    mod._real_prune_uv = mod.prune_uv
     mod.prune_uv = lambda **kw: None
+    mod.prune_precommit = lambda **kw: None
     return mod
 
 
@@ -94,6 +96,53 @@ def test_npm_cache_is_cleaned_only_past_the_threshold(tmp_path, monkeypatch):
     assert ran == []
     mod.prune_npm(tmp_path, max_mb=1, dry_run=False)
     assert ran == [["npm", "cache", "clean", "--force"]]
+
+
+def _uv_cache(home, monkeypatch, mb):
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
+    cache = home / ".cache" / "uv"
+    cache.mkdir(parents=True)
+    (cache / "wheel").write_bytes(b"x" * (mb * 2**20))
+    return cache
+
+
+def test_uv_cache_past_its_cap_is_cleared_only_when_idle(tmp_path, monkeypatch):
+    """`uv cache prune` keeps every version anything references, so the cache only
+    grows; between turns (the runner's sweep passes --idle) a big one is cleared."""
+    mod = _prune()
+    _uv_cache(tmp_path, monkeypatch, 3)
+    ran = []
+    monkeypatch.setattr(mod.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, **kw: ran.append(cmd))
+    mod._real_prune_uv(home=tmp_path, dry_run=False, idle=False, max_mb=1)
+    assert ran == [["uv", "cache", "prune"]]  # bootstrap: turns may be installing
+    ran.clear()
+    mod._real_prune_uv(home=tmp_path, dry_run=False, idle=True, max_mb=10)
+    assert ran == [["uv", "cache", "prune"]]  # under the cap
+    ran.clear()
+    mod._real_prune_uv(home=tmp_path, dry_run=False, idle=True, max_mb=1)
+    assert ran == [["uv", "cache", "clean"]]
+
+
+def test_uv_dry_run_runs_nothing(tmp_path, monkeypatch):
+    mod = _prune()
+    _uv_cache(tmp_path, monkeypatch, 3)
+    ran = []
+    monkeypatch.setattr(mod.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, **kw: ran.append(cmd))
+    assert mod._real_prune_uv(home=tmp_path, dry_run=True, idle=True, max_mb=1) >= 3 * 2**20
+    assert ran == []
+
+
+def test_the_runners_sweep_prunes_as_idle(cloud_runner, monkeypatch, tmp_path):
+    script = tmp_path / "runner" / "ec2" / "prune_caches.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("")
+    monkeypatch.setattr(cloud_runner, "RUNNER_SRC_DIR", str(tmp_path))
+    ran = []
+    monkeypatch.setattr(cloud_runner.subprocess, "run", lambda cmd, **kw: ran.append(cmd))
+    cloud_runner._prune_caches()
+    assert ran and ran[0][-1] == "--idle"
 
 
 def test_a_failing_step_never_fails_the_prune(tmp_path, monkeypatch):

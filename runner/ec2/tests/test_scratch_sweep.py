@@ -444,3 +444,174 @@ def test_the_disk_check_no_longer_asks_a_person_to_refresh(cloud_runner, monkeyp
     by = _health(cr)
     assert by["disk"]["status"] == "warn"
     assert "refresh this runner" not in by["disk"]["detail"]
+
+
+# ── WORK_DIR checkouts, nested clones, dependency dirs ──────────────────────────
+# Agents leave checkouts in WORK_DIR itself (WORK_DIR/<name>, WORK_DIR/scratch/<name>,
+# WORK_DIR/repos/<repo>/<key>), each with its own ~1 GB of node_modules/.venv. On
+# one box that was 53 GB of 145, none of it swept.
+
+def _with_deps(checkout: pathlib.Path) -> pathlib.Path:
+    (checkout / "package.json").write_text("{}")
+    nm = checkout / "node_modules" / "left-pad"
+    nm.mkdir(parents=True)
+    (nm / "index.js").write_bytes(b"x" * 4096)
+    return checkout / "node_modules"
+
+
+@pytest.mark.parametrize("where", ["labs-wt", "scratch/webconnect", "repos/pidchat-build/l4"])
+def test_an_idle_clean_checkout_in_work_dir_is_removed(box, where):
+    cr, _scratch, work, origin, _ = box
+    dest = work / where
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    clone = _clone(origin, dest)
+    _age(clone)
+    cr.sweep_scratch()
+    assert not clone.exists()
+
+
+@pytest.mark.parametrize("own", ["sessions", "repos", "agents", "attachments", "retired-clones", "scratch"])
+def test_the_runners_own_work_dir_layout_is_not_a_candidate(box, own):
+    cr, _scratch, work, *_ = box
+    d = work / own
+    d.mkdir(exist_ok=True)
+    _age(d)
+    cr.sweep_scratch()
+    assert d.exists()
+
+
+def test_the_shared_repo_clones_are_never_candidates(box):
+    cr, _scratch, work, origin, _ = box
+    clones = work / "repos" / ".clones"
+    clones.mkdir(parents=True)
+    bare = clones / "canopy-web.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(origin), str(bare)], check=True)
+    _age(clones)
+    cr.sweep_scratch()
+    assert bare.exists()
+
+
+def test_a_work_dir_checkout_with_commits_on_no_remote_is_kept(box):
+    cr, _scratch, work, origin, _ = box
+    clone = _clone(origin, work / "labs-supply")
+    (clone / "new.txt").write_text("mine\n")
+    _commit(clone, "unpushed work")
+    _age(clone)
+    report = cr.sweep_scratch()
+    assert clone.exists()
+    assert any("labs-supply" in k["path"] for k in report["kept"])
+
+
+def test_a_clean_pushed_clone_nested_in_a_worktree_is_not_uncommitted_work(box):
+    """An agent cloned `hub/` inside its session worktree: the outer repo sees
+    `?? hub/`, but that clone is clean and pushed, so nothing would be lost."""
+    cr, _scratch, work, origin, _ = box
+    outer = _clone(origin, work / "sessions" / "5525c3f3")
+    _clone(origin, outer / "hub")
+    _age(outer)
+    report = cr.sweep_scratch()
+    assert not outer.exists(), report
+
+
+def test_a_dirty_clone_nested_in_a_worktree_keeps_it(box):
+    cr, _scratch, work, origin, _ = box
+    outer = _clone(origin, work / "sessions" / "983a6aab")
+    hub = _clone(origin, outer / "hub")
+    (hub / "README").write_text("changed\n")
+    _age(outer)
+    report = cr.sweep_scratch()
+    assert hub.exists()
+    assert any("hub" in k["reason"] for k in report["kept"])
+
+
+def test_other_untracked_files_beside_a_nested_clone_still_keep_it(box):
+    cr, _scratch, work, origin, _ = box
+    outer = _clone(origin, work / "sessions" / "dcdc7f61")
+    _clone(origin, outer / "hub")
+    (outer / "draft-reply.txt").write_text("only copy\n")
+    _age(outer)
+    cr.sweep_scratch()
+    assert (outer / "draft-reply.txt").exists()
+
+
+def test_a_kept_checkouts_idle_dependency_dirs_are_removed(box):
+    """The checkout holds unsaved work, so it stays — but its node_modules is an
+    install's output, and goes once the checkout has been idle DEPS_MAX_AGE."""
+    cr, _scratch, work, origin, _ = box
+    clone = _clone(origin, work / "sessions" / "82207379")
+    (clone / "README").write_text("uncommitted\n")
+    nm = _with_deps(clone)
+    _age(clone)
+    report = cr.sweep_scratch()
+    assert clone.exists() and (clone / "README").read_text() == "uncommitted\n"
+    assert not nm.exists()
+    assert report["deps_freed"] >= 4096
+    # …without restarting the checkout's own idle clock.
+    assert os.lstat(clone).st_mtime < time.time() - 7 * DAY
+
+
+def test_a_recent_checkouts_dependency_dirs_stay(box):
+    cr, _scratch, work, origin, _ = box
+    clone = _clone(origin, work / "hub-pro-prep")
+    nm = _with_deps(clone)
+    _age(clone, time.time() - 3 * 3600)  # touched three hours ago
+    cr.sweep_scratch()
+    assert nm.exists()
+
+
+def test_a_checkout_idle_for_days_but_not_a_week_loses_only_its_deps(box):
+    cr, _scratch, work, origin, _ = box
+    clone = _clone(origin, work / "labs-commcare")
+    nm = _with_deps(clone)
+    _age(clone, time.time() - 3 * DAY)
+    cr.sweep_scratch()
+    assert clone.exists() and (clone / "README").exists()
+    assert not nm.exists()
+
+
+def test_a_dependency_dir_with_no_manifest_beside_it_is_left(box):
+    cr, _scratch, work, origin, _ = box
+    clone = _clone(origin, work / "vendored")
+    (clone / "README").write_text("dirty\n")
+    nm = clone / "node_modules" / "x"
+    nm.mkdir(parents=True)
+    (nm / "a.js").write_text("1")
+    _age(clone)
+    cr.sweep_scratch()
+    assert nm.exists()
+
+
+def test_a_venv_is_a_dependency_dir_too(box):
+    cr, _scratch, work, origin, _ = box
+    clone = _clone(origin, work / "sessions" / "c285f400")
+    (clone / "README").write_text("dirty\n")
+    (clone / "pyproject.toml").write_text("[project]\nname='x'\n")
+    venv = clone / ".venv" / "lib"
+    venv.mkdir(parents=True)
+    _age(clone)
+    cr.sweep_scratch()
+    assert not (clone / ".venv").exists()
+
+
+def test_a_session_whose_transcript_moved_keeps_its_deps(box):
+    cr, _scratch, work, origin, tmp_agents = box
+    clone = _clone(origin, work / "sessions" / "live-chat")
+    (clone / "README").write_text("dirty\n")
+    nm = _with_deps(clone)
+    _age(clone)
+    tdir = cr.CLAUDE_PROJECTS_HOME / cr._encode_project_dir(clone)
+    tdir.mkdir(parents=True)
+    (tdir / "t.jsonl").write_text("{}\n")
+    cr.sweep_scratch()
+    assert nm.exists()
+
+
+def test_no_dependency_dir_is_removed_while_a_turn_runs(box, monkeypatch):
+    cr, _scratch, work, origin, _ = box
+    clone = _clone(origin, work / "sessions" / "busy")
+    (clone / "README").write_text("dirty\n")
+    nm = _with_deps(clone)
+    _age(clone)
+    monkeypatch.setattr(cr, "_in_flight_ids", lambda: {"t1"})
+    cr.sweep_scratch()
+    assert nm.exists()
