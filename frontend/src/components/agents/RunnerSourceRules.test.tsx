@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   groupRules,
   hasRule,
-  inheritedMode,
   mergeRules,
   nextRulesForActor,
   nextRulesForCopy,
   nextRulesForAdd,
-  nextRulesForMode,
   nextRulesForRemove,
   nextRulesForRunnerAdd,
   nextRulesForRunnerMove,
@@ -22,8 +20,8 @@ import {
 // "any actor", which is exactly what a source rule meant before actors existed —
 // so every pre-actor rule is just a rule of length one with an empty actor.
 const rules: RuleRow[] = [
-  { source: 'ace_web', actor: '', runnerIds: ['r-cloud'], strict: true, turnMode: '' },
-  { source: 'email', actor: '', runnerIds: ['r-laptop'], strict: false, turnMode: '' },
+  { source: 'ace_web', actor: '', runnerIds: ['r-cloud'], strict: true },
+  { source: 'email', actor: '', runnerIds: ['r-laptop'], strict: false },
 ]
 
 const K = (source: string, actor = '') => ruleKey({ source, actor })
@@ -35,7 +33,7 @@ describe('rule list transforms', () => {
     const next = nextRulesForAdd(rules, 'canopy_scheduler', 'r-cloud')
     expect(next).toHaveLength(3)
     expect(next[2]).toEqual({
-      source: 'canopy_scheduler', actor: '', runnerIds: ['r-cloud'], strict: false, turnMode: '',
+      source: 'canopy_scheduler', actor: '', runnerIds: ['r-cloud'], strict: false,
     })
   })
 
@@ -46,8 +44,8 @@ describe('rule list transforms', () => {
 
   it('removes by (source, actor), not by source alone', () => {
     const two: RuleRow[] = [
-      { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-laptop'], strict: true, turnMode: '' },
-      { source: 'email', actor: 'stewari@dimagi.com', runnerIds: ['r-cloud'], strict: true, turnMode: '' },
+      { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-laptop'], strict: true },
+      { source: 'email', actor: 'stewari@dimagi.com', runnerIds: ['r-cloud'], strict: true },
     ]
     const next = nextRulesForRemove(two, K('email', 'jj@dimagi.com'))
     expect(next.map((r) => r.actor)).toEqual(['stewari@dimagi.com'])
@@ -87,36 +85,16 @@ describe('actors', () => {
 
   it('compares the sender loosely, as the server normalizes it', () => {
     const named: RuleRow[] = [
-      { source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r'], strict: false, turnMode: '' },
+      { source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r'], strict: false },
     ]
     expect(hasRule(named, 'email', ' Beth@Dimagi.com ')).toBe(true)
   })
 })
 
-describe('mode', () => {
-  it('adds a rule with a sender and a mode in one step', () => {
-    // "Beth's email -> cloud, auto" is one decision, so the add form takes all of it.
-    const next = nextRulesForAdd(rules, 'email', 'r-cloud', { actor: 'beth@dimagi.com', turnMode: 'auto' })
-    expect(next[2]).toEqual({
-      source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r-cloud'], strict: false, turnMode: 'auto',
-    })
-  })
-
-  it('sets the mode on one rule only', () => {
-    const next = nextRulesForMode(rules, K('email'), 'manual')
-    expect(next[1].turnMode).toBe('manual')
-    expect(next[0]).toEqual(rules[0])
-  })
-
-  it('a named rule that says nothing inherits its source rule, then the agent', () => {
-    const withAnyone = [{ source: 'email', actor: '', turnMode: 'auto' as const }]
-    expect(inheritedMode({ source: 'email', actor: 'beth@dimagi.com' }, withAnyone, 'manual')).toBe('auto')
-    expect(inheritedMode({ source: 'email', actor: 'beth@dimagi.com' }, [], 'manual')).toBe('manual')
-  })
-
-  it('an anyone rule inherits straight from the agent', () => {
-    const withAnyone = [{ source: 'email', actor: '', turnMode: 'auto' as const }]
-    expect(inheritedMode({ source: 'email', actor: '' }, withAnyone, 'manual')).toBe('manual')
+describe('add', () => {
+  it('adds a rule with a sender in one step, falling back by default', () => {
+    const next = nextRulesForAdd(rules, 'email', 'r-cloud', { actor: 'beth@dimagi.com' })
+    expect(next[2]).toEqual({ source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r-cloud'], strict: false })
   })
 })
 
@@ -125,7 +103,7 @@ describe('a rule names several runners', () => {
   // ONE machine, alternated as each runs out of tokens. "My work, never cloud"
   // therefore names two runners whose live one rotates — unsayable with one.
   const boxes: RuleRow[] = [
-    { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-acedimagi'], strict: true, turnMode: '' },
+    { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-acedimagi'], strict: true },
   ]
 
   it('appends a runner to a rule', () => {
@@ -174,14 +152,6 @@ describe('groupRules', () => {
       kind: 'cloud', strict: false, online: true, ready: true, enabled: true, queued_count: 0 },
   ] as unknown as AgentRunnerRuleOut[]
 
-  it('reads each rule\'s mode off its rows', () => {
-    const grouped = groupRules([
-      { source: 'email', actor: 'beth@dimagi.com', rank: 0, runner_id: 'r', turn_mode: 'auto' },
-      { source: 'slack', actor: '', rank: 0, runner_id: 'r', turn_mode: 'bogus' },
-    ] as unknown as AgentRunnerRuleOut[])
-    expect(grouped.map((g) => g.turnMode)).toEqual(['auto', ''])
-  })
-
   it('groups rows into rules and orders runners by rank', () => {
     const grouped = groupRules(flat)
     expect(grouped).toHaveLength(2)
@@ -213,7 +183,7 @@ describe('groupRules', () => {
   it('a fall-through rule never reads as parked — it degrades instead', () => {
     const soft = flat
       .filter((r) => r.actor === 'jj@dimagi.com')
-      .map((r) => ({ ...r, online: false, strict: false, turnMode: '' })) as unknown as AgentRunnerRuleOut[]
+      .map((r) => ({ ...r, online: false, strict: false })) as unknown as AgentRunnerRuleOut[]
     expect(groupRules(soft)[0].parked).toBe(false)
   })
 })
@@ -221,14 +191,14 @@ describe('groupRules', () => {
 describe('mergeRules', () => {
   const row = (over: Partial<AgentRunnerRuleOut>): AgentRunnerRuleOut => ({
     source: 'email', actor: '', rank: 0, runner_id: 'r-cloud', runner_name: 'cloud-1', kind: 'cloud',
-    strict: false, online: true, ready: true, enabled: true, queued_count: 0, turn_mode: '', ...over,
+    strict: false, online: true, ready: true, enabled: true, queued_count: 0, ...over,
   })
 
   it('draws rules that differ only in the kind of work as one row', () => {
     const m = mergeRules(groupRules([
       row({ source: 'api', actor: 'jj@dimagi.com', queued_count: 1 }),
       row({ source: 'email', actor: 'jj@dimagi.com', queued_count: 2 }),
-    ]), 'manual')
+    ]))
     expect(m).toHaveLength(1)
     expect(m[0].sources).toEqual(['api', 'email'])
     expect(m[0].keys).toEqual([K('api', 'jj@dimagi.com'), K('email', 'jj@dimagi.com')])
@@ -239,19 +209,9 @@ describe('mergeRules', () => {
     const m = mergeRules(groupRules([
       row({ source: 'api', actor: 'jj@dimagi.com' }),
       row({ source: 'email', actor: 'jj@dimagi.com', strict: true }),
-      row({ source: 'ace_web', actor: 'jj@dimagi.com', turn_mode: 'auto' }),
       row({ source: 'slack', actor: 'beth@dimagi.com' }),
-    ]), 'manual')
-    expect(m).toHaveLength(4)
-  })
-
-  it('keeps apart rules whose "As below" would inherit different modes', () => {
-    const m = mergeRules(groupRules([
-      row({ source: 'api', actor: 'jj@dimagi.com' }),
-      row({ source: 'email', actor: 'jj@dimagi.com' }),
-      row({ source: 'email', actor: '', runner_id: 'r-mbp', turn_mode: 'auto' }),
-    ]), 'manual')
-    expect(m.map((x) => x.sources)).toEqual([['api'], ['email'], ['email']])
+    ]))
+    expect(m).toHaveLength(3)
   })
 
   it('draws every named row above every anyone row', () => {
@@ -259,7 +219,7 @@ describe('mergeRules', () => {
       row({ source: 'api', actor: '' }),
       row({ source: 'email', actor: '' }),
       row({ source: 'email', actor: 'beth@dimagi.com', runner_id: 'r-mbp' }),
-    ]), 'manual')
+    ]))
     expect(m.map((x) => x.actor)).toEqual(['beth@dimagi.com', ''])
   })
 })

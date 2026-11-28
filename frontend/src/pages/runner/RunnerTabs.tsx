@@ -86,7 +86,7 @@ export function RunnerRoutingTab({ runner, agents, onChanged }: RunnerOutletCont
               </button>
               {open.has(a.slug) && (
                 <div className="px-2 pb-2">
-                  <AgentRouting agentSlug={a.slug} workspace={a.workspace ?? undefined} initialTurnMode={a.turn_mode} />
+                  <AgentRouting agentSlug={a.slug} workspace={a.workspace ?? undefined} />
                 </div>
               )}
             </div>

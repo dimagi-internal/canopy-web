@@ -279,7 +279,7 @@ class Turn(models.Model):
     parent_task = models.CharField(max_length=300, blank=True, default="")
     parent_claude_session = models.CharField(max_length=100, blank=True, default="")
     # THE MODE THIS TURN RUNS IN (manual | auto), decided once at CLAIM by
-    # `apps/harness/turn_mode.py` — a routing rule's mode where one matches, else
+    # `apps/harness/turn_mode.py` — a turn-mode rule's mode where one matches, else
     # the agent's own `turn_mode`. "" until claimed, and always "" for a project
     # turn (no agent, no mode). Stamped rather than derived because the agent
     # reads it mid-turn, and a rule edited while the turn runs must not flip the
@@ -289,7 +289,7 @@ class Turn(models.Model):
     turn_mode = models.CharField(max_length=8, blank=True, default="")
     turn_mode_basis = models.CharField(max_length=320, blank=True, default="")
     # A mode ASKED FOR at enqueue by whoever dispatched the turn (`TurnIn.turn_mode`),
-    # and who asked. The top rung of `turn_mode.for_turn` — above every routing
+    # and who asked. The top rung of `turn_mode.for_turn` — above every turn-mode
     # rule and the agent's own switch — and read again on every claim, so it
     # survives a lease expiry. "" = no request; the ladder decides as before.
     # `auto` is accepted only from the agent's owner/admin on a verified

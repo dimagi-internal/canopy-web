@@ -16,11 +16,16 @@ Start reading at: `apps/harness/api_turns.py` (enqueue, read, start/finish/cance
 > **Deleting a user strands their runners.** `Runner.owner` is `SET_NULL` and a NULL owner has no tenant (`runner_tenant_slugs` fails closed): every claim and schedule route returns nothing for that box, which can only be retired and re-paired. Deactivate a departing user (`is_active=False`) instead if their runners should keep working.
 
 ## Routing writes (`apps/agents/api_routing.py`; the order and claim: [runner-routing.md](runner-routing.md), [runners.md](runners.md))
+Routing decides WHICH BOX; it carries no mode. Whether the work runs `manual` or `auto` is a turn-mode rule (below), which names no runner.
 - **Every write that points an agent at boxes** (default list, source rule, actor route) passes `_runners_for_routing`: a runner the write ADDS must live in the agent's workspace or above, be one the caller administers (403 naming it) and be holdable by the agent (`services.runner_may_hold_agent`, 403); a runner the write merely KEEPS is not re-checked, or nobody could save a shared rule. An invisible or unknown runner is 422 "unknown", never 403, so a guessed id learns nothing. A runner kept from the agent by what it serves is 422 (`routing.serves_refusal`).
 - `PUT …/runners` takes exactly one of `runners` / `runner_ids` (422), replaces only the `source=""` rows, and an empty list makes the agent follow its workspace order (`routing.inherited_orders`). A disabled row keeps its rank, never routes, never blocks a lower rank and stays drillable.
-- **`turn_mode=auto` on a rule or actor route** is set only by an agent admin; keeping an existing `auto` is free (`route_refusals.refuse_auto_unless_admin`, `api_routing._refuse_new_auto`). An `auto` naming a person applies only to a verified message (`turn_mode.resolve`).
+- A runner refusal (403) names the box and says that changing only the mode needs no runner (`PUT …/turn-mode-rules`).
 - Actor routes: `strict=false` falls back to the agent's usual runners after a minute; actors are normalized to a bare lowercase address and an unparseable one is 422.
 - Pinning a chat (`pinnable-runners`) and `route-preview` read the claim's own predicates (`canopy_sessions.placement`, `routing.labelled_assignment_rows`), so what they say is what the claim does.
+
+## Turn-mode writes (`apps/agents/api_turn_mode.py`; the ladder: `apps/harness/turn_mode.py`)
+- `GET|PUT|DELETE /api/agents/{slug}/turn-mode-rules`: one `TurnModeRule` per (`source`, `actor`), either may be `""` but not both (the agent's own switch is `PATCH …/turn-mode`). Gated on the AGENT only, never a runner.
+- Anything that may let the agent act unreviewed (a rule set to `auto`, a `manual` rule removed, the switch set to `auto`) is for agent admins (`route_refusals.refuse_auto_unless_admin`); re-saving an `auto` already set, setting `manual` and removing an `auto` are open to `agent.work`. A person's rule on a channel no person is behind (`actors.ACTORLESS_ORIGINS`), an unparseable address or an unknown channel is 422.
 
 ## Enqueue, read and cancel turns (`api_turns.py`, `turn_gates.py`)
 - **Idempotency** (`services._replay`, `IdempotencyConflict`): a key is unique per WORKSPACE (`Turn.idempotency_scope`) and replays only to the target it was made for (same agent, chat session or project); anything else is 409 saying nothing about the turn holding it. A replay is returned through the same content gate as a read.

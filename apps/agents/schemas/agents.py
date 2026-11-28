@@ -381,8 +381,8 @@ class AgentRunnersIn(StrictModel):
 
 
 class AgentRunnerRuleOut(StrictModel):
-    """One per-source routing rule: the priority runner for a source, and whether
-    it is the ONLY runner allowed to take that source's work.
+    """One runner of one routing rule: a rule is the rows sharing (source, actor),
+    ranked by `rank`, and `strict` says whether ONLY its runners may take the work.
 
     `source` stays a plain `str` here (not the literal) by the same rule the rest
     of the API follows — an output schema serializes what the DB already holds, and
@@ -406,9 +406,6 @@ class AgentRunnerRuleOut(StrictModel):
     ready: bool
     enabled: bool = True
     queued_count: int = 0
-    # manual | auto overrides the agent's turn mode for this rule's work; "" = the
-    # rule says nothing about mode. Rule-level, repeated on every row like strict.
-    turn_mode: str = ""
 
 
 class AgentRunnerRuleIn(StrictModel):
@@ -423,31 +420,22 @@ class AgentRunnerRuleIn(StrictModel):
     rank order. A rule names several runners because the operator's own boxes are
     two macOS accounts alternated as each runs out of tokens: "either of mine,
     never cloud" cannot be said with one runner. Per-runner
-    `enabled` lives on the row, which is why this schema has no rule-level
-    `enabled` — a change from the pre-actor shape, safe because canopy-web's own
-    frontend is the only caller and no rules exist in production yet.
-
-    `strict` is rule-level and written to every row.
+    `enabled` lives on the row; `strict` is rule-level and written to every row.
     """
 
     source: RoutableSource
     actor: str = ""
     runners: list[AgentRunnerRowIn] = Field(default_factory=list)
     strict: bool = False
-    # "" leaves the mode to the next rung (the source rule, then the agent). An
-    # `auto` on a rule that names a person applies only to a VERIFIED message
-    # from them — see apps/harness/turn_mode.py.
-    turn_mode: Literal["", "manual", "auto"] = ""
 
 
 class AgentRunnerRuleBodyIn(StrictModel):
     """ONE rule, addressed by the URL (source, and `?actor=` for one person's):
-    the runners in preference order, whether only they may take the work, and
-    the turn mode. See PUT /agents/{slug}/runner-rules/{source}."""
+    the runners in preference order and whether only they may take the work.
+    See PUT /agents/{slug}/runner-rules/{source}."""
 
     runners: list[AgentRunnerRowIn] = Field(default_factory=list)
     strict: bool = False
-    turn_mode: Literal["", "manual", "auto"] = ""
 
 
 class AgentRunnerRulesIn(StrictModel):
@@ -476,7 +464,6 @@ class AgentActorRouteOut(StrictModel):
     runners: list[AgentActorRouteRunnerOut]
     strict: bool
     sources: list[str]
-    turn_mode: str = ""
     queued_count: int = 0
 
 
@@ -492,7 +479,33 @@ class AgentActorRouteIn(StrictModel):
     runners: list[AgentRunnerRowIn] = Field(default_factory=list)
     strict: bool = True
     sources: list[RoutableSource] | None = None
-    turn_mode: Literal["", "manual", "auto"] = ""
+
+
+class TurnModeRuleOut(StrictModel):
+    """Whether one channel's work, one person's, or one person's on one channel
+    runs `manual` or `auto` for this agent. Names no runner: which box runs the
+    work is routing (`GET /runner-rules`), a separate decision.
+
+    `source` "" = every channel; `actor` "" = anyone (never both). Plain `str`,
+    as on every output schema: it serializes what the DB holds."""
+
+    source: str
+    actor: str
+    turn_mode: str
+    set_by_email: str = ""
+    updated_at: datetime | None = None
+
+
+class TurnModeRuleIn(StrictModel):
+    """Set ONE turn-mode rule, keyed by (`source`, `actor`); replaces that rule only.
+
+    Give a `source`, an `actor` (a person's email), or both. `auto` that names a
+    person applies only to a VERIFIED message from them; otherwise the turn runs
+    manual and its basis says so (apps/harness/turn_mode.py)."""
+
+    source: RoutableSource | Literal[""] = ""
+    actor: str = ""
+    turn_mode: Literal["manual", "auto"]
 
 
 class AgentSourceOut(StrictModel):

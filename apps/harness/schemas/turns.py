@@ -46,7 +46,7 @@ class TurnIn(Schema):
     # `drill` origin: a drill is an api turn that names its runner, identified by
     # its RunnerDrill row rather than by a magic origin value.
     runner_id: uuid.UUID | None = None
-    # Ask for the MODE this agent turn runs in, above every routing rule and the
+    # Ask for the MODE this agent turn runs in, above every turn-mode rule and the
     # agent's own switch (apps/harness/turn_mode.py). `manual` is open to anyone
     # who may enqueue — lowering autonomy is always safe. `auto` only from the
     # agent's owner or an admin (workspace owners included), signed in or on a

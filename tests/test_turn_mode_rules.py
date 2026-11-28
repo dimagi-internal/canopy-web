@@ -1,10 +1,11 @@
-"""A routing rule may set the MODE its work runs in, not just the box.
+"""A turn-mode rule sets the MODE an agent's work runs in, per channel, per person
+or both — and names no runner.
 
-`eva / email / beth@… → cloud, auto`: the rule that routes Beth's mail to the
-cloud runner also lets Eva act on it without asking first. The mode is decided
-at claim from the same ladder that routed the turn — (source, actor) rule, then
-(source, anyone) rule, then `Agent.turn_mode` — stamped on the turn, and handed
-to the agent in the caller envelope.
+`eva / email / beth@… → auto` lets Eva act on Beth's mail without asking first.
+Which box runs it is a separate routing rule. The mode is decided at claim —
+(source, actor), then (any channel, actor), then (source, anyone), then
+`Agent.turn_mode` — stamped on the turn, and handed to the agent in the caller
+envelope.
 
 The security-relevant test is the unverified one: an `auto` that names a person
 applies only to a message that proves it came from them. Routing on a forged
@@ -20,7 +21,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.harness import caller_context, claim, services
 from apps.harness import turn_mode as modes
-from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.harness.models import Runner, RunnerAssignment, Turn, TurnModeRule
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.agent_helpers import admit_contacts
 
@@ -56,11 +57,15 @@ def fleet(client):
     return {"client": client, "agent": eva, "laptop": laptop, "cloud": cloud}
 
 
-def _rule(agent, runner, *, source=Turn.ORIGIN_EMAIL, actor="", mode="", strict=False):
-    RunnerAssignment.objects.create(
-        agent=agent, runner=runner, rank=0, source=source, actor=actor,
-        strict=strict, turn_mode=mode,
-    )
+def _rule(agent, *, source=Turn.ORIGIN_EMAIL, actor="", mode):
+    """A turn-mode rule: no runner involved."""
+    TurnModeRule.objects.create(agent=agent, source=source, actor=actor, turn_mode=mode)
+
+
+def _route(agent, runner, *, source=Turn.ORIGIN_EMAIL, actor="", strict=True):
+    """A routing rule: no mode involved."""
+    RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0, source=source,
+                                    actor=actor, strict=strict)
 
 
 def _mail(agent, sender=BETH, key="m-1", headers=None):
@@ -83,8 +88,8 @@ def test_with_no_rule_the_turn_takes_the_agents_mode(fleet):
 
 
 def test_a_verified_message_from_the_named_sender_runs_auto(fleet):
-    a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, actor=BETH, mode="auto")
+    a = fleet["agent"]
+    _rule(a, actor=BETH, mode="auto")
     got = modes.for_turn(_mail(a, headers=VERIFIED))
     assert got.mode == "auto"
     assert got.basis == f"rule email/{BETH}"
@@ -92,8 +97,8 @@ def test_a_verified_message_from_the_named_sender_runs_auto(fleet):
 
 def test_an_unverified_message_claiming_to_be_the_named_sender_runs_manual(fleet):
     """The whole reason the mode is not just another routing column."""
-    a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, actor=BETH, mode="auto")
+    a = fleet["agent"]
+    _rule(a, actor=BETH, mode="auto")
     got = modes.for_turn(_mail(a))  # no Authentication-Results: could be anyone
     assert got.mode == "manual"
     assert "not verified" in got.basis
@@ -102,48 +107,64 @@ def test_an_unverified_message_claiming_to_be_the_named_sender_runs_manual(fleet
 def test_an_unverified_message_does_not_fall_through_to_an_auto_agent(fleet):
     """Withheld means MANUAL, not "whatever the agent says": the rule was written
     about this person, and a message that may not be them is the one to slow on."""
-    a, cloud = fleet["agent"], fleet["cloud"]
+    a = fleet["agent"]
     Agent.objects.filter(pk=a.pk).update(turn_mode=Agent.AUTO)
-    _rule(a, cloud, actor=BETH, mode="auto")
+    _rule(a, actor=BETH, mode="auto")
     assert modes.for_turn(_mail(Agent.objects.get(pk=a.pk))).mode == "manual"
 
 
 def test_a_manual_rule_is_honoured_even_unverified(fleet):
     """Lowering autonomy is safe whoever asks."""
-    a, cloud = fleet["agent"], fleet["cloud"]
+    a = fleet["agent"]
     Agent.objects.filter(pk=a.pk).update(turn_mode=Agent.AUTO)
-    _rule(a, cloud, actor=BETH, mode="manual")
+    _rule(a, actor=BETH, mode="manual")
     got = modes.for_turn(_mail(Agent.objects.get(pk=a.pk)))
     assert (got.mode, got.basis) == ("manual", f"rule email/{BETH}")
 
 
 def test_an_anyone_rule_needs_no_verification(fleet):
-    a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, mode="auto")
+    a = fleet["agent"]
+    _rule(a, mode="auto")
     got = modes.for_turn(_mail(a, sender="stranger@else.org"))
     assert (got.mode, got.basis) == ("auto", "rule email/anyone")
 
 
-def test_a_rule_that_says_nothing_about_mode_defers_to_the_next_rung(fleet):
-    """Moving Beth's work to another box must not change how it is handled."""
-    a, cloud, laptop = fleet["agent"], fleet["cloud"], fleet["laptop"]
-    _rule(a, cloud, actor=BETH, mode="")        # routing only
-    _rule(a, laptop, mode="auto")               # every email: auto
+def test_another_persons_rule_does_not_apply(fleet):
+    a = fleet["agent"]
+    _rule(a, actor="someone@dimagi.com", mode="manual")
+    _rule(a, mode="auto")                           # every email: auto
     got = modes.for_turn(_mail(a, headers=VERIFIED))
     assert (got.mode, got.basis) == ("auto", "rule email/anyone")
 
 
 def test_a_rule_for_another_source_does_not_apply(fleet):
-    a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, source=Turn.ORIGIN_SLACK, mode="auto")
+    a = fleet["agent"]
+    _rule(a, source=Turn.ORIGIN_SLACK, mode="auto")
     assert modes.for_turn(_mail(a)).basis == "agent"
 
 
-def test_a_switched_off_rule_takes_its_mode_with_it(fleet):
+def test_routing_does_not_touch_the_mode(fleet):
+    """Switching a routing rule off, or routing Beth to another box, leaves her mode alone."""
     a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, mode="auto")
-    RunnerAssignment.objects.filter(agent=a, source=Turn.ORIGIN_EMAIL).update(enabled=False)
-    assert modes.for_turn(_mail(a)).basis == "agent"
+    _rule(a, actor=BETH, mode="auto")
+    _route(a, cloud, actor=BETH)
+    RunnerAssignment.objects.filter(agent=a, actor=BETH).update(enabled=False)
+    assert modes.for_turn(_mail(a, headers=VERIFIED)).basis == f"rule email/{BETH}"
+
+
+def test_a_persons_rule_on_any_channel_beats_the_channel_rule(fleet):
+    a = fleet["agent"]
+    _rule(a, source="", actor=BETH, mode="auto")
+    _rule(a, mode="manual")                         # every email: manual
+    got = modes.for_turn(_mail(a, headers=VERIFIED))
+    assert (got.mode, got.basis) == ("auto", f"rule any channel/{BETH}")
+
+
+def test_a_persons_rule_on_this_channel_beats_their_any_channel_rule(fleet):
+    a = fleet["agent"]
+    _rule(a, source="", actor=BETH, mode="auto")
+    _rule(a, actor=BETH, mode="manual")
+    assert modes.for_turn(_mail(a, headers=VERIFIED)).basis == f"rule email/{BETH}"
 
 
 def test_a_project_turn_has_no_mode(fleet):
@@ -155,7 +176,8 @@ def test_a_project_turn_has_no_mode(fleet):
 
 def test_claiming_stamps_the_mode_and_the_envelope_carries_it(fleet):
     a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, actor=BETH, mode="auto", strict=True)
+    _rule(a, actor=BETH, mode="auto")
+    _route(a, cloud, actor=BETH)
     turn = _mail(a, headers=VERIFIED)
 
     claimed = claim.claim_next_turn(cloud)
@@ -168,23 +190,25 @@ def test_claiming_stamps_the_mode_and_the_envelope_carries_it(fleet):
 
 def test_a_rule_edited_mid_turn_does_not_change_the_running_turns_mode(fleet):
     a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, actor=BETH, mode="auto", strict=True)
+    _rule(a, actor=BETH, mode="auto")
+    _route(a, cloud, actor=BETH)
     _mail(a, headers=VERIFIED)
     claimed = claim.claim_next_turn(cloud)
 
-    RunnerAssignment.objects.filter(agent=a, actor=BETH).update(turn_mode="manual")
+    TurnModeRule.objects.filter(agent=a, actor=BETH).update(turn_mode="manual")
 
     assert caller_context.build(claimed)["turn_mode"]["mode"] == "auto"
 
 
 def test_a_reclaimed_turn_decides_its_mode_again(fleet):
     a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, actor=BETH, mode="auto", strict=True)
+    _rule(a, actor=BETH, mode="auto")
+    _route(a, cloud, actor=BETH)
     turn = _mail(a, headers=VERIFIED)
     claim.claim_next_turn(cloud)
     # Lease lost: back to the queue, still carrying the old stamp.
     Turn.objects.filter(pk=turn.pk).update(status=Turn.QUEUED, claimed_by=None)
-    RunnerAssignment.objects.filter(agent=a, actor=BETH).update(turn_mode="manual")
+    TurnModeRule.objects.filter(agent=a, actor=BETH).update(turn_mode="manual")
 
     again = claim.claim_next_turn(cloud)
 
@@ -193,7 +217,8 @@ def test_a_reclaimed_turn_decides_its_mode_again(fleet):
 
 def test_the_claim_response_carries_the_mode(fleet):
     a, cloud = fleet["agent"], fleet["cloud"]
-    _rule(a, cloud, mode="auto", strict=True)
+    _rule(a, mode="auto")
+    _route(a, cloud)
     _mail(a)
     res = fleet["client"].post(f"/api/harness/runners/{cloud.id}/claim")
     assert res.status_code == 200, res.content
@@ -204,34 +229,39 @@ def test_the_claim_response_carries_the_mode(fleet):
 
 # --- the rules API ------------------------------------------------------------
 
-def _put(client, rules):
-    return client.put("/api/agents/eva/runner-rules", data={"rules": rules},
-                      content_type="application/json")
+def _put(client, **body):
+    return client.put("/api/agents/eva/turn-mode-rules", data=body, content_type="application/json")
 
 
-def test_the_rules_api_round_trips_a_mode(fleet):
-    res = _put(fleet["client"], [{
-        "source": "email", "actor": "Beth <Beth@Dimagi.com>", "strict": True,
-        "turn_mode": "auto",
-        "runners": [{"runner_id": str(fleet["cloud"].id), "enabled": True}],
-    }])
+def test_the_api_normalizes_the_person_and_round_trips_a_mode(fleet):
+    res = _put(fleet["client"], source="email", actor="Beth <Beth@Dimagi.com>", turn_mode="auto")
     assert res.status_code == 200, res.content
-    [row] = fleet["client"].get("/api/agents/eva/runner-rules").json()
-    assert (row["actor"], row["turn_mode"]) == (BETH, "auto")
+    [row] = fleet["client"].get("/api/agents/eva/turn-mode-rules").json()
+    assert (row["source"], row["actor"], row["turn_mode"], row["set_by_email"]) == (
+        "email", BETH, "auto", "jj@dimagi.com")
 
 
-def test_the_rules_api_defaults_to_no_mode(fleet):
-    _put(fleet["client"], [{
-        "source": "email", "runners": [{"runner_id": str(fleet["cloud"].id), "enabled": True}],
-    }])
-    [row] = fleet["client"].get("/api/agents/eva/runner-rules").json()
-    assert row["turn_mode"] == ""
+def test_the_api_replaces_one_rule_and_removes_it(fleet):
+    c = fleet["client"]
+    _put(c, actor=BETH, turn_mode="auto")
+    _put(c, source="api", turn_mode="manual")
+    _put(c, actor=BETH, turn_mode="manual")
+    assert sorted((r["source"], r["actor"], r["turn_mode"])
+                  for r in c.get("/api/agents/eva/turn-mode-rules").json()) == [
+        ("", BETH, "manual"), ("api", "", "manual")]
+    assert c.delete(f"/api/agents/eva/turn-mode-rules?actor={BETH}").status_code == 204
+    assert c.delete(f"/api/agents/eva/turn-mode-rules?actor={BETH}").status_code == 204  # idempotent
+    assert [r["source"] for r in c.get("/api/agents/eva/turn-mode-rules").json()] == ["api"]
 
 
-def test_the_rules_api_rejects_an_unknown_mode(fleet):
-    res = _put(fleet["client"], [{
-        "source": "email", "turn_mode": "yolo",
-        "runners": [{"runner_id": str(fleet["cloud"].id), "enabled": True}],
-    }])
-    assert res.status_code == 422
+def test_the_api_rejects_an_unknown_mode_or_channel(fleet):
+    assert _put(fleet["client"], source="email", turn_mode="yolo").status_code == 422
+    assert _put(fleet["client"], source="fax", turn_mode="manual").status_code == 422
 
+
+def test_setting_a_mode_leaves_routing_alone(fleet):
+    _route(fleet["agent"], fleet["cloud"], actor=BETH)
+    before = list(RunnerAssignment.objects.filter(agent=fleet["agent"]).values_list("source", "actor", "runner_id"))
+    _put(fleet["client"], actor=BETH, turn_mode="auto")
+    after = list(RunnerAssignment.objects.filter(agent=fleet["agent"]).values_list("source", "actor", "runner_id"))
+    assert before == after

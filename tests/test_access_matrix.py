@@ -418,41 +418,64 @@ def _rules(c, rules):
                  content_type="application/json")
 
 
-def _rule(box, mode, source="email", actor=""):
-    return {"source": source, "actor": actor, "strict": False, "turn_mode": mode,
+def _rule(box, source="email", actor=""):
+    return {"source": source, "actor": actor, "strict": False,
             "runners": [{"runner_id": str(box.id), "enabled": True}]}
 
 
+def _mode(c, mode, source="", actor=""):
+    return c.put("/api/agents/agent/turn-mode-rules",
+                 {"source": source, "actor": actor, "turn_mode": mode}, content_type="application/json")
+
+
 @pytest.mark.parametrize("role", ["owner", "admin", "ws_owner"])
-def test_an_agent_admin_may_set_an_auto_rule(w, role):
-    box = _runner(w[role], f"{role}-box")          # their own box: they may hold the agent
+def test_an_agent_admin_may_set_an_auto_rule_without_any_runner(w, role):
+    """Turn mode is about the agent, not a box: an admin of the agent who
+    administers no runner at all sets auto for a channel and for one person."""
     c = Client()
     c.force_login(w[role])
-    assert _rules(c, [_rule(box, "manual")]).status_code == 200
-    assert _rules(c, [_rule(box, "auto")]).status_code == 200
-    route = c.put("/api/agents/agent/actor-routes/beth@dimagi.com",
-                  {"runners": [{"runner_id": str(box.id), "enabled": True}], "turn_mode": "auto"},
-                  content_type="application/json")
-    assert route.status_code == 200, route.content
+    assert not Runner.objects.exists()
+    assert _mode(c, "auto", source="email").status_code == 200
+    r = _mode(c, "auto", source="api", actor="gshub-integration@dimagi.com")
+    assert r.status_code == 200, r.content
+    assert {(x["source"], x["actor"], x["turn_mode"]) for x in r.json()} == {
+        ("email", "", "auto"), ("api", "gshub-integration@dimagi.com", "auto")}
 
 
 @pytest.mark.parametrize("role", ["ws_admin", "editor"])
-def test_an_editor_may_route_but_not_set_auto(w, role):
-    """The routing bypass, closed: a rule's `auto` ran every matching turn auto,
-    around the dispatch gate that keeps `auto` from a non-admin."""
+def test_an_editor_may_route_and_set_manual_but_not_auto(w, role):
+    """`auto` lets the agent act unreviewed, so turning it on is for the agent's
+    admins; making it more careful is open to anyone who may work the agent."""
     box = _runner(w["owner"], "owners-box")         # may hold the agent
     RunnerAdmin.objects.create(runner=box, user=w[role])
     c = Client()
     c.force_login(w[role])
-    r = _rules(c, [_rule(box, "auto")])
-    assert r.status_code == 403 and "turn_mode=auto" in r.json()["detail"], r.content
-    path = "/api/agents/agent/actor-routes/beth@dimagi.com"
-    runners = [{"runner_id": str(box.id), "enabled": True}]
-    r = c.put(path, {"runners": runners, "turn_mode": "auto"}, content_type="application/json")
-    assert r.status_code == 403 and "turn_mode=auto" in r.json()["detail"], r.content
-    for mode in ("manual", ""):
-        r = c.put(path, {"runners": runners, "turn_mode": mode}, content_type="application/json")
-        assert r.status_code == 200, r.content
+    assert _rules(c, [_rule(box)]).status_code == 200
+    r = _mode(c, "auto", source="email")
+    assert r.status_code == 403 and "owner or admins" in r.json()["detail"], r.content
+    assert _mode(c, "auto", actor="beth@dimagi.com").status_code == 403
+    assert _mode(c, "manual", actor="beth@dimagi.com").status_code == 200
+    # Removing a manual rule could let work run auto: also for admins.
+    gone = c.delete("/api/agents/agent/turn-mode-rules?actor=beth@dimagi.com")
+    assert gone.status_code == 403, gone.content
+
+
+def test_an_editor_may_remove_an_auto_rule_and_keep_an_admins_auto(w):
+    admin, ed = Client(), Client()
+    admin.force_login(w["admin"])
+    ed.force_login(w["editor"])
+    assert _mode(admin, "auto", source="email").status_code == 200
+    # Re-saving an auto an admin already set grants nothing new.
+    assert _mode(ed, "auto", source="email").status_code == 200
+    assert ed.delete("/api/agents/agent/turn-mode-rules?source=email").status_code == 204
+
+
+def test_a_turn_mode_rule_must_name_a_channel_or_a_person(w):
+    c = Client()
+    c.force_login(w["owner"])
+    assert _mode(c, "manual").status_code == 422
+    assert _mode(c, "manual", actor="not-an-address").status_code == 422
+    assert _mode(c, "manual", source="canopy_scheduler", actor="beth@dimagi.com").status_code == 422
 
 
 def test_the_agents_own_switch_is_the_last_rung(w):

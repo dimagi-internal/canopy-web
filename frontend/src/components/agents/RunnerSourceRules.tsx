@@ -1,6 +1,6 @@
-import { type AgentRunnerRuleOut, type RoutableSource, type RuleTurnMode } from '@/api/agents'
+import { type AgentRunnerRuleOut, type RoutableSource } from '@/api/agents'
 
-export type { AgentRunnerRuleOut, RuleTurnMode }
+export type { AgentRunnerRuleOut }
 
 // THE RULE MODEL behind the routing table (AgentRouting.tsx): the per-(source,
 // actor) rows that sit above an agent's DEFAULT runner order. Pure transforms
@@ -15,13 +15,10 @@ export type { AgentRunnerRuleOut, RuleTurnMode }
 // agent, cloud).
 //
 // `actor: ''` means "any actor" — bit-for-bit the pre-actor source rule — so an
-// existing rule is simply a rule of length one with an empty actor, and renders
-// and edits exactly as it did.
+// existing rule is simply a rule of length one with an empty actor.
 //
-// A rule also carries a MODE: '' says nothing and the row below
-// decides; 'manual' / 'auto' override the agent's own turn mode for this work.
-// An 'auto' naming a person applies only to a VERIFIED message from them — the
-// server enforces that (apps/harness/turn_mode.py); the table says it.
+// Routing only. Whether the work then runs manual or auto is a turn-mode rule
+// (AgentTurnModeRules.tsx), which names no runner.
 
 // Ordered as the picker offers them: the sources with real producers first.
 // `api` is last because it is the catch-all, and `slack` is reserved for a
@@ -56,7 +53,6 @@ export type RuleRow = {
   actor: string
   runnerIds: string[]
   strict: boolean
-  turnMode: RuleTurnMode
 }
 
 // A rule's identity is the PAIR. Keying on source alone is what the pre-actor
@@ -70,7 +66,6 @@ export type GroupedRule = {
   source: string
   actor: string
   strict: boolean
-  turnMode: RuleTurnMode
   runners: AgentRunnerRuleOut[]
   queuedCount: number
   // A STRICT rule with no online runner left. Not "its first runner is offline":
@@ -98,7 +93,6 @@ export function groupRules(rules: readonly AgentRunnerRuleOut[]): GroupedRule[] 
       source: first.source,
       actor: first.actor ?? '',
       strict: first.strict,
-      turnMode: asRuleMode(first.turn_mode),
       runners,
       queuedCount: first.queued_count ?? 0,
       parked: first.strict && !runners.some((r) => r.online),
@@ -120,29 +114,7 @@ export function toRows(rules: readonly AgentRunnerRuleOut[]): RuleRow[] {
     actor: g.actor,
     runnerIds: g.runners.map((r) => r.runner_id),
     strict: g.strict,
-    turnMode: g.turnMode,
   }))
-}
-
-// The response carries a plain string (output schemas serialize what the DB
-// holds); anything unrecognised reads as "says nothing", which is what the server
-// does with it too.
-export function asRuleMode(v: string | null | undefined): RuleTurnMode {
-  return v === 'manual' || v === 'auto' ? v : ''
-}
-
-// What a rule whose mode is '' actually runs in: the next matching row down. A
-// named-sender rule defers to its source's anyone-rule, and that to the agent.
-export function inheritedMode(
-  rule: { source: string; actor: string },
-  rules: readonly { source: string; actor: string; turnMode: RuleTurnMode }[],
-  agentMode: 'manual' | 'auto',
-): 'manual' | 'auto' {
-  if (rule.actor) {
-    const anyone = rules.find((r) => r.source === rule.source && r.actor === '')
-    if (anyone?.turnMode) return anyone.turnMode
-  }
-  return agentMode
 }
 
 // Pure list transforms, extracted so they unit-test without a React renderer
@@ -158,17 +130,11 @@ export function nextRulesForAdd(
   rules: readonly RuleRow[],
   source: string,
   runnerId: string,
-  { actor = '', turnMode = '' }: { actor?: string; turnMode?: RuleTurnMode } = {},
+  { actor = '' }: { actor?: string } = {},
 ): RuleRow[] {
   // strict=false by default: a new rule prefers a box without parking the queue
   // when that box is down. Opting into "wait" should be a deliberate click.
-  return [...rules, { source, actor, runnerIds: [runnerId], strict: false, turnMode }]
-}
-
-export function nextRulesForMode(
-  rules: readonly RuleRow[], key: string, turnMode: RuleTurnMode,
-): RuleRow[] {
-  return mapRule(rules, key, (r) => ({ ...r, turnMode }))
+  return [...rules, { source, actor, runnerIds: [runnerId], strict: false }]
 }
 
 // Whether (source, actor) is already a rule — the add form's duplicate check.
@@ -242,25 +208,16 @@ export type MergedRule = {
   rules: GroupedRule[]
   actor: string
   strict: boolean
-  turnMode: RuleTurnMode
   runners: AgentRunnerRuleOut[]
   queuedCount: number
   parked: boolean
-  /** What a '' mode falls to — part of the merge key, so it is the same for all. */
-  inherited: 'manual' | 'auto'
 }
 
-export function mergeRules(
-  grouped: readonly GroupedRule[],
-  agentMode: 'manual' | 'auto',
-): MergedRule[] {
+export function mergeRules(grouped: readonly GroupedRule[]): MergedRule[] {
   const byKey = new Map<string, MergedRule>()
   const order: MergedRule[] = []
   for (const g of grouped) {
-    const inherited = inheritedMode(g, grouped, agentMode)
-    const k = [
-      g.actor.toLowerCase(), g.strict, g.turnMode, inherited, g.runners.map((r) => r.runner_id).join(','),
-    ].join('\u0000')
+    const k = [g.actor.toLowerCase(), g.strict, g.runners.map((r) => r.runner_id).join(',')].join('\u0000')
     const m = byKey.get(k)
     if (m) {
       m.keys.push(ruleKey(g))
@@ -275,11 +232,9 @@ export function mergeRules(
       rules: [g],
       actor: g.actor,
       strict: g.strict,
-      turnMode: g.turnMode,
       runners: g.runners,
       queuedCount: g.queuedCount,
       parked: g.parked,
-      inherited,
     }
     byKey.set(k, fresh)
     order.push(fresh)

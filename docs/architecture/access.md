@@ -243,9 +243,11 @@ agent admin, and so does a `write` asker's whose every write line is `manual_onl
 person). The agent is told which in its caller context (the canopy plugin's caller-context hook). `auto`:
 the agent acts and reports. Decided at claim, top rung first, in `apps/harness/turn_mode.py` (its module docstring is
 the ladder), and carried on the Turn Context's `review`: a dispatch's requested mode (`auto` only from an agent
-admin), the `manual_only` cap of an editor line, an actor routing rule (an `auto` naming a person needs a verified
-message), a source routing rule, then the agent's own switch (`Agent.turn_mode`). Setting `auto` on any rung is for the
-agent's owner and agent admins.
+admin), the `manual_only` cap of an editor line, then the turn-mode rules (`TurnModeRule`: a person on this channel, a
+person on any channel, this channel for anyone; an `auto` naming a person needs a verified message), then the agent's own
+switch (`Agent.turn_mode`). Turn-mode rules name no runner: which box runs the work is routing, a separate decision
+gated on the box. Anything that can turn `auto` on (setting it on any rung, removing a `manual` rule) is for the agent's
+owner and agent admins.
 
 `auto` is a posture for outbound actions, not a claim that nobody is looking: a turn the person typed into the
 canopy-web chat while present in it is **attended** (`act_as.attended_by`), and for act-as-you that is the one place

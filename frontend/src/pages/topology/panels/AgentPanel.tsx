@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { type TurnMode } from '@/api/agents'
 import { AgentRouting } from '@/components/agents/AgentRouting'
+import { AgentTurnModeRules } from '@/components/agents/AgentTurnModeRules'
 import { type AgentEdgeOut } from '@/api/workspaces'
 import { edgeKey, explainEdge } from '@/pages/agentTopology'
 import { type FleetMap, type MapAgent } from '@/pages/topology/topologyMap'
@@ -67,6 +68,16 @@ export function AgentPanel({
           key={agent.slug}
           agentSlug={agent.slug}
           agentName={agent.name}
+          workspace={agent.workspace}
+          onSaved={onRoutingSaved}
+        />
+      </section>
+
+      <section className="flex flex-col gap-1.5" data-testid="map-agent-turn-mode">
+        <PanelHeading>Whether it may act without approval</PanelHeading>
+        <AgentTurnModeRules
+          key={agent.slug}
+          agentSlug={agent.slug}
           workspace={agent.workspace}
           initialTurnMode={(agent.turnMode || 'manual') as TurnMode}
           onSaved={onRoutingSaved}

@@ -6405,7 +6405,8 @@ export interface paths {
          *     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
          *     A human decision made from the board; the agent-repo upsert (POST /) cannot
          *     touch this field. `manual` from any editor; `auto` from the agent's owner or
-         *     an admin — it is the last rung of the routing ladder ("Everything else").
+         *     an admin. It is the last rung: per-channel and per-person turn-mode rules
+         *     (`/turn-mode-rules`) come first.
          */
         readonly patch: operations["set_turn_mode"];
         readonly trace?: never;
@@ -6699,8 +6700,11 @@ export interface paths {
         };
         /**
          * List the agent's per-source routing rules
-         * @description The per-source overrides on top of the default ordered list. One rule per source, max — the priority runner, and whether it is
-         *     the only one allowed to take that source's work.
+         * @description The rules layered on the default order, one row per (source, person, runner):
+         *     a rule's runners in preference order, and whether ONLY they may take its work
+         *     (`strict`). A rule with `actor` routes one person's work on that source; one
+         *     without routes anyone's. Routing only: whether that work runs manual or auto is
+         *     `GET /turn-mode-rules`.
          */
         readonly get: operations["list_agent_runner_rules"];
         /**
@@ -6789,9 +6793,11 @@ export interface paths {
          *     `actor` is the person's email. With `strict` (the default) only the named
          *     runners may take their work — if those are offline it waits; with
          *     `strict=false` it falls back to the agent's usual runners after a minute.
-         *     You may name only runners you administer (you own it, or its owner
-         *     granted you admin) — this decides where work runs, so it is gated on the box,
-         *     not just the agent. Remove a route with DELETE on the same path.
+         *     A runner the route ADDS must be one you administer (you own it, or its owner
+         *     granted you admin): this decides where work runs, so it is gated on the box.
+         *     Runners it already names are kept as they are. Routing only — whether this
+         *     person's work runs manual or auto is `PUT /turn-mode-rules`, which names no
+         *     runner. Remove a route with DELETE on the same path.
          *     An `actor` that is not an email address is a 422.
          */
         readonly put: operations["set_agent_actor_route"];
@@ -6803,6 +6809,49 @@ export interface paths {
          *     Idempotent — removing a person with no route is a 204.
          */
         readonly delete: operations["delete_agent_actor_route"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/turn-mode-rules": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List whose work runs manual or auto
+         * @description The agent's turn-mode rules: each says whether work from one channel
+         *     (`source`), one person (`actor`), or one person on one channel runs `manual`
+         *     or `auto`. A turn takes the most specific rule that matches (person and
+         *     channel, then person, then channel), else the agent's own switch. Names no
+         *     runner: which box runs the work is `GET /runner-rules`.
+         */
+        readonly get: operations["list_turn_mode_rules"];
+        /**
+         * Set whether one channel's or one person's work runs manual or auto
+         * @description Set ONE rule, keyed by (`source`, `actor`), replacing only that rule. Give
+         *     a channel (`source`, e.g. `api` or `email`), a person (`actor`, their email),
+         *     or both. Needs no runner and no rights over one.
+         *
+         *     `manual` from anyone who may work the agent; `auto` from its owner or admins
+         *     (unless the rule is already `auto`). A person's `auto` applies only to a
+         *     VERIFIED message from them; otherwise the turn runs manual and says why.
+         *     A source no turn can come from, an actor that is not an email address, a
+         *     person's rule on a channel no person is behind, or a rule naming neither is 422.
+         */
+        readonly put: operations["set_turn_mode_rule"];
+        readonly post?: never;
+        /**
+         * Remove one turn-mode rule
+         * @description Remove the rule for (`source`, `actor`); that work then takes the next rule
+         *     down, or the agent's own switch. Removing an `auto` rule is open to anyone who
+         *     may work the agent; removing a `manual` one may let work run auto, so it is
+         *     for the agent's owner or admins. Idempotent: no such rule is a 204.
+         */
+        readonly delete: operations["delete_turn_mode_rule"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -33263,8 +33312,8 @@ export interface components {
         };
         /**
          * AgentRunnerRuleOut
-         * @description One per-source routing rule: the priority runner for a source, and whether
-         *     it is the ONLY runner allowed to take that source's work.
+         * @description One runner of one routing rule: a rule is the rows sharing (source, actor),
+         *     ranked by `rank`, and `strict` says whether ONLY its runners may take the work.
          *
          *     `source` stays a plain `str` here (not the literal) by the same rule the rest
          *     of the API follows — an output schema serializes what the DB already holds, and
@@ -33309,11 +33358,6 @@ export interface components {
              * @default 0
              */
             readonly queued_count: number;
-            /**
-             * Turn Mode
-             * @default
-             */
-            readonly turn_mode: string;
         };
         /**
          * AgentRunnerRuleIn
@@ -33328,11 +33372,7 @@ export interface components {
          *     rank order. A rule names several runners because the operator's own boxes are
          *     two macOS accounts alternated as each runs out of tokens: "either of mine,
          *     never cloud" cannot be said with one runner. Per-runner
-         *     `enabled` lives on the row, which is why this schema has no rule-level
-         *     `enabled` — a change from the pre-actor shape, safe because canopy-web's own
-         *     frontend is the only caller and no rules exist in production yet.
-         *
-         *     `strict` is rule-level and written to every row.
+         *     `enabled` lives on the row; `strict` is rule-level and written to every row.
          */
         readonly AgentRunnerRuleIn: {
             /**
@@ -33352,12 +33392,6 @@ export interface components {
              * @default false
              */
             readonly strict: boolean;
-            /**
-             * Turn Mode
-             * @default
-             * @enum {string}
-             */
-            readonly turn_mode: "" | "manual" | "auto";
         };
         /**
          * AgentRunnerRulesIn
@@ -33372,8 +33406,8 @@ export interface components {
         /**
          * AgentRunnerRuleBodyIn
          * @description ONE rule, addressed by the URL (source, and `?actor=` for one person's):
-         *     the runners in preference order, whether only they may take the work, and
-         *     the turn mode. See PUT /agents/{slug}/runner-rules/{source}.
+         *     the runners in preference order and whether only they may take the work.
+         *     See PUT /agents/{slug}/runner-rules/{source}.
          */
         readonly AgentRunnerRuleBodyIn: {
             /** Runners */
@@ -33383,12 +33417,6 @@ export interface components {
              * @default false
              */
             readonly strict: boolean;
-            /**
-             * Turn Mode
-             * @default
-             * @enum {string}
-             */
-            readonly turn_mode: "" | "manual" | "auto";
         };
         /**
          * AgentActorRouteOut
@@ -33407,11 +33435,6 @@ export interface components {
             readonly strict: boolean;
             /** Sources */
             readonly sources: readonly string[];
-            /**
-             * Turn Mode
-             * @default
-             */
-            readonly turn_mode: string;
             /**
              * Queued Count
              * @default 0
@@ -33455,12 +33478,55 @@ export interface components {
             readonly strict: boolean;
             /** Sources */
             readonly sources?: readonly ("ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api" | "site_message")[] | null;
+        };
+        /**
+         * TurnModeRuleOut
+         * @description Whether one channel's work, one person's, or one person's on one channel
+         *     runs `manual` or `auto` for this agent. Names no runner: which box runs the
+         *     work is routing (`GET /runner-rules`), a separate decision.
+         *
+         *     `source` "" = every channel; `actor` "" = anyone (never both). Plain `str`,
+         *     as on every output schema: it serializes what the DB holds.
+         */
+        readonly TurnModeRuleOut: {
+            /** Source */
+            readonly source: string;
+            /** Actor */
+            readonly actor: string;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /**
+             * Set By Email
+             * @default
+             */
+            readonly set_by_email: string;
+            /** Updated At */
+            readonly updated_at?: string | null;
+        };
+        /**
+         * TurnModeRuleIn
+         * @description Set ONE turn-mode rule, keyed by (`source`, `actor`); replaces that rule only.
+         *
+         *     Give a `source`, an `actor` (a person's email), or both. `auto` that names a
+         *     person applies only to a VERIFIED message from them; otherwise the turn runs
+         *     manual and its basis says so (apps/harness/turn_mode.py).
+         */
+        readonly TurnModeRuleIn: {
+            /**
+             * Source
+             * @default
+             */
+            readonly source: ("ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api" | "site_message") | "";
+            /**
+             * Actor
+             * @default
+             */
+            readonly actor: string;
             /**
              * Turn Mode
-             * @default
              * @enum {string}
              */
-            readonly turn_mode: "" | "manual" | "auto";
+            readonly turn_mode: "manual" | "auto";
         };
         /**
          * AccessImplicitOut
@@ -42527,8 +42593,6 @@ export interface components {
             readonly actor: string;
             /** Strict */
             readonly strict: boolean;
-            /** Turn Mode */
-            readonly turn_mode: string;
             /** Can Claim */
             readonly can_claim: boolean;
             /**
@@ -66394,6 +66458,95 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly list_turn_mode_rules: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["TurnModeRuleOut"][];
+                };
+            };
+        };
+    };
+    readonly set_turn_mode_rule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TurnModeRuleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["TurnModeRuleOut"][];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly delete_turn_mode_rule: {
+        readonly parameters: {
+            readonly query?: {
+                readonly source?: string;
+                readonly actor?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
             };
         };
     };

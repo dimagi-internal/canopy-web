@@ -23,7 +23,6 @@ def _row(r) -> dict:
         "rank": r.rank,
         "enabled": r.enabled,
         "strict": getattr(r, "strict", False),
-        "turn_mode": getattr(r, "turn_mode", ""),
     }
 
 

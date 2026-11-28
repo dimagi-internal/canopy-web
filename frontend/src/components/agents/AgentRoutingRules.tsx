@@ -1,8 +1,5 @@
-// The rows of the routing table: a rule's row, the add-a-rule row, and the cells and mode select they share. The table and its state are `AgentRouting`.
+// The rows of the routing table: a rule's row and the cells it shares with the add-a-rule row. The table and its state are `AgentRouting`.
 import { type ReactNode } from 'react'
-import {
-  type RuleTurnMode,
-  } from '@/api/agents'
 import { Segmented } from 'canopy-ui/ui'
 import { type RunnerOut } from '@/api/harness'
 import { SensitiveDataBadge, hasSensitiveData } from '@/components/agents/SensitiveDataBadge'
@@ -10,12 +7,10 @@ import {
   ACTORLESS_SOURCES,
   ROUTABLE_SOURCES,
   SOURCE_LABEL,
-  asRuleMode,
   forEachKey,
   hasRule,
   nextRulesForActor,
   nextRulesForCopy,
-  nextRulesForMode,
   nextRulesForRemove,
   nextRulesForRunnerAdd,
   nextRulesForRunnerMove,
@@ -28,9 +23,7 @@ import {
 } from '@/components/agents/RunnerSourceRules'
 
 export const GRID =
-  '@3xl:grid @3xl:grid-cols-[5.5rem_minmax(0,10rem)_minmax(0,1fr)_auto_8.5rem_1rem] @3xl:items-center @3xl:gap-x-3'
-
-export const MODE_LABEL: Record<'manual' | 'auto', string> = { manual: 'Manual', auto: 'Auto' }
+  '@3xl:grid @3xl:grid-cols-[5.5rem_minmax(0,10rem)_minmax(0,1fr)_auto_1rem] @3xl:items-center @3xl:gap-x-3'
 
 export function Cell({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
   // The label is for the stacked (narrow) layout only; the header row names the
@@ -42,32 +35,6 @@ export function Cell({ label, children, className = '' }: { label: string; child
       </span>
       <div className="min-w-0 flex-1">{children}</div>
     </div>
-  )
-}
-
-// A rule's mode as a select, because it has three states and the third one
-// ("inherit") has to say WHAT it inherits — a segmented control cannot hold that.
-export function RuleModeSelect({
-  value, inherited, onChange, label,
-}: {
-  value: RuleTurnMode
-  inherited: 'manual' | 'auto'
-  onChange: (v: RuleTurnMode) => void
-  label: string
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(asRuleMode(e.target.value))}
-      aria-label={label}
-      className={`w-full rounded border border-input bg-input px-1.5 py-0.5 text-[11px] ${
-        value === 'auto' ? 'font-medium text-primary' : value ? 'text-foreground' : 'text-muted-foreground'
-      }`}
-    >
-      <option value="">As below ({MODE_LABEL[inherited]})</option>
-      <option value="manual">Manual</option>
-      <option value="auto">Auto</option>
-    </select>
   )
 }
 
@@ -245,15 +212,6 @@ export function RuleRowView({
               { value: 'wait', label: 'Wait' },
             ]}
             onChange={() => each((rows, key) => nextRulesForStrict(rows, key))}
-          />
-        </Cell>
-
-        <Cell label="Mode">
-          <RuleModeSelect
-            value={m.turnMode}
-            inherited={m.inherited}
-            label={`Mode for the ${source} rule`}
-            onChange={(mode) => each((rows, key) => nextRulesForMode(rows, key, mode))}
           />
         </Cell>
 
