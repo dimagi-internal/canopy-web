@@ -17,7 +17,13 @@ every self-refresh, which turns may be running beside:
     how a prune deletes the plugin a turn is about to load.
   * npm: `npm cache clean --force` once ~/.npm/_cacache passes NPM_MAX_MB. It is
     a download cache; the installed tools (claude, tsx) live elsewhere.
-  * uv: `uv cache prune`, which removes only entries nothing references.
+  * uv: `uv cache prune`, which removes only entries nothing references — so the
+    cache still grows with every package version ever resolved (7 GB on one box).
+    With --idle (the runner's own disk sweep, which runs only between turns) a
+    cache past UV_MAX_MB is cleared outright with `uv cache clean`: venvs already
+    made keep their files (uv hardlinks or copies them), and the next install
+    downloads again. Bootstrap does not pass --idle — turns may run beside it.
+  * pre-commit: `pre-commit gc`, which removes hook envs no config references.
 
 Stdlib only. Never raises out of main(): a prune that fails must not fail a
 bootstrap.
@@ -34,6 +40,7 @@ import sys
 
 KEEP_NEWEST = 1
 NPM_MAX_MB = 500
+UV_MAX_MB = 2000
 
 
 def _log(msg: str) -> None:
@@ -115,10 +122,34 @@ def prune_npm(home: pathlib.Path, *, max_mb: int, dry_run: bool) -> int:
     return max(0, size - dir_bytes(cache))
 
 
-def prune_uv(*, dry_run: bool) -> None:
-    if dry_run or not shutil.which("uv"):
+def uv_cache_dir(home: pathlib.Path) -> pathlib.Path:
+    env = os.environ.get("UV_CACHE_DIR")
+    return pathlib.Path(env) if env else home / ".cache" / "uv"
+
+
+def prune_uv(home: pathlib.Path | None = None, *, dry_run: bool, idle: bool = False,
+             max_mb: int = UV_MAX_MB) -> int:
+    """Prune always; clear outright past `max_mb`, but only when `idle` (no turn can
+    be installing from it). Returns the bytes a clear freed (0 for a prune)."""
+    if not shutil.which("uv"):
+        return 0
+    cache = uv_cache_dir(home or pathlib.Path.home())
+    size = dir_bytes(cache) if idle and cache.is_dir() else 0
+    if idle and size >= max_mb * 2**20:
+        _log(f"uv cache {size / 2**20:.0f} MB > {max_mb} MB: {'would clean' if dry_run else 'cleaning'}")
+        if dry_run:
+            return size
+        subprocess.run(["uv", "cache", "clean"], capture_output=True, timeout=600)
+        return max(0, size - dir_bytes(cache))
+    if not dry_run:
+        subprocess.run(["uv", "cache", "prune"], capture_output=True, timeout=600)
+    return 0
+
+
+def prune_precommit(*, dry_run: bool) -> None:
+    if dry_run or not shutil.which("pre-commit"):
         return
-    subprocess.run(["uv", "cache", "prune"], capture_output=True, timeout=600)
+    subprocess.run(["pre-commit", "gc"], capture_output=True, timeout=600)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--home", default=str(pathlib.Path.home()))
     ap.add_argument("--keep-newest", type=int, default=KEEP_NEWEST)
     ap.add_argument("--npm-max-mb", type=int, default=NPM_MAX_MB)
+    ap.add_argument("--uv-max-mb", type=int, default=UV_MAX_MB)
+    ap.add_argument("--idle", action="store_true",
+                    help="no turn is running: caches past their cap may be cleared outright")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     home = pathlib.Path(args.home)
@@ -137,9 +171,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 — a prune must never fail bootstrap
             _log(f"a prune step failed ({exc}); continuing")
     try:
-        prune_uv(dry_run=args.dry_run)
+        freed += prune_uv(home=home, dry_run=args.dry_run, idle=args.idle, max_mb=args.uv_max_mb) or 0
     except Exception as exc:  # noqa: BLE001
         _log(f"uv cache prune failed ({exc}); continuing")
+    try:
+        prune_precommit(dry_run=args.dry_run)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"pre-commit gc failed ({exc}); continuing")
     _log(f"freed ~{freed / 2**20:.0f} MB")
     return 0
 

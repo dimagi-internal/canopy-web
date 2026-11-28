@@ -191,7 +191,7 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 | `claude.version` | `claude --version` does not run |
 | `canopy.cli` | the canopy CLI did not run (fail) or is behind the marketplace plugin (warn) — Refresh |
 | `disk` | root volume ≥ 80% (warn) / ≥ 90% (fail) — the runner sweeps scratch and prunes caches on its own at its next idle moment; a fail that stays is not scratch: grow `VolumeSize` (see "Disk") |
-| `scratch` | the disk sweep kept an old dir in `/tmp` or `WORK_DIR/sessions` because it holds work that exists nowhere else (uncommitted, or commits on no remote) — push or discard it; nothing else needs doing (see "Disk") |
+| `scratch` | the disk sweep kept an old dir in `/tmp` or `WORK_DIR` because it holds work that exists nowhere else (uncommitted, or commits on no remote) — push or discard it; nothing else needs doing (see "Disk") |
 | `clones` | an agent's (or project's) clone cannot fetch its origin and is older than `CLONE_STALE_SECONDS` (30 min): new chat sessions are cut from it and run STALE skills/CLAUDE.md. A private repo needs the agent's GitHub delegation (the runner fetches with it in its own git process, never in a confined turn's env) |
 | `github.<slug>` | the agent's owner has lent no GitHub token, or it is expired / cannot open a PR on the agent's repo — the OWNER sets it at the agent's Settings → External accounts → GitHub; checked at boot, so Refresh (or wait for the next bootstrap) to re-check |
 | `env.<slug>` | the agent's `~/.<slug>/.env` could not be resolved from its Canopy vault when a turn was claimed (the CLI's reason in the detail) — turns run on the last good values, which may be stale. Fix the vault; the next claim after `AGENT_ENV_TTL_SECONDS` (300) retries |
@@ -573,7 +573,9 @@ installed — 33 canopy, 24 ace, ~9 GB — plus npm/uv caches). Now:
 - bootstrap step 4b (`prune_caches.py`, every service start and daily self-refresh)
   keeps each plugin's installed version(s) plus the newest one other and deletes
   the rest (nothing at all if `installed_plugins.json` is unreadable), cleans npm's
-  cache past 500 MB, and runs `uv cache prune`;
+  cache past 500 MB, runs `uv cache prune` and `pre-commit gc`. The sweep's own run
+  passes `--idle` (no turn is running), and then a uv cache past 2 GB (`--uv-max-mb`)
+  is cleared outright with `uv cache clean` — prune alone never shrinks it;
 - the heartbeat health carries a **`disk`** check — warn ≥ 80%, fail ≥ 90% — so the
   runner page says so before turns start failing on writes.
 - the runner **sweeps its own scratch** (`cloud_runner.maybe_sweep_disk`, after a
@@ -583,9 +585,21 @@ installed — 33 canopy, 24 ace, ~9 GB — plus npm/uv caches). Now:
   for 72 h (newest mtime anywhere inside), and chat-session worktrees under
   `WORK_DIR/sessions` idle for 7 days (worktree and transcript both; the next turn
   re-makes the worktree at the same path, so `--resume` still finds the conversation).
+  Under the same 7-day rule it also sweeps the checkouts and scratch agents leave in
+  WORK_DIR itself: `WORK_DIR/<name>`, `WORK_DIR/scratch/<name>` and
+  `WORK_DIR/repos/<repo>/<key>` (never `repos/.clones`, `agents`, `attachments`,
+  `retired-clones`). Any of these that stays — kept for its git work, or idle less than
+  a week — loses its **dependency dirs** once idle 48 h (`DEPS_MAX_AGE_HOURS`, idle
+  measured outside them): a `node_modules` beside a `package.json`, a `.venv` beside a
+  `pyproject.toml` / `uv.lock` / `requirements.txt` / `setup.py`; an install remakes them.
+  The parent's mtime is put back, so this does not restart the checkout's idle clock.
+  cloud-ec2-live reached 92% on 2026-11-28 on exactly this: 53 GB of WORK_DIR outside
+  `sessions/`, 27 GB of it dependency dirs.
   It never removes hidden/system entries, the runner's own dirs, or anything holding
   work that exists nowhere else — uncommitted changes, or commits on no remote (a
   worktree judged by its HEAD) — which it keeps and names in the **`scratch`** check.
+  A clone nested inside another repo's tree (`?? hub/` in a session worktree) is
+  judged on its own, not counted as the outer repo's uncommitted change.
   cloud-ec2-2 reached 100% on 2026-10-19 on exactly this scratch (~3.4 GB of week-old
   agent clones in `/tmp`, 2.1 GB of session worktrees). `DISK_SWEEP=0` turns it off.
 - a runner's sweep reaches only its own files, so the **update timer** (`update_runner.sh`,

@@ -954,6 +954,14 @@ def _disk_pct() -> float:
 # fill it, and nothing else removes either. So the
 # runner sweeps them itself, when idle (maybe_sweep_disk) — and keeps, and names,
 # anything holding git work that exists nowhere else.
+#
+# Agents also leave checkouts and scratch inside WORK_DIR itself — WORK_DIR/<name>,
+# WORK_DIR/scratch/<name>, WORK_DIR/repos/<repo>/<key> — and each carries its own
+# installed dependencies (node_modules, .venv: about 1 GB a copy). On one box those
+# held 53 GB of a 145 GB volume, 27 GB of it dependency dirs, none of it ever
+# swept. So those entries are candidates too, under the session rule; and a
+# dependency dir in a checkout idle for DEPS_MAX_AGE is removed even when the
+# checkout itself is kept, since an install rebuilds it.
 
 #: Where turns' ad-hoc scratch lands: agents write `/tmp/<name>` and `mktemp -d`.
 SCRATCH_ROOT = os.environ.get("SCRATCH_ROOT", tempfile.gettempdir())
@@ -962,6 +970,22 @@ SCRATCH_MAX_AGE_SECONDS = float(os.environ.get("SCRATCH_MAX_AGE_HOURS", "72")) *
 #: A chat's worktree is re-made on its next turn, so this only bounds how long an
 #: idle conversation keeps a checkout; its transcript (the conversation) is kept.
 SESSION_DIR_MAX_AGE_SECONDS = float(os.environ.get("SESSION_DIR_MAX_AGE_HOURS", "168")) * 3600
+#: A checkout untouched (outside its dependency dirs) this long loses its
+#: dependency dirs, even when the checkout is kept for its git work.
+DEPS_MAX_AGE_SECONDS = float(os.environ.get("DEPS_MAX_AGE_HOURS", "48")) * 3600
+#: A dependency dir, and the files beside it that show an install made it (so an
+#: install remakes it). A `node_modules` with no package.json beside it is not ours
+#: to judge, and is left.
+_DEP_DIRS = {
+    "node_modules": ("package.json",),
+    ".venv": ("pyproject.toml", "uv.lock", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"),
+}
+#: How deep a checkout is searched for dependency dirs (x/node_modules … x/a/b/c/node_modules).
+_DEP_SEARCH_DEPTH = 4
+#: WORK_DIR entries that are not themselves candidates: the runner's own layout
+#: (sessions, repos, agents, attachments, retired-clones) and scratch/, whose
+#: children are candidates one by one, as repos/<repo>/'s are.
+_WORK_DIR_OWN = frozenset({"sessions", "repos", "agents", "attachments", "retired-clones", "scratch"})
 SWEEP_INTERVAL_SECONDS = 6 * 3600
 #: How soon after the last sweep a disk at warn sweeps again (and prunes caches).
 SWEEP_PRESSURE_SECONDS = 1800
@@ -975,10 +999,11 @@ _GIT_SEARCH_DEPTH = 2
 _SWEEP_STATE = {"at": 0.0, "thread": None}
 
 
-def _touched_since(path: pathlib.Path, cutoff: float) -> bool:
+def _touched_since(path: pathlib.Path, cutoff: float, skip: frozenset[str] = frozenset()) -> bool:
     """Is the newest mtime anywhere under `path` at or after `cutoff`? A dir's own
     mtime moves only when an entry is added or removed, so the whole tree is
-    asked; the walk stops at the first fresh entry."""
+    asked; the walk stops at the first fresh entry. Directories named in `skip`
+    are not entered (nor is their own mtime asked)."""
     try:
         if os.lstat(path).st_mtime >= cutoff:
             return True
@@ -987,6 +1012,8 @@ def _touched_since(path: pathlib.Path, cutoff: float) -> bool:
     if not path.is_dir() or path.is_symlink():
         return False
     for root, dirs, files in os.walk(path, onerror=lambda e: None):
+        if skip:
+            dirs[:] = [d for d in dirs if d not in skip]
         for name in dirs + files:
             try:
                 if os.lstat(os.path.join(root, name)).st_mtime >= cutoff:
@@ -997,7 +1024,9 @@ def _touched_since(path: pathlib.Path, cutoff: float) -> bool:
 
 
 def _git_repos_under(path: pathlib.Path, depth: int = _GIT_SEARCH_DEPTH) -> list[pathlib.Path]:
-    """`path` and every git repo or worktree at most `depth` levels below it."""
+    """`path` and every git repo or worktree at most `depth` levels below it —
+    including a clone nested inside another repo's tree (an agent's `hub/` inside
+    its session worktree), which is judged on its own."""
     found: list[pathlib.Path] = []
     level = [path]
     for d in range(depth + 1):
@@ -1005,11 +1034,10 @@ def _git_repos_under(path: pathlib.Path, depth: int = _GIT_SEARCH_DEPTH) -> list
         for p in level:
             if (p / ".git").exists():
                 found.append(p)
-                continue  # a repo's own subdirectories are its contents
             if d < depth:
                 try:
                     nxt.extend(c for c in p.iterdir() if c.is_dir() and not c.is_symlink()
-                               and c.name != "node_modules")
+                               and c.name != ".git" and c.name not in _DEP_DIRS)
                 except OSError:
                     continue
         level = nxt
@@ -1022,11 +1050,13 @@ def _unsaved_git_work(path: pathlib.Path) -> str:
     shares refs with its clone, whose other branches are not its work."""
     if not path.is_dir() or path.is_symlink():
         return ""
-    for repo in _git_repos_under(path):
+    repos = _git_repos_under(path)
+    roots = {r.resolve() for r in repos}
+    for repo in repos:
         status = _git_out("-C", str(repo), "status", "--porcelain")
         if status is None:
             return f"{repo}: git cannot read it"
-        if status.strip():
+        if _own_changes(repo, status, roots):
             return f"{repo}: uncommitted changes"
         tips = ["HEAD"]
         if not (repo / ".git").is_file():
@@ -1042,6 +1072,25 @@ def _unsaved_git_work(path: pathlib.Path) -> str:
                 subject = (_git_out("-C", str(repo), "log", "-1", "--format=%s", sha.strip()) or "").strip()
                 return f"{repo}: commits on no remote ({subject[:120]})"
     return ""
+
+
+def _own_changes(repo: pathlib.Path, status: str, roots: set[pathlib.Path]) -> bool:
+    """Does `git status --porcelain` show changes of `repo`'s own? An untracked entry
+    that is exactly another repo found under the swept dir (`?? hub/`) is that repo's
+    business — judged on its own — not this one's uncommitted work. Anything else,
+    including an untracked dir that merely CONTAINS a repo, counts."""
+    me = repo.resolve()
+    for line in status.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("?? "):
+            entry = line[3:].rstrip("/")
+            with contextlib.suppress(OSError, ValueError):
+                target = (repo / entry).resolve()
+                if target != me and target in roots:
+                    continue
+        return True
+    return False
 
 
 _UPSTREAM_SCAN = 3000  # commits on the default branch searched for a squash of a tip
@@ -1165,7 +1214,114 @@ def _scratch_candidates(now: float) -> list[tuple[pathlib.Path, float]]:
         for entry in sorted(sessions.iterdir()):
             if entry.is_dir() and not entry.is_symlink() and not entry.name.startswith("."):
                 out.append((entry, SESSION_DIR_MAX_AGE_SECONDS))
+    for entry in _work_dir_entries(protected):
+        out.append((entry, SESSION_DIR_MAX_AGE_SECONDS))
     return out
+
+
+def _work_dir_parents() -> list[pathlib.Path]:
+    """The dirs whose children are WORK_DIR candidates: WORK_DIR itself (less its
+    own layout), WORK_DIR/scratch, and each WORK_DIR/repos/<repo> (never .clones)."""
+    work = pathlib.Path(WORK_DIR)
+    parents = [work, work / "scratch"]
+    with contextlib.suppress(OSError):
+        parents += [d for d in sorted((work / "repos").iterdir())
+                    if d.is_dir() and not d.is_symlink() and not d.name.startswith(".")]
+    return parents
+
+
+def _work_dir_entries(protected: set[pathlib.Path]) -> list[pathlib.Path]:
+    """Checkouts and scratch agents leave inside WORK_DIR, outside sessions/."""
+    work = pathlib.Path(WORK_DIR)
+    out: list[pathlib.Path] = []
+    for parent in _work_dir_parents():
+        try:
+            entries = sorted(parent.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith(".") or entry.is_symlink():
+                continue
+            if parent == work and entry.name in _WORK_DIR_OWN:
+                continue
+            if not (entry.is_dir() or entry.is_file()):
+                continue
+            try:
+                resolved = entry.resolve()
+            except OSError:
+                continue
+            if any(resolved == p or p.is_relative_to(resolved) for p in protected):
+                continue
+            out.append(entry)
+    return out
+
+
+def _dependency_dirs(path: pathlib.Path, depth: int = _DEP_SEARCH_DEPTH) -> list[pathlib.Path]:
+    """Every dependency dir at most `depth` levels under `path` with an install's
+    manifest beside it. Not searched: .git, and inside a dependency dir."""
+    found: list[pathlib.Path] = []
+    level = [path]
+    for _ in range(depth + 1):
+        nxt = []
+        for p in level:
+            try:
+                children = [c for c in p.iterdir() if c.is_dir() and not c.is_symlink()]
+            except OSError:
+                continue
+            for c in children:
+                if c.name in _DEP_DIRS:
+                    if any((p / m).exists() for m in _DEP_DIRS[c.name]):
+                        found.append(c)
+                elif c.name != ".git":
+                    nxt.append(c)
+        level = nxt
+    return found
+
+
+def _dep_dir_fresh(dep: pathlib.Path, cutoff: float) -> bool:
+    """Was this dependency dir (or anything directly in it) changed since `cutoff`?
+    An install or a run that writes its cache moves these; a full walk of a
+    node_modules is not worth it."""
+    try:
+        if os.lstat(dep).st_mtime >= cutoff:
+            return True
+        with os.scandir(dep) as it:
+            return any(e.stat(follow_symlinks=False).st_mtime >= cutoff for e in it)
+    except OSError:
+        return True  # cannot tell: treat as in use
+
+
+def _remove_dependency_dirs(path: pathlib.Path, now: float) -> tuple[int, list[str]]:
+    """Remove the dependency dirs of a checkout idle for DEPS_MAX_AGE. The parent's
+    mtime is put back after: removing an entry moves it, and a moved mtime would
+    restart the checkout's own idle clock."""
+    cutoff = now - DEPS_MAX_AGE_SECONDS
+    if not path.is_dir() or path.is_symlink():
+        return 0, []
+    # .git is skipped: this sweep's own `git status` has just refreshed the index.
+    if _touched_since(path, cutoff, skip=frozenset(_DEP_DIRS) | {"__pycache__", ".git"}):
+        return 0, []
+    if _session_transcript_fresh(path, cutoff):
+        return 0, []
+    freed, removed = 0, []
+    for dep in _dependency_dirs(path):
+        if _in_flight_ids():
+            break
+        if _dep_dir_fresh(dep, cutoff):
+            continue
+        parent = dep.parent
+        try:
+            st = os.lstat(parent)
+        except OSError:
+            continue
+        size = _entry_bytes(dep)
+        if _reap(dep):
+            with contextlib.suppress(OSError):
+                os.utime(parent, ns=(st.st_atime_ns, st.st_mtime_ns))
+            freed += size
+            removed.append(str(dep))
+            _log(f"disk sweep: removed dependency dir {dep} ({size / 2**20:.0f} MB)")
+    return freed, removed
 
 
 def _session_transcript_fresh(path: pathlib.Path, cutoff: float) -> bool:
@@ -1184,45 +1340,68 @@ def sweep_scratch(*, now: float | None = None) -> dict:
     the moment a turn is running. Never raises."""
     now = time.time() if now is None else now
     freed, removed, kept = 0, [], []
+    deps_freed, deps_removed = 0, []
     sessions = pathlib.Path(WORK_DIR) / "sessions"
     try:
-        for root in (pathlib.Path(SCRATCH_ROOT), sessions):
+        for root in (pathlib.Path(SCRATCH_ROOT), sessions, *_work_dir_parents()):
             with contextlib.suppress(OSError):
                 for tomb in root.glob(f"{_TOMBSTONE}*"):
                     _remove_tree(tomb)
+        survivors: list[pathlib.Path] = []
+        stopped = False
         for path, max_age in _scratch_candidates(now):
             if _in_flight_ids():
                 _log("disk sweep: a turn started; stopping here")
+                stopped = True
                 break
             cutoff = now - max_age
             if _touched_since(path, cutoff):
+                survivors.append(path)
                 continue
             if path.parent == sessions and _session_transcript_fresh(path, cutoff):
+                survivors.append(path)
                 continue
             why = _unsaved_git_work(path)
             if why:
                 kept.append({"path": str(path), "reason": why})
+                survivors.append(path)
                 continue
             size = _entry_bytes(path)
             if _reap(path):
                 freed += size
                 removed.append(str(path))
                 _log(f"disk sweep: removed {path} ({size / 2**20:.0f} MB)")
-        if removed:
-            # A session worktree's admin entry in its clone outlives the dir.
+        # What stays loses its installed dependencies once idle long enough.
+        for path in survivors if not stopped else []:
+            if _in_flight_ids():
+                _log("disk sweep: a turn started; stopping here")
+                break
+            f, r = _remove_dependency_dirs(path, now)
+            deps_freed += f
+            deps_removed += r
+        if removed or deps_removed:
+            # A worktree's admin entry in its clone outlives the dir.
+            clones: list[pathlib.Path] = []
             with contextlib.suppress(OSError):
-                for clone in pathlib.Path(AGENT_ROOT).iterdir():
-                    if (clone / ".git").is_dir():
-                        _git_quiet("-C", str(clone), "worktree", "prune")
+                clones += [c for c in pathlib.Path(AGENT_ROOT).iterdir() if (c / ".git").is_dir()]
+            with contextlib.suppress(OSError):
+                clones += [c for c in (_repos_root() / ".clones").iterdir()
+                           if c.is_dir() and c.name.endswith(".git")]
+            for clone in clones:
+                _git_quiet("-C", str(clone), "worktree", "prune")
     except Exception as exc:  # noqa: BLE001 — a sweep must never cost the beat
         _log(f"disk sweep: failed ({exc}); continuing")
+    total = freed + deps_freed
+    of_deps = f" ({deps_freed / 2**20:.0f} MB of it dependency dirs)" if deps_freed else ""
     if kept:
         _set_check("scratch", "warn",
                    f"kept {len(kept)} old dir(s) holding git work that exists nowhere else — "
-                   "push or discard it: " + "; ".join(k["reason"] for k in kept))
+                   "push or discard it: " + "; ".join(k["reason"] for k in kept)
+                   + f". Last sweep freed {total / 2**20:.0f} MB{of_deps}")
     else:
-        _set_check("scratch", "ok", f"last sweep freed {freed / 2**20:.0f} MB")
-    return {"freed": freed, "removed": removed, "kept": kept}
+        _set_check("scratch", "ok", f"last sweep freed {total / 2**20:.0f} MB{of_deps}")
+    return {"freed": total, "removed": removed, "kept": kept,
+            "deps_freed": deps_freed, "deps_removed": deps_removed}
 
 
 def _prune_caches() -> None:
@@ -1232,7 +1411,8 @@ def _prune_caches() -> None:
         _log(f"disk sweep: no {script}; caches left as they are")
         return
     try:
-        subprocess.run([sys.executable, str(script)], capture_output=True, timeout=1800)
+        # --idle: called only between turns, so the uv cache may be cleared outright.
+        subprocess.run([sys.executable, str(script), "--idle"], capture_output=True, timeout=1800)
     except Exception as exc:  # noqa: BLE001
         _log(f"disk sweep: cache prune failed ({exc})")
 
