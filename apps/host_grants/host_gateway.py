@@ -836,6 +836,7 @@ async def _listing(ctx: SiteContext, client) -> list:
     from apps.mcp_apps_host import mcp_apps
 
     tools = await client.list_tools()
+    _remember_visibility(ctx, tools)
     if ctx.app_id is not None and not ctx.surface:
         try:
             await sync_to_async(mcp_apps.record_tools, thread_sensitive=True)(
@@ -877,6 +878,38 @@ async def list_tools(ctx: SiteContext) -> list[dict]:
 INDEX_FRESH = timedelta(minutes=10)
 
 
+#: A SURFACE's tools stay out of the site's MCP Apps index (that is its pages'), so for a
+#: surface `_model_may_call` had nothing to trust and re-listed before every call: one more
+#: request to the host, signed and verified, on every `site_call` a contact's turn makes.
+#: What the host said about each tool's visibility is kept here instead, per resource, for
+#: as long as the index is trusted (`INDEX_FRESH`). Visibility is a tool's `_meta`, the same
+#: for every visitor, and the host still authorises every call; a name not seen re-lists.
+_VISIBILITY: dict[str, tuple[float, dict[str, bool]]] = {}
+
+
+def _remember_visibility(ctx: SiteContext, tools) -> None:
+    from apps.mcp_apps_host import mcp_apps
+
+    if not ctx.surface:
+        return
+    import time
+
+    seen = {t.name: mcp_apps.model_visible(getattr(t, "meta", None) or {}) for t in tools}
+    at, known = _VISIBILITY.get(ctx.resource, (0.0, {}))
+    if time.monotonic() - at >= INDEX_FRESH.total_seconds():
+        known = {}
+    _VISIBILITY[ctx.resource] = (time.monotonic(), {**known, **seen})
+
+
+def _known_visibility(ctx: SiteContext, name: str) -> bool | None:
+    import time
+
+    at, known = _VISIBILITY.get(ctx.resource, (0.0, {}))
+    if not ctx.surface or time.monotonic() - at >= INDEX_FRESH.total_seconds():
+        return None
+    return known.get(name)
+
+
 async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
     """Whether the AGENT may call `name`: anything but an app-only tool.
 
@@ -887,6 +920,9 @@ async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
     from apps.mcp_apps_host import mcp_apps
     from apps.tokens.models import AppCredential
 
+    known = _known_visibility(ctx, name)
+    if known is not None:
+        return known
     app = (await sync_to_async(AppCredential.objects.filter(pk=ctx.app_id).first,
                                thread_sensitive=True)()) if ctx.app_id and not ctx.surface else None
     age = mcp_apps.index_age(app) if app is not None else None
